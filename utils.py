@@ -20,6 +20,12 @@ def calc_dists(x,y):
 
     return (dx_p**2+dy_p**2)**0.5, (dx_m**2+dy_m**2)**0.5
 
+def calc_normals(x,y):
+    dx, dy = np.roll(x,-1)-x, np.roll(y,-1)-y
+    d = (dx**2+dy**2)**0.5
+    n = np.vstack((dy,-dx))/d
+    return n
+
 def seg_angles(x,y):
     dx_m = np.roll(x,-1)-x
     dy_m = np.roll(y,-1)-y
@@ -28,7 +34,7 @@ def seg_angles(x,y):
 def boundary_points(x,y,m,method='even',skip=None):
     mask = np.ones(len(x),dtype=bool)
     if skip is not None:
-        mask[skip] = False
+        mask[skip] = 0
     if method == 'even':
         x_b = np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask].flatten(order='F')
         y_b = np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask].flatten(order='F')
@@ -49,16 +55,17 @@ def interior_points(x,y,m,oversamp=10):
         return interior_points(x,y,oversamp=2*oversamp)
     return x_i[mask][:m], y_i[mask][:m]
 
-def interior_points_test(x,y,m,oversamp=10):
-    x_min, x_max = np.min(x), np.max(x)
-    y_min, y_max = np.min(y), np.max(y)
-    x_i = (x_max-x_min)*np.random.rand(oversamp*m)+x_min
-    y_i = (y_max-y_min)*np.random.rand(oversamp*m)+y_min
-
-    poly = Polygon(np.array([x,y]).T)
-    pts = points(np.array([x_i,y_i]).T)
-    mask = poly.contains(pts)
-    return mask.sum()/(oversamp*m), m-mask.sum()
+def eps_boundary_points(x,y,m,eps,method='even',skip=None):
+    mask = np.ones(len(x),dtype=bool)
+    n = calc_normals(x,y)
+    if skip is not None:
+        mask[skip] = 0
+    if method == 'even':
+        x_b_eps = (np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask]-eps*n[0][mask]).flatten(order='F')
+        y_b_eps = (np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask]-eps*n[1][mask]).flatten(order='F')
+    elif method == 'chebyshev':
+        pass
+    return x_b_eps,y_b_eps
 
 def plot_polygon(x,y,ax=None):
     """Plot a polygon with vertices from x and y, which are assumed to be in order"""
@@ -96,3 +103,24 @@ def random_polygon(n,r_avg,eps,sigma):
     x = r*np.cos(theta)
     y = r*np.sin(theta)
     return x,y
+
+def rect_lambda(m,n,L,H):
+    return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
+
+def rect_eig_bound_idx(bound,L,H):
+    m_max = 1
+    while True:
+        eig = rect_lambda(m_max,1,L,H)
+        if eig > bound: break
+        m_max += 1
+
+    n_max = 1
+    while True:
+        eig = rect_lambda(1,n_max,L,H)
+        if eig > bound: break
+        n_max += 1
+
+    M = np.arange(1,m_max+1)[:,np.newaxis]
+    N = np.arange(1,n_max+1)[np.newaxis]
+    Lambda = rect_lambda(M,N,L,H)
+    return np.argwhere(Lambda <= bound)+1

@@ -51,7 +51,7 @@ def build_A_lam(x_v,y_v,x_b,y_b,x_i,y_i,k):
     mask = k>0
     x_ve, y_ve = x_v[mask], y_v[mask]
     r = radii(x,y,x_ve,y_ve)
-    theta = thetas(x,y,x_v,y_v)[:,mask]
+    theta = thetas(x,y,x_v,y_v)
 
     # set up evaluations of Fourier-Bessel
     # first calculate the fourier part (independent of λ!)
@@ -87,3 +87,46 @@ def sigma(lambda_,A_lam,m_b,tol=1e-16):
     except:
         return np.inf
     return s
+
+def u_eval(lambda_,A_lam,m_b,tol=1e-16):
+    """Computes the estimated evaluation of the eigenfunction for a given eigenvalue
+    lambda_"""
+    A = A_lam(lambda_)
+    Q,R,P = la.qr(A, mode='economic', pivoting=True)
+
+    # drop columns of Q corresponding to small diagonal entries of R
+    r = np.abs(np.diag(R))
+    cutoff = (r>r[0]*tol).sum()
+
+    # calculate and return smallest singular value
+    try:
+        _,_,Vh = la.svd(Q[:m_b,:cutoff])
+    except:
+        raise ValueError('non-finite SVD')
+
+    return Q[:,:cutoff]@Vh[-1]
+
+rho = (3-5**0.5)/2
+def golden_search(f,a,b,tol=1e-12,maxiter=100):
+    h = b-a
+    u, v = a+rho*h, b-rho*h
+    fu, fv = f(u), f(v)
+    i = 0
+    while (b-a>=tol)&(i<=maxiter):
+        i += 1
+        if fu < fv:
+            b = v
+            h = b-a
+            v = u
+            u = a+rho*h
+            fv = fu
+            fu = f(u)
+        else:
+            a = u
+            h = b-a
+            u = v
+            v = b-rho*h
+            fu = fv
+            fv = f(v)
+    if f(a)<f(b): return a,i
+    else: return b,i
