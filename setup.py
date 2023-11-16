@@ -15,14 +15,14 @@ setup(
     classifiers=[
         'Development Status :: Alpha',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: MIT License',
+        'License :: BSD License',
         'Natural Language :: English',
         'Programming Language :: Python :: 3.7'
     ],
     description="A package for computing Laplacian eigenvalues using the Method \
                  of Particular Solutions (MPS)",
     #install_requires=requirements,
-    license="MIT license",
+    license="BSD License",
     long_description=readme + '\n\n',# + history,
     include_package_data=True,
     keywords='pymps',
