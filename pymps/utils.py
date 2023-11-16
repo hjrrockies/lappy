@@ -6,8 +6,9 @@ from shapely import points
 from scipy.spatial.distance import cdist
 
 def radii(x,y,x_v,y_v):
-    """Computes the radial distance from each point in x,y to each polygon vertex in x_v, y_v.
-    For use in evaluating Fourier-Bessel functions in the Method of Particular Solutions.
+    """Computes the radial distance from each point in x,y to each polygon vertex
+    in x_v, y_v. For use in evaluating Fourier-Bessel functions in the Method of
+    Particular Solutions.
     """
     return cdist(np.array([x,y]).T,np.array([x_v,y_v]).T)
 
@@ -26,6 +27,8 @@ def thetas(x,y,x_v,y_v):
     return theta.T
 
 def calc_angles(x,y):
+    """Computes the interior angles of a polygon with vertices x and y, ordered
+    counter-clockwise"""
     dx_p, dx_m = np.roll(x,-1)-x, np.roll(x,1)-x
     dy_p, dy_m = np.roll(y,-1)-y, np.roll(y,1)-y
 
@@ -35,23 +38,31 @@ def calc_angles(x,y):
     return theta
 
 def calc_dists(x,y):
+    """Computes the side lengths of a polygon with vertices x and y, ordered
+    counter-clockwise"""
     dx_p, dx_m = np.roll(x,1)-x, np.roll(x,-1)-x
     dy_p, dy_m = np.roll(y,1)-y, np.roll(y,-1)-y
 
     return (dx_p**2+dy_p**2)**0.5, (dx_m**2+dy_m**2)**0.5
 
 def calc_normals(x,y):
+    """Computes the outward-pointing unit normal vectors to the sides of a
+    polygon with vertices x and y, ordered counter-clockwise"""
     dx, dy = np.roll(x,-1)-x, np.roll(y,-1)-y
     d = (dx**2+dy**2)**0.5
     n = np.vstack((dy,-dx))/d
     return n
 
 def seg_angles(x,y):
+    """Gets the angle of each side of the polygon compared to the x-axis. Purely
+    a help"""
     dx_m = np.roll(x,-1)-x
     dy_m = np.roll(y,-1)-y
     return np.arctan2(dy_m,dx_m)
 
 def boundary_points(x,y,m,method='even',skip=None):
+    """Generates points along the boundary of a polygon with vertices x and y,
+    ordered counter-clockwise. Makes m points for each side."""
     mask = np.ones(len(x),dtype=bool)
     if skip is not None:
         mask[skip] = 0
@@ -63,6 +74,8 @@ def boundary_points(x,y,m,method='even',skip=None):
     return x_b,y_b
 
 def interior_points(x,y,m,oversamp=10):
+    """Computes random interior points for a polygon with vertices x and y,
+    ordered counter-clockwise."""
     x_min, x_max = np.min(x), np.max(x)
     y_min, y_max = np.min(y), np.max(y)
     x_i = (x_max-x_min)*np.random.rand(oversamp*m)+x_min
@@ -76,6 +89,8 @@ def interior_points(x,y,m,oversamp=10):
     return x_i[mask][:m], y_i[mask][:m]
 
 def eps_boundary_points(x,y,m,eps,method='even',skip=None):
+    """Computetes points near the boundary. Probably not needed anymore with
+    the most recent developments in boundary derivative calculation."""
     mask = np.ones(len(x),dtype=bool)
     n = calc_normals(x,y)
     if skip is not None:
@@ -88,7 +103,8 @@ def eps_boundary_points(x,y,m,eps,method='even',skip=None):
     return x_b_eps,y_b_eps
 
 def plot_polygon(x,y,ax=None):
-    """Plot a polygon with vertices from x and y, which are assumed to be in order"""
+    """Plot a polygon with vertices x and y, which are assumed to be in
+    counter-clockwise order."""
     x_ = np.append(x,x[0])
     y_ = np.append(y,y[0])
     if ax is None:
@@ -99,6 +115,8 @@ def plot_polygon(x,y,ax=None):
         plt.show()
 
 def plot_angles(x,y,ax=None):
+    """Plots the angle arcs to confirm accurate calculation of angles. Also looks
+    nice."""
     theta = np.rad2deg(calc_angles(x,y))
     d = .5*np.minimum(*calc_dists(x,y))
     start = np.rad2deg(seg_angles(x,y))
@@ -110,6 +128,8 @@ def plot_angles(x,y,ax=None):
         ax.add_patch(arc)
 
 def random_polygon(n,r_avg,eps,sigma):
+    """Generate the vertices of a random polygon, with vertices ordered
+    counter-clockwise."""
     u = np.random.rand(n)
     dtheta = (2*np.pi/n+eps)*u + (2*np.pi/n-eps)*(1-u)
     k = dtheta.sum()/(2*np.pi)
@@ -125,9 +145,12 @@ def random_polygon(n,r_avg,eps,sigma):
     return x,y
 
 def rect_lambda(m,n,L,H):
+    """Computes the (m,n) Dirichlet eigenvalue of an L-by-H rectangle"""
     return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
 
 def rect_eig_bound_idx(bound,L,H):
+    """Identifies the indices of Dirichlet eigenvalues foran L-by-H rectangles
+    which less than a given upper bound"""
     m_max = 1
     while True:
         eig = rect_lambda(m_max,1,L,H)
@@ -146,36 +169,48 @@ def rect_eig_bound_idx(bound,L,H):
     return np.argwhere(Lambda <= bound)+1
 
 def polygon_area(x,y):
+    """Computes the area of a polygon with vertices x and y,
+    ordered counter-clockwise. Uses the Shoelace formula."""
     return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
 
 def poly_eig_lower_bound(k,x,y):
+    """Very very weak lower bound for planar Dirichlet eigenvalues."""
     A = polygon_area(x,y)
     return 2/A*k
 
 def rect_lambda_grad(m,n,L,H):
+    """Gradients of *simple* rectangular eigenvalues with respect to rectangle
+    vertices. Used to test derivative estimation code."""
     m2L3 = m**2/L**3
     n2H3 = n**2/H**3
     return (np.pi**2)*np.array([m2L3,-m2L3,-m2L3,m2L3,n2H3,n2H3,-n2H3,-n2H3])
 
 def rect_eig_mult(lambda_,L,H,maxind=1000):
-    Lam = rect_lambda(np.arange(1,maxind)[np.newaxis],np.arange(1,maxind)[:,np.newaxis],1,1)
+    """Compute the indices of rectangle Dirichlet eigenvalues which are
+    duplicates of lambda_. For use in testing multiplicity."""
+    Lam = rect_lambda(np.arange(1,maxind)[np.newaxis],np.arange(1,maxind)[:,np.newaxis],L,H)
     diff = np.abs(lambda_-Lam)
     tot = (diff<1e-12).sum()
     ind = np.unravel_index(np.argsort(diff, axis=None), diff.shape)
     return (ind[0]+1)[:tot],(ind[1]+1)[:tot]
 
 def rect_eig_mult_mn(m,n,L,H):
+    """Compute the indices of rectangle Dirichlet eigenvalues which are
+    duplicates of the (m,n) eigenvalue. For use in testing multiplicity."""
     return rect_eig_mult(rect_lambda(m,n,L,H),L,H,maxind=10*max(m,n))
 
 def reg_polygon(r,n):
+    """Generates a regular polygon with n vertices and radius r."""
     theta = np.linspace(0,2*np.pi,n+1)
     z = r*np.exp(1j*theta)[:-1]
     return list(z.real),list(z.imag)
 
-def edge_indices(nodes,vertices):
-    x,y = nodes[:,0],nodes[:,1]
+def edge_indices(points,vertices):
+    """Takes an array of points and identifies which polygon edge the points lie on,
+    or if they are not on an edge."""
+    x,y = points[:,0],points[:,1]
     n = len(vertices)
-    arr = np.full(len(nodes),n,dtype='int')
+    arr = np.full(len(points),n,dtype='int')
     for i in range(n):
         j = i+1
         if j==n: j=0
@@ -186,6 +221,7 @@ def edge_indices(nodes,vertices):
     return arr
 
 def invert_permutation(p):
+    """Invert a pertmutation vector. For use with column-pivoted QR solves"""
     s = np.empty(p.size, p.dtype)
     s[p] = np.arange(p.size)
     return s

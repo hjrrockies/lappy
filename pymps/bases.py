@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.special import jv, jvp
 import scipy.linalg as la
-from utils import *
+from .utils import *
 
 class FourierBesselBasis:
     """A class for Fourier-Bessel bases on polygons. Allows the user to fix an evaluation
@@ -21,7 +21,7 @@ class FourierBesselBasis:
         else:
             self.orders = np.array(orders,dtype='int')
 
-        if self.orders.shape != self.n_vert:
+        if self.orders.shape[0] != self.n_vert:
             raise ValueError('orders must match length of vertices')
 
         self._set_alphak()
@@ -78,10 +78,10 @@ class FourierBesselBasis:
             raise ValueError('x and y must both be set, or left unset')
         elif x is None:
             if self.r_rep is None:
-                raise ValueError('Basis has no default points. Provide evaluation \
-                                  points or use FourierBesselBasis.set_default_points')
+                raise ValueError('Basis has no default points. Provide evaluation '\
+                                 'points or use FourierBesselBasis.set_default_points')
             r_rep,sin = self.r_rep,self.sin
         else:
             r_rep,sin = self._set_basis_eval(x,y)
 
-        return jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+        return np.nan_to_num(jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin)

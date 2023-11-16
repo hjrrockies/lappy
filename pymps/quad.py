@@ -1,5 +1,5 @@
 import numpy as np
-from utils import *
+from .utils import *
 from pygmsh.geo import Geometry
 
 def triangle_areas(mesh_vertices,triangles):
@@ -34,15 +34,15 @@ def tri_midpoints(mesh_vertices,triangles):
     return np.array(nodes),np.array(nodes_idx).reshape(-1,3)
 
 def triangular_mesh(vertices,mesh_size):
-    self.vertices = np.array(vertices)
-    if self.vertices.shape[0] == 2:
-        self.vertices = self.vertices.T
-    if self.vertices.shape[1] != 2 or self.vertices.ndim != 2:
+    vertices = np.array(vertices)
+    if vertices.shape[0] == 2:
+        vertices = vertices.T
+    if vertices.shape[1] != 2 or vertices.ndim != 2:
         raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
 
     # build triangular mesh with pygmsh
     with Geometry() as geom:
-        geom.add_polygon(vertices.T,mesh_size)
+        geom.add_polygon(vertices,mesh_size)
         mesh = geom.generate_mesh()
 
     return mesh

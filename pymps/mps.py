@@ -26,19 +26,20 @@ class PolygonEP:
                 skip = [idx-1,idx]
             else:
                 skip = None
-            boundary_pts = boundary_points(x_v,y_v,boundary_method,skip)
+            boundary_pts = boundary_points(x_v,y_v,boundary_pts,boundary_method,skip)
 
         # process boundary_pts array to be of shape (m_b,2)
         self.boundary_pts = np.array(boundary_pts)
         if self.boundary_pts.shape[0] == 2:
             self.boundary_pts = self.boundary_pts.T
-        if self.boundary_pts.shape[0] != 2 or self.boundary_pts.ndim != 2:
-            raise ValueError('boundary_pts must be a 2-dimensional array \
-                             of x & y coordinates')
+        if self.boundary_pts.shape[1] != 2 or self.boundary_pts.ndim != 2:
+            print(self.boundary_pts.shape)
+            raise ValueError('boundary_pts must be a 2-dimensional array '\
+                             'of x & y coordinates')
 
         # catch integer argument to construct interior points
         if type(interior_pts) is int:
-            if interior_method='random':
+            if interior_method == 'random':
                 interior_pts = interior_points(x_v,y_v,interior_pts)
 
         # process interior_pts array to be of shape (m_i,2)
@@ -46,8 +47,8 @@ class PolygonEP:
         if self.interior_pts.shape[0] == 2:
             self.interior_pts = self.interior_pts.T
         if self.interior_pts.shape[1] != 2 or self.interior_pts.ndim != 2:
-            raise ValueError('interior_pts must be a 2-dimensional array \
-                             of x & y coordinates')
+            raise ValueError('interior_pts must be a 2-dimensional array '\
+                             'of x & y coordinates')
 
         # set default points for the basis to be boundary_pts and interior_pts
         x_b,y_b = self.boundary_pts.T
@@ -66,10 +67,10 @@ class PolygonEP:
 
         # nodes and weights for quadrature. Process the nodes to be boundary-first
         if quad_nodes is not None:
-            self.node_edge_idx = edge_indices(quad_nodes,self.vertices)
+            node_edge_idx = edge_indices(quad_nodes,self.vertices)
             sort_idx = np.argsort(node_edge_idx)
             self.nodes = quad_nodes[sort_idx]
-            self.node_edge_idx = self.node_edge_idx[sort_idx]
+            self.node_edge_idx = node_edge_idx[sort_idx]
             self.weights = np.sqrt(quad_weights[sort_idx])[:,np.newaxis]
             self.n_basis = FourierBesselBasis(vertices,orders)
             self.n_basis.set_default_points(*self.nodes.T)
@@ -100,7 +101,7 @@ class PolygonEP:
         else:
             return s[-1]
 
-    def eigenbasis(self,lambda_,rtol=rtol=None,btol=None):
+    def eigenbasis(self,lambda_,rtol=None,btol=None):
         """Returns a callable function which evaluates the approximate eigenbasis
         corresponding to lambda_"""
         # get default tolerances
@@ -111,7 +112,11 @@ class PolygonEP:
         C = self.eigenbasis_coef(lambda_,rtol,btol)
 
         # return callable function of x,y from the basis
-        return lambda x,y: self.basis(lambda_,x,y)@C
+        def func(x,y):
+            shape = np.asarray(x).shape
+            shape = (*shape,C.shape[1])
+            return (self.basis(lambda_,x,y)@C).reshape(shape)
+        return func
 
     def eigenbasis_coef(self,lambda_,rtol=None,btol=None):
         """Compute the coefficients of an eigenbasis, assuming lambda_ is an eigenvalue"""
@@ -167,3 +172,28 @@ class PolygonEP:
         mult = (s<btol*s[-1]).sum()
 
         return (Q[:,:cutoff]@(Vh[-mult:].T))/self.weights
+
+rho = (3-5**0.5)/2
+def golden_search(f,a,b,tol=1e-12,maxiter=100):
+    h = b-a
+    u, v = a+rho*h, b-rho*h
+    fu, fv = f(u), f(v)
+    i = 0
+    while (b-a>=tol)&(i<=maxiter):
+        i += 1
+        if fu < fv:
+            b = v
+            h = b-a
+            v = u
+            u = a+rho*h
+            fv = fu
+            fu = f(u)
+        else:
+            a = u
+            h = b-a
+            u = v
+            v = b-rho*h
+            fu = fv
+            fv = f(v)
+    if f(a)<f(b): return a
+    else: return b
