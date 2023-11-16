@@ -1,3 +1,11 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+
+# figures & notebooks
+figures/
+jupyter_notebooks/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -5,6 +5,26 @@ from shapely.geometry import Polygon
 from shapely import points
 from scipy.spatial.distance import cdist
 
+def radii(x,y,x_v,y_v):
+    """Computes the radial distance from each point in x,y to each polygon vertex in x_v, y_v.
+    For use in evaluating Fourier-Bessel functions in the Method of Particular Solutions.
+    """
+    return cdist(np.array([x,y]).T,np.array([x_v,y_v]).T)
+
+def thetas(x,y,x_v,y_v):
+    """Computes the angles between given points and the polygon edges which are
+    counter-clockwise from the vertices (x_i,v_i). For use in evaluating Fourier-Bessel
+    functions in the Method of Particular Solutions."""
+    theta = np.zeros((len(x_v),len(x)))
+    dx_p = np.roll(x_v,-1)-x_v
+    dy_p = np.roll(y_v,-1)-y_v
+    for i in range(len(x_v)):
+        dx, dy = x-x_v[i], y-y_v[i]
+        theta[i] = np.arccos(1-cdist([[dx_p[i],dy_p[i]]],np.array([dx,dy]).T,'cosine'))
+        reentrant = (dx_p[i]*dy - dy_p[i]*dx)<0
+        theta[i][reentrant] = 2*np.pi - theta[i][reentrant]
+    return theta.T
+
 def calc_angles(x,y):
     dx_p, dx_m = np.roll(x,-1)-x, np.roll(x,1)-x
     dy_p, dy_m = np.roll(y,-1)-y, np.roll(y,1)-y
@@ -124,3 +144,48 @@ def rect_eig_bound_idx(bound,L,H):
     N = np.arange(1,n_max+1)[np.newaxis]
     Lambda = rect_lambda(M,N,L,H)
     return np.argwhere(Lambda <= bound)+1
+
+def polygon_area(x,y):
+    return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
+
+def poly_eig_lower_bound(k,x,y):
+    A = polygon_area(x,y)
+    return 2/A*k
+
+def rect_lambda_grad(m,n,L,H):
+    m2L3 = m**2/L**3
+    n2H3 = n**2/H**3
+    return (np.pi**2)*np.array([m2L3,-m2L3,-m2L3,m2L3,n2H3,n2H3,-n2H3,-n2H3])
+
+def rect_eig_mult(lambda_,L,H,maxind=1000):
+    Lam = rect_lambda(np.arange(1,maxind)[np.newaxis],np.arange(1,maxind)[:,np.newaxis],1,1)
+    diff = np.abs(lambda_-Lam)
+    tot = (diff<1e-12).sum()
+    ind = np.unravel_index(np.argsort(diff, axis=None), diff.shape)
+    return (ind[0]+1)[:tot],(ind[1]+1)[:tot]
+
+def rect_eig_mult_mn(m,n,L,H):
+    return rect_eig_mult(rect_lambda(m,n,L,H),L,H,maxind=10*max(m,n))
+
+def reg_polygon(r,n):
+    theta = np.linspace(0,2*np.pi,n+1)
+    z = r*np.exp(1j*theta)[:-1]
+    return list(z.real),list(z.imag)
+
+def edge_indices(nodes,vertices):
+    x,y = nodes[:,0],nodes[:,1]
+    n = len(vertices)
+    arr = np.full(len(nodes),n,dtype='int')
+    for i in range(n):
+        j = i+1
+        if j==n: j=0
+        u,v = vertices[i],vertices[j]
+        mask = np.isclose(np.sqrt((x-u[0])**2+(y-u[1])**2)+np.sqrt((x-v[0])**2+(y-v[1])**2),
+                          np.sqrt((u[0]-v[0])**2+(u[1]-v[1])**2))
+        arr[mask] = i
+    return arr
+
+def invert_permutation(p):
+    s = np.empty(p.size, p.dtype)
+    s[p] = np.arange(p.size)
+    return s
