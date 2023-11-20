@@ -85,3 +85,52 @@ class FourierBesselBasis:
             r_rep,sin = self._set_basis_eval(x,y)
 
         return np.nan_to_num(jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin)
+
+    def _set_derivative_eval(self,x,y):
+        x,y = np.asarray(x),np.asarray(y)
+        if not x.shape or not y.shape:
+            x,y = np.array([x]),np.array([y])
+        if x.shape != y.shape:
+            raise ValueError('x and y must have the same shape')
+        x,y = x.flatten(),y.flatten()
+
+        # unpack attributes
+        x_v,y_v = self.vertices.T
+        n = self.n_vert
+        m = len(x)
+
+        # compute radii and angles relative to corners with expansions
+        orders = self.orders
+        mask = orders>0
+        x_ve, y_ve = x_v[mask], y_v[mask]
+        r = radii(x,y,x_ve,y_ve)
+        theta = thetas(x,y,x_v,y_v)
+
+        # set up evaluations of Fourier-Bessel
+        # first calculate the fourier part (independent of λ!)
+        alphak = self.alphak
+        cos = np.empty((m,orders.sum()))
+        cumk = np.concatenate(([0],np.cumsum(orders)))
+        for i in range(n):
+            if orders[i] > 0:
+                cos[:,cumk[i]:cumk[i+1]] = np.cos(np.outer(theta[:,i],alphak[i]))
+
+        # set up x & y partial derivatives
+        deltax = np.subtract.outer(x,x_ve)
+        deltay = np.subtract.outer(y,y_ve)
+
+        dr_dx = np.repeat(deltax/r,orders[mask],axis=1)
+        dr_dy = np.repeat(deltay/r,orders[mask],axis=1)
+        dtheta_dx = np.repeat(-deltay/(r**2),orders[mask],axis=1)
+        dtheta_dy = np.repeat(deltax/(r**2),orders[mask],axis=1)
+
+        return cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy
+
+    def grad(self,lambda_,x,y):
+        r_rep,sin = self._set_basis_eval(x,y)
+        cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy = self._set_derivative_eval(x,y)
+
+        dr = np.sqrt(lambda_)*jvp(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+        dtheta = self.alphak_vec*jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*cos
+
+        return dr*dr_dx + dtheta*dtheta_dx, dr*dr_dy + dtheta*dtheta_dy
