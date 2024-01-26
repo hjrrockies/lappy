@@ -6,7 +6,7 @@ from .utils import *
 from functools import lru_cache
 from numpy.polynomial.legendre import leggauss
 
-class PolygonEP:
+class PolygonEVP:
     """Class for polygonal Dirichlet Laplacian eigenproblems
     Builds a Fouier-Bessel basis which is adapdated to the polygon with given
     vertices and number of expansion orders. Evaluates this basis on a set of
@@ -77,16 +77,19 @@ class PolygonEP:
             self.n_basis = FourierBesselBasis(vertices,orders)
             self.n_basis.set_default_points(*self.nodes.T)
 
+        # lower bound for first eigenvalue
+        self.lambda_1_lb = 5.7*np.pi/polygon_area(*self.vertices.T)
+
     @lru_cache
-    def sigma(self,lambda_,rtol=None,btol=None,mult_check=False):
-        """Compute the smallest singular value of Q_B(\lambda)"""
+    def subspace_angles(self,lambda_,rtol=None,btol=None):
+        """Compute the subspace angles, which are the singular values of Q_B(\lambda)"""
         # get default tolerances
         if rtol is None: rtol = self.rtol
         if btol is None: btol = self.btol
 
         A = self.basis(lambda_)
         m_b = self.boundary_pts.shape[0]
-        Q,R,p = la.qr(A, mode='economic', pivoting=True)
+        Q,R,_ = la.qr(A, mode='economic', pivoting=True)
 
         # drop columns of Q corresponding to small diagonal entries of R
         r = np.abs(np.diag(R))
@@ -94,10 +97,39 @@ class PolygonEP:
 
         # calculate singular values
         try:
-            s = la.svd(Q[:m_b,:cutoff],compute_uv=False)
+            return la.svd(Q[:m_b,:cutoff],compute_uv=False)
         except:
             return ValueError('non-finite SVD')
 
+    @lru_cache
+    def weighted_subspace_angles(self,lambda_,rtol=None,btol=None):
+        """Compute the subspace angles, which are the singular values of Q_B(\lambda)
+        for the quadrature-weighted problem"""
+        # get default tolerances
+        if rtol is None: rtol = self.rtol
+        if btol is None: btol = self.btol
+
+        A = self.weights*self.n_basis(lambda_)
+        m_b = (self.node_edge_idx<self.n_vert).sum()
+        Q,R,_ = la.qr(A, mode='economic', pivoting=True)
+
+        # drop columns of Q corresponding to small diagonal entries of R
+        r = np.abs(np.diag(R))
+        cutoff = (r>r[0]*rtol).sum()
+
+        # compute nullspace basis
+        try:
+            return la.svd(Q[:m_b,:cutoff],compute_uv=False)
+        except:
+            raise ValueError('non-finite SVD')
+
+
+    @lru_cache
+    def sigma(self,lambda_,rtol=None,btol=None,mult_check=False):
+        """Compute the smallest singular value of Q_B(\lambda)"""
+        if rtol is None: rtol = self.rtol
+        if btol is None: btol = self.btol
+        s = self.subspace_angles(lambda_,rtol,btol)
         if mult_check:
             mult = (s<btol*s[-1]).sum()
             return s[-1], mult
@@ -270,27 +302,27 @@ class PolygonEP:
             else: # repeated eigenvalue
                 return la.eigh(M,eigvals_only=True)
 
-rho = (3-5**0.5)/2
-def golden_search(f,a,b,tol=1e-12,maxiter=100):
-    h = b-a
-    u, v = a+rho*h, b-rho*h
-    fu, fv = f(u), f(v)
-    i = 0
-    while (b-a>=tol)&(i<=maxiter):
-        i += 1
-        if fu < fv:
-            b = v
-            h = b-a
-            v = u
-            u = a+rho*h
-            fv = fu
-            fu = f(u)
-        else:
-            a = u
-            h = b-a
-            u = v
-            v = b-rho*h
-            fu = fv
-            fv = f(v)
-    if f(a)<f(b): return a
-    else: return b
+    def sigma_min(self,a,b,ppl=3,tol=1e-8):
+        if a < self.lambda_1_lb: a = self.lambda_1_lb
+        spacing = (4*np.pi)/polygon_area(*self.vertices.T)
+        s2tol = spacing/(10*ppl)
+        n_samp = max(int(ppl*(b-a)/spacing+1),5)
+        lambda_ = np.linspace(a,b,n_samp)
+        angles = np.array([self.subspace_angles(lam)[-2:][::-1] for lam in lambda_])
+        sigma_min_idx = np.where((angles[1:-1,0]<angles[:-2,0])&(angles[1:-1,0]<angles[2:,0]))[0]+1
+        sigma2_tol_idx = np.where(angles[:,1]<s2tol)[0]
+
+        minima = np.array([],dtype='float')
+        for idx in sigma_min_idx:
+            if (lambda_[idx+1]-lambda_[idx-1]) < 2*tol:
+                minima = np.concatenate((minima,[lambda_[idx]]))
+            elif idx in sigma2_tol_idx:
+                lower = max(0,idx-2)
+                upper = min(len(lambda_)-1,idx+2)
+                minima = np.concatenate((minima,sigma_min(self,lambda_[lower],lambda_[upper],ppl=10*ppl)))
+            else:
+                minima = np.concatenate((minima,[golden_search(self.sigma,lambda_[idx-1],lambda_[idx+1],tol=tol)]))
+        return np.unique(minima)
+
+# for compatability
+PolygonEP = PolygonEVP

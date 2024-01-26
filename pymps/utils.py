@@ -4,6 +4,7 @@ from matplotlib import patches
 from shapely.geometry import Polygon
 from shapely import points
 from scipy.spatial.distance import cdist
+import sklearn.gaussian_process as gp
 
 def radii(x,y,x_v,y_v):
     """Computes the radial distance from each point in x,y to each polygon vertex
@@ -225,3 +226,79 @@ def invert_permutation(p):
     s = np.empty(p.size, p.dtype)
     s[p] = np.arange(p.size)
     return s
+
+rho = (3-5**0.5)/2
+def golden_search(f,a,b,tol=1e-14,maxiter=100):
+    """Golden ratio minimization search"""
+    h = b-a
+    u, v = a+rho*h, b-rho*h
+    fu, fv = f(u), f(v)
+    i = 0
+    while (b-a>=tol)&(i<=maxiter):
+        i += 1
+        if fu < fv:
+            b = v
+            h = b-a
+            v = u
+            u = a+rho*h
+            fv = fu
+            fu = f(u)
+        else:
+            a = u
+            h = b-a
+            u = v
+            v = b-rho*h
+            fu = fv
+            fv = f(v)
+    if f(a)<f(b): return a
+    else: return b
+
+def gp_minsearch(f,a,b,length_scale=2.5,nu=2.5,scale=0.3**2,n=30,alpha=0.3,beta=0.0,gamma=0.1,tol=1e-5):
+    kernel = scale*gp.kernels.Matern(nu=nu,length_scale=length_scale)
+    gpr = gp.GaussianProcessRegressor(kernel=kernel,n_targets=2,optimizer=None)
+
+    x_train = np.linspace(a,b,n)
+    y_train = np.array([f(x) for x in x_train])
+    intervals = np.array([x_train[:-1],x_train[1:]]).T
+    x_train = x_train.reshape(-1,1)
+    gpr.fit(x_train,y_train)
+
+    def obj(x,alpha=alpha,beta=beta,gamma=gamma):
+        if x.ndim==0: x = x.reshape(1,-1)
+        mu,sigma = gpr.predict(x,return_std=True)
+        return (mu[:,0] - alpha*(sigma[:,0])/(mu[:,1]-beta*sigma[:,1]+gamma))
+
+    feval = len(x_train)
+    while len(intervals) > 0:
+        new_intervals = []
+        for interval in intervals:
+            lcb_min = golden_search(obj,interval[0],interval[1],tol=tol)
+            if (lcb_min == interval[0]) or (lcb_min == interval[1]):
+                pass
+            else:
+                x_new = lcb_min
+                y_new = f(x_new)
+                feval += 1
+                x_train = np.append(x_train,[[x_new]],axis=0)
+                y_train = np.append(y_train,[y_new],axis=0)
+                gpr.fit(x_train,y_train)
+                if x_new-interval[0]>tol:
+                    new_intervals.append((interval[0],x_new))
+                if interval[1]-x_new>tol:
+                    new_intervals.append((x_new,interval[1]))
+        intervals = new_intervals
+
+    x_train = x_train.flatten()
+    sort_idx = x_train.argsort()
+    x_train = x_train[sort_idx]
+    y_train = y_train[sort_idx]
+    return gpr,x_train,y_train
+
+def discrete_local_min_idx(x,y):
+    x = x.flatten()
+    sort_idx = x.argsort()
+    x = x[sort_idx]
+    y = y[sort_idx]
+
+    min_idx = np.argwhere((y[1:-1]<y[:-2])*(y[1:-1]<y[2:]))
+    return min_idx+1
