@@ -3,7 +3,7 @@ import scipy.linalg as la
 from .bases import FourierBesselBasis
 from .quad import triangular_mesh, tri_quad2
 from .utils import *
-from functools import lru_cache
+from functools import cache, lru_cache
 from numpy.polynomial.legendre import leggauss
 
 class PolygonEVP:
@@ -78,9 +78,9 @@ class PolygonEVP:
             self.n_basis.set_default_points(*self.nodes.T)
 
         # lower bound for first eigenvalue
-        self.lambda_1_lb = 5.7*np.pi/polygon_area(*self.vertices.T)
+        self.lambda_1_lb = 5.76*np.pi/polygon_area(*self.vertices.T)
 
-    @lru_cache
+    @cache
     def subspace_angles(self,lambda_,rtol=None,btol=None):
         """Compute the subspace angles, which are the singular values of Q_B(\lambda)"""
         # get default tolerances
@@ -101,7 +101,7 @@ class PolygonEVP:
         except:
             return ValueError('non-finite SVD')
 
-    @lru_cache
+    @cache
     def weighted_subspace_angles(self,lambda_,rtol=None,btol=None):
         """Compute the subspace angles, which are the singular values of Q_B(\lambda)
         for the quadrature-weighted problem"""
@@ -124,7 +124,7 @@ class PolygonEVP:
             raise ValueError('non-finite SVD')
 
 
-    @lru_cache
+    @cache
     def sigma(self,lambda_,rtol=None,btol=None,mult_check=False):
         """Compute the smallest singular value of Q_B(\lambda)"""
         if rtol is None: rtol = self.rtol
@@ -302,10 +302,10 @@ class PolygonEVP:
             else: # repeated eigenvalue
                 return la.eigh(M,eigvals_only=True)
 
-    def sigma_min(self,a,b,ppl=3,tol=1e-8):
+    def sigma_min(self,a,b,ppl=10,tol=1e-8):
         if a < self.lambda_1_lb: a = self.lambda_1_lb
         spacing = (4*np.pi)/polygon_area(*self.vertices.T)
-        s2tol = spacing/(10*ppl)
+        s2tol = spacing/(3*ppl)
         n_samp = max(int(ppl*(b-a)/spacing+1),5)
         lambda_ = np.linspace(a,b,n_samp)
         angles = np.array([self.subspace_angles(lam)[-2:][::-1] for lam in lambda_])
@@ -319,7 +319,7 @@ class PolygonEVP:
             elif idx in sigma2_tol_idx:
                 lower = max(0,idx-2)
                 upper = min(len(lambda_)-1,idx+2)
-                minima = np.concatenate((minima,sigma_min(self,lambda_[lower],lambda_[upper],ppl=10*ppl)))
+                minima = np.concatenate((minima,self.sigma_min(lambda_[lower],lambda_[upper],ppl=10*ppl)))
             else:
                 minima = np.concatenate((minima,[golden_search(self.sigma,lambda_[idx-1],lambda_[idx+1],tol=tol)]))
         return np.unique(minima)

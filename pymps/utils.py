@@ -174,6 +174,9 @@ def polygon_area(x,y):
     ordered counter-clockwise. Uses the Shoelace formula."""
     return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
 
+def polygon_perimiter(x,y):
+    return np.sqrt((np.roll(x,-1)-x)**2+(np.roll(y,-1)-y)**2).sum()
+
 def poly_eig_lower_bound(k,x,y):
     """Very very weak lower bound for planar Dirichlet eigenvalues."""
     A = polygon_area(x,y)
