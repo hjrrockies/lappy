@@ -70,7 +70,7 @@ def boundary_points(x,y,m,method='even',skip=None):
     if method == 'even':
         x_b = np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask].flatten(order='F')
         y_b = np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask].flatten(order='F')
-    elif method == 'chebyshev':
+    elif method == 'legguass':
         pass
     return x_b,y_b
 

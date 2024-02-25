@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.linalg as la
 from .bases import FourierBesselBasis
-from .quad import triangular_mesh, tri_quad2
+from .quad import boundary_nodes
 from .utils import *
 from functools import cache, lru_cache
 from numpy.polynomial.legendre import leggauss
@@ -14,7 +14,7 @@ class PolygonEVP:
     """
     def __init__(self,vertices,orders,boundary_pts=20,interior_pts=50,
                  boundary_method='even',interior_method='random',
-                 quad_nodes=None,quad_weights=None):
+                 bdry_nodes=None,bdry_weights=None,int_nodes=None,int_weights=None):
         self.basis = FourierBesselBasis(vertices,orders)
         self.vertices = self.basis.vertices
         self.n_vert = self.basis.n_vert
@@ -25,13 +25,16 @@ class PolygonEVP:
         if type(boundary_pts) is int:
             if np.sum(self.orders>0) == 1:
                 idx = np.argwhere(self.orders>0)[0]
-                skip = [idx-1,idx]
+                skip = np.concatenate((idx-1,idx))
             else:
                 skip = None
-            boundary_pts = boundary_points(x_v,y_v,boundary_pts,boundary_method,skip)
+            if boundary_method == 'even':
+                boundary_pts = boundary_points(x_v,y_v,boundary_pts,skip=skip)
+            else:
+                boundary_pts = boundary_nodes(vertices,boundary_pts,boundary_method,skip)[0]
 
         # process boundary_pts array to be of shape (m_b,2)
-        self.boundary_pts = np.array(boundary_pts)
+        self.boundary_pts = np.asarray(boundary_pts)
         if self.boundary_pts.shape[0] == 2:
             self.boundary_pts = self.boundary_pts.T
         if self.boundary_pts.shape[1] != 2 or self.boundary_pts.ndim != 2:
@@ -45,7 +48,7 @@ class PolygonEVP:
                 interior_pts = interior_points(x_v,y_v,interior_pts)
 
         # process interior_pts array to be of shape (m_i,2)
-        self.interior_pts = np.array(interior_pts)
+        self.interior_pts = np.asarray(interior_pts)
         if self.interior_pts.shape[0] == 2:
             self.interior_pts = self.interior_pts.T
         if self.interior_pts.shape[1] != 2 or self.interior_pts.ndim != 2:
@@ -67,13 +70,15 @@ class PolygonEVP:
         self.rtol = 1e-40
         self.btol = 1e2
 
-        # nodes and weights for quadrature. Process the nodes to be boundary-first
-        if quad_nodes is not None:
-            node_edge_idx = edge_indices(quad_nodes,self.vertices)
-            sort_idx = np.argsort(node_edge_idx)
-            self.nodes = quad_nodes[sort_idx]
-            self.node_edge_idx = node_edge_idx[sort_idx]
-            self.weights = np.sqrt(quad_weights[sort_idx])[:,np.newaxis]
+        # nodes and weights for quadrature
+        if bdry_nodes is not None:
+            self.bdry_nodes = bdry_nodes
+            self.bdry_weights = bdry_weights
+            self.int_nodes = int_nodes
+            self.int_weights = int_weights
+            self.nodes = np.concatenate((bdry_nodes,int_nodes))
+            quad_weights = np.concatenate((bdry_weights,int_weights))
+            self.weights = np.sqrt(quad_weights)[:,np.newaxis]
             self.n_basis = FourierBesselBasis(vertices,orders)
             self.n_basis.set_default_points(*self.nodes.T)
 
@@ -81,8 +86,8 @@ class PolygonEVP:
         self.lambda_1_lb = 5.76*np.pi/polygon_area(*self.vertices.T)
 
     @cache
-    def subspace_angles(self,lambda_,rtol=None,btol=None):
-        """Compute the subspace angles, which are the singular values of Q_B(\lambda)"""
+    def subspace_sines(self,lambda_,rtol=None,btol=None):
+        """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)"""
         # get default tolerances
         if rtol is None: rtol = self.rtol
         if btol is None: btol = self.btol
@@ -102,15 +107,15 @@ class PolygonEVP:
             return ValueError('non-finite SVD')
 
     @cache
-    def weighted_subspace_angles(self,lambda_,rtol=None,btol=None):
-        """Compute the subspace angles, which are the singular values of Q_B(\lambda)
+    def weighted_subspace_sines(self,lambda_,rtol=None,btol=None):
+        """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)
         for the quadrature-weighted problem"""
         # get default tolerances
         if rtol is None: rtol = self.rtol
         if btol is None: btol = self.btol
 
         A = self.weights*self.n_basis(lambda_)
-        m_b = (self.node_edge_idx<self.n_vert).sum()
+        m_b = len(self.bdry_nodes)
         Q,R,_ = la.qr(A, mode='economic', pivoting=True)
 
         # drop columns of Q corresponding to small diagonal entries of R
@@ -119,7 +124,7 @@ class PolygonEVP:
 
         # compute nullspace basis
         try:
-            return la.svd(Q[:m_b,:cutoff],compute_uv=False)
+            return la.svd(Q[:m_b,:cutoff],compute_uv=False)[::-1]
         except:
             raise ValueError('non-finite SVD')
 
@@ -129,7 +134,7 @@ class PolygonEVP:
         """Compute the smallest singular value of Q_B(\lambda)"""
         if rtol is None: rtol = self.rtol
         if btol is None: btol = self.btol
-        s = self.subspace_angles(lambda_,rtol,btol)
+        s = self.subspace_sines(lambda_,rtol,btol)
         if mult_check:
             mult = (s<btol*s[-1]).sum()
             return s[-1], mult
@@ -162,7 +167,7 @@ class PolygonEVP:
         if btol is None: btol = self.btol
 
         A = self.weights*self.n_basis(lambda_)
-        m_b = (self.node_edge_idx<self.n_vert).sum()
+        m_b = len(self.bdry_nodes)
         Q,R,P = la.qr(A, mode='economic', pivoting=True)
         Pinv = invert_permutation(P)
 
@@ -193,7 +198,7 @@ class PolygonEVP:
         if btol is None: btol = self.btol
 
         A = self.weights*self.n_basis(lambda_)
-        m_b = (self.node_edge_idx<self.n_vert).sum()
+        m_b = len(self.bdry_nodes)
         Q,R,p = la.qr(A, mode='economic', pivoting=True)
 
         # drop columns of Q corresponding to small diagonal entries of R
@@ -308,7 +313,7 @@ class PolygonEVP:
         s2tol = spacing/(3*ppl)
         n_samp = max(int(ppl*(b-a)/spacing+1),5)
         lambda_ = np.linspace(a,b,n_samp)
-        angles = np.array([self.subspace_angles(lam)[-2:][::-1] for lam in lambda_])
+        angles = np.array([self.subspace_sines(lam)[-2:][::-1] for lam in lambda_])
         sigma_min_idx = np.where((angles[1:-1,0]<angles[:-2,0])&(angles[1:-1,0]<angles[2:,0]))[0]+1
         sigma2_tol_idx = np.where(angles[:,1]<s2tol)[0]
 

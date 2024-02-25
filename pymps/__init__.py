@@ -11,5 +11,5 @@ from . import utils
 # classes and functions available directly from tsunamibayes
 from .mps import PolygonEP, golden_search
 from .bases import FourierBesselBasis
-from .quad import triangular_mesh, tri_quad2
+from .quad import triangular_mesh, tri_quad2, quadrilateral_mesh, quad_quad, boundary_nodes
 from .utils import *
