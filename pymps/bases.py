@@ -1,7 +1,10 @@
 import numpy as np
-from scipy.special import jv, jvp
+from scipy.special import jv, jvp, jve
 import scipy.linalg as la
 from .utils import *
+
+# TODO
+# 1. Add "plot_subspace_angles" method or similar
 
 class FourierBesselBasis:
     """A class for Fourier-Bessel bases on polygons. Allows the user to fix an evaluation
@@ -55,6 +58,7 @@ class FourierBesselBasis:
         x_ve, y_ve = x_v[mask], y_v[mask]
         r = radii(x,y,x_ve,y_ve)
         theta = thetas(x,y,x_v,y_v)
+        self.theta = theta
 
         # set up evaluations of Fourier-Bessel
         # first calculate the fourier part (independent of λ!)
@@ -71,6 +75,7 @@ class FourierBesselBasis:
         return r_rep,sin
 
     def set_default_points(self,x,y):
+        self.x,self.y = x,y
         self.r_rep,self.sin = self._set_basis_eval(x,y)
 
     def __call__(self,lambda_,x=None,y=None):
@@ -84,7 +89,14 @@ class FourierBesselBasis:
         else:
             r_rep,sin = self._set_basis_eval(x,y)
 
-        return np.nan_to_num(jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin)
+        out = jve(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+        if np.any(np.isnan(out)):
+            print(lambda_)
+            print(np.where(np.isnan(out)))
+        if np.any(np.isinf(out)):
+            print(lambda_)
+            print(np.where(np.isinf(out)))
+        return out
 
     def _set_derivative_eval(self,x,y):
         x,y = np.asarray(x),np.asarray(y)

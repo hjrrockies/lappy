@@ -17,15 +17,18 @@ def thetas(x,y,x_v,y_v):
     """Computes the angles between given points and the polygon edges which are
     counter-clockwise from the vertices (x_i,v_i). For use in evaluating Fourier-Bessel
     functions in the Method of Particular Solutions."""
-    theta = np.zeros((len(x_v),len(x)))
-    dx_p = np.roll(x_v,-1)-x_v
-    dy_p = np.roll(y_v,-1)-y_v
+    dx_v = np.roll(x_v,-1)-x_v
+    dy_v = np.roll(y_v,-1)-y_v
+    int_angles = calc_angles(x_v,y_v)
+
+    out = np.empty((len(x_v),len(x)))
     for i in range(len(x_v)):
-        dx, dy = x-x_v[i], y-y_v[i]
-        theta[i] = np.arccos(1-cdist([[dx_p[i],dy_p[i]]],np.array([dx,dy]).T,'cosine'))
-        reentrant = (dx_p[i]*dy - dy_p[i]*dx)<0
-        theta[i][reentrant] = 2*np.pi - theta[i][reentrant]
-    return theta.T
+        dx,dy = x-x_v[i],y-y_v[i]
+        out[i] = np.arctan2(dx_v[i]*dy-dx*dy_v[i],dx_v[i]*dx+dy_v[i]*dy)
+        out[i][out[i]<0] += 2*np.pi
+        out[i][out[i]>(int_angles[i]/2+np.pi)] -= 2*np.pi
+
+    return out.T
 
 def calc_angles(x,y):
     """Computes the interior angles of a polygon with vertices x and y, ordered
@@ -33,9 +36,8 @@ def calc_angles(x,y):
     dx_p, dx_m = np.roll(x,-1)-x, np.roll(x,1)-x
     dy_p, dy_m = np.roll(y,-1)-y, np.roll(y,1)-y
 
-    theta = np.arccos((dx_p*dx_m+dy_p*dy_m)/np.sqrt((dx_p**2+dy_p**2)*(dx_m**2+dy_m**2)))
-    reentrant = (-dy_m*(dx_p-dx_m)+dx_m*(dy_p-dy_m))>0
-    theta[reentrant] = 2*np.pi - theta[reentrant]
+    theta = np.arctan2(dx_p*dy_m-dx_m*dy_p,dx_p*dx_m+dy_p*dy_m)
+    theta[theta<0] += 2*np.pi
     return theta
 
 def calc_dists(x,y):
@@ -56,7 +58,7 @@ def calc_normals(x,y):
 
 def seg_angles(x,y):
     """Gets the angle of each side of the polygon compared to the x-axis. Purely
-    a help"""
+    a helper function"""
     dx_m = np.roll(x,-1)-x
     dy_m = np.roll(y,-1)-y
     return np.arctan2(dy_m,dx_m)
@@ -71,7 +73,7 @@ def boundary_points(x,y,m,method='even',skip=None):
         x_b = np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask].flatten(order='F')
         y_b = np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask].flatten(order='F')
     elif method == 'legguass':
-        pass
+        raise(NotImplementedError)
     return x_b,y_b
 
 def interior_points(x,y,m,oversamp=10):
@@ -111,7 +113,7 @@ def plot_polygon(x,y,ax=None):
     if ax is None:
         fig = plt.figure()
         ax = plt.gca()
-    ax.plot(x_,y_)
+    ax.plot(x_,y_,c='k')
     if ax is None:
         plt.show()
 
@@ -253,8 +255,8 @@ def golden_search(f,a,b,tol=1e-14,maxiter=100):
             v = b-rho*h
             fu = fv
             fv = f(v)
-    if f(a)<f(b): return a
-    else: return b
+    if f(a)<f(b): return a,i
+    else: return b,i
 
 def gp_minsearch(f,a,b,length_scale=2.5,nu=2.5,scale=0.3**2,n=30,alpha=0.3,beta=0.0,gamma=0.1,tol=1e-5):
     kernel = scale*gp.kernels.Matern(nu=nu,length_scale=length_scale)
@@ -305,3 +307,126 @@ def discrete_local_min_idx(x,y):
 
     min_idx = np.argwhere((y[1:-1]<y[:-2])*(y[1:-1]<y[2:]))
     return min_idx+1
+
+def parabola_vertex(x,y):
+    """Finds the vertex of a parabola passing through the points
+    {(x[0],y[0]),(x[1],y[1]),(x[2],y[2])}"""
+    dx0,dx1,dx2 = x[1]-x[0],x[2]-x[1],x[2]-x[0]
+    dy0,dy1,dy2 = y[1]-y[0],y[2]-y[1],y[2]-y[0]
+
+    C = (dx0*dy1 - dx1*dy0)/(dx0*dx1*dx2)
+    if C<=0 or np.isnan(C): vertex = x[np.argmin(y)]
+    else: vertex = (x[1]+x[2]-dy1/(dx1*C))/2
+    return vertex
+
+def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,verbose=False):
+    """Finds a local minimum of f in the interval [x[0],x[2]] by repeated parabolic interpolation."""
+    if x[1]<=x[0] or x[2]<=x[1]:
+        raise ValueError('x not increasing!')
+
+    # shift left endpoint to zero for maximum precisioon
+    z = x-x[0]
+
+    # shifted interval bounds
+    zlo, zhi = z[0],z[2]
+
+    # function evaluation & rescue counters
+    fevals = 0
+    rescues = 0
+
+    # previous vertex
+    vold = np.nan
+
+    if verbose: print(f'parabolic_iter_min on ({x[0]:.3e},{x[1]:.3e},{x[2]:.3e})')
+    # iterative parabolic interpolation
+    for i in range(maxiter):
+        v = parabola_vertex(z,y)
+
+        # if the vertex hasn't changed much, conclude iteration
+        if np.abs(v-vold)<xtol:
+            break
+
+        # vertex falls off left, rescue if possible
+        elif v<zlo:
+            if verbose: print('fell off left')
+            if rescues < maxresc:
+                rescues += 1
+                v = (1-resc_param)*zlo + resc_param*z[1]
+            else:
+                if verbose: print('too many rescues')
+                return None, fevals
+        # vertex falls off right, rescue if possible
+        elif v>zhi:
+            if verbose: print('fell off right')
+            if rescues < maxresc:
+                rescues += 1
+                v = (1-resc_param)*zhi + resc_param*z[1]
+            else:
+                if verbose: print('too many rescues')
+                return None, fevals
+        # if vertex too close to old points, wiggle it
+        if np.abs(z-v).min() < xtol/2: v += xtol
+
+        # interpolate using new vertex and adjacent points in z
+        vold = v
+        yv = f(v+x[0])
+        fevals += 1
+        if v<z[1]:
+            z = np.array([z[0],v,z[1]])
+            y = np.array([y[0],yv,y[1]])
+        elif z[1]<v:
+            z = np.array([z[1],v,z[2]])
+            y = np.array([y[1],yv,y[2]])
+        if verbose: print(f'z={np.array_str(z,precision=3)}')
+
+    # return final vertex, shifted back to original interval
+    if verbose: print(f'parabolic_iter_min concluded, x_min={v+x[0]}')
+    return v+x[0], fevals
+
+def minsearch(f,start,end,h,xtol=1e-8,verbose=False,maxdepth=10):
+    """Finds all minima in the interval [start,end]"""
+    spaces = (10-maxdepth)*('  ')
+    x0,x1 = start, start+h
+    y0,y1 = f(x0), f(x1)
+    fevals = 2
+    n_intervals = int(np.ceil((end-start)/h))
+    minima = []
+    if h<= xtol:
+        maxdepth = 0
+    if verbose:
+        print(spaces+f'minsearch on [{start:.3e},{end:.3e}]')
+        print(spaces+f'h={h}, n_intervals={n_intervals}')
+    for i in range(n_intervals-2):
+        x2 = x1 + h
+        y2 = f(x2)
+        fevals += 1
+        x = np.array([x0,x1,x2])
+        y = np.vstack((y0,y1,y2)).T
+        if verbose:
+            print(spaces+f'x={np.array_str(x,precision=3)}')
+            print(spaces+f'sigma1={np.array_str(y[0],precision=3)}')
+            print(spaces+f'sigma2={np.array_str(y[1],precision=3)}')
+
+        # catch discrete local min
+        if (y1[0]<y0[0] and y1[0]<y2[0]):
+            if verbose: print(spaces+f'discrete local min at x={x1:.3e}')
+
+            # catch small second subspace angle, recurse on finer grid
+            if np.min(y[1]) < 1.1*h and maxdepth > 0:
+                if verbose:
+                    print(spaces+f'sigma2 = {np.min(y[1]):.3e}<1.1*h={1.1*h:.3e}')
+                    print('recursing on finer grid...')
+                mins, fe = minsearch(f,x0-h/2,x2+h/2,h/2,xtol=xtol,verbose=verbose,maxdepth=maxdepth-1)
+                minima += [x for x in mins if (x>=x0) and (x<=x2)]
+                fevals += fe
+            else:
+                min, fe = parabolic_iter_min(lambda x: f(x)[0]**2,x,y[0]**2,xtol=xtol,verbose=verbose)
+                if min is not None: minima.append(min)
+                fevals += fe
+
+        x0,x1 = x1,x2
+        y0,y1 = y1,y2
+    if verbose:
+        print(spaces+f"minsearch on [{start:.3e},{end:.3e}] concluded")
+        print(spaces+f"found minima: {minima}")
+    return minima, fevals

@@ -1,5 +1,6 @@
 import numpy as np
 from .utils import *
+from .cubature import get_cubature_rule
 from pygmsh.geo import Geometry
 from numpy.polynomial.chebyshev import chebgauss
 from numpy.polynomial.legendre import leggauss
@@ -31,7 +32,7 @@ def boundary_nodes(vertices,order=20,method='legendre',skip=None):
     x_v,y_v = vertices.T
     j = 0
     for i in range(len(vertices)):
-        if mask[i]:
+        if mask[i-1]:
             a,b = (x_v[i]-x_v[i-1])/2,(x_v[i]+x_v[i-1])/2
             c,d = (y_v[i]-y_v[i-1])/2,(y_v[i]+y_v[i-1])/2
             sprime = np.sqrt(a**2+c**2)
@@ -156,4 +157,19 @@ def tri_quad2(mesh):
     weights = np.repeat((areas/3)[:,np.newaxis],3,axis=1)
     weights = aggregate_weights(weights,nodes_idx)
 
+    return nodes, weights
+
+def tri_quad(mesh,kind='dunavant',deg=10):
+    # extract mesh vertices and triangle-to-vertex array
+    mesh_vertices = mesh.points[:,:2]
+    triangles = mesh.cells[1].data
+
+    tri_vertices = mesh_vertices[triangles]
+    areas = triangle_areas(mesh_vertices,triangles)
+    bary_coords, bary_weights = get_cubature_rule(kind,deg)
+
+    x = tri_vertices[:,:,0]@(bary_coords.T)
+    y = tri_vertices[:,:,1]@(bary_coords.T)
+    nodes = np.array((x.flatten(),y.flatten())).T
+    weights = np.outer(areas,bary_weights).flatten()
     return nodes, weights
