@@ -67,8 +67,8 @@ class PolygonEVP:
         self.edge_idx = edge_indices(self.points,self.vertices)
 
         # default tolerance parameters
-        self.rtol = 1e-40
-        self.btol = 1e2
+        self.rtol = 0
+        self.mtol = 1e-4
 
         # nodes and weights for quadrature
         if bdry_nodes is not None:
@@ -109,22 +109,21 @@ class PolygonEVP:
     def eigs(self,arr):
         self._eigs = np.sort(arr)
 
-    @cache
-    def subspace_sines(self,lambda_,rtol=None,btol=None,pivot=True):
-        """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)"""
-        # get default tolerances
-        if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
 
+    @cache
+    def subspace_sines(self,lambda_,rtol=None,pivot=True):
+        """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)"""
+        if rtol is None: rtol = self.rtol
         A = self.basis(lambda_)
         m_b = self.boundary_pts.shape[0]
         if pivot:
             Q,R,_ = la.qr(A, mode='economic', pivoting=True)
-        else: Q,R = la.qr(A, mode='economic')
-
-        # drop columns of Q corresponding to small diagonal entries of R
-        r = np.abs(np.diag(R))
-        cutoff = (r>r[0]*rtol).sum()
+            # drop columns of Q corresponding to small diagonal entries of R
+            r = np.abs(np.diag(R))
+            cutoff = (r>r[0]*rtol).sum()
+        else:
+            Q,R = la.qr(A, mode='economic')
+            cutoff = Q.shape[1]
 
         # calculate singular values
         try:
@@ -133,20 +132,20 @@ class PolygonEVP:
             raise ValueError(f'non-finite SVD for lam={lambda_}')
 
     @cache
-    def weighted_subspace_sines(self,lambda_,rtol=None,btol=None):
+    def weighted_subspace_sines(self,lambda_,rtol=None,pivot=True):
         """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)
         for the quadrature-weighted problem"""
-        # get default tolerances
         if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
-
         A = self.weights*self.n_basis(lambda_)
         m_b = len(self.bdry_nodes)
-        Q,R,_ = la.qr(A, mode='economic', pivoting=True)
-
-        # drop columns of Q corresponding to small diagonal entries of R
-        r = np.abs(np.diag(R))
-        cutoff = (r>r[0]*rtol).sum()
+        if pivot:
+            Q,R,_ = la.qr(A, mode='economic', pivoting=True)
+            # drop columns of Q corresponding to small diagonal entries of R
+            r = np.abs(np.diag(R))
+            cutoff = (r>r[0]*rtol).sum()
+        else:
+            Q,R = la.qr(A, mode='economic')
+            cutoff = Q.shape[1]
 
         # calculate singular values
         try:
@@ -157,25 +156,27 @@ class PolygonEVP:
     @cache
     def gsvd_subspace_tans(self,lambda_):
         """Use GSVD to compute the tangents of the subspace angles"""
+        if rtol is None: rtol = self.rtol
         A = self.basis(lambda_)
         m_b = self.boundary_pts.shape[0]
-        C,S = gsvd(A[:m_b],A[m_b:],extras='')[:2]
+        C,S,_ = gsvd(A[:m_b],A[m_b:],extras='')
         return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
 
     @cache
-    def rgsvd_subspace_tans(self,lambda_,tol=1e-14):
+    def rgsvd_subspace_tans(self,lambda_,rtol=None):
         """Use regularized GSVD to compute the tangents of the subspace angles"""
+        if rtol is None: rtol = self.rtol
         A = self.basis(lambda_)
         m_b = self.boundary_pts.shape[0]
 
         Q,R = la.qr(A, mode='economic')
         U,s,V = la.svd(R)
-        cutoff = (s>tol).sum()
+        cutoff = (s>rtol).sum()
         if cutoff == 0:
             cutoff = 1
         U1 = U[:,:cutoff]
 
-        C,S = gsvd(Q[:m_b]@U1,Q[m_b:]@U1,extras='')[:2]
+        C,S,_ = gsvd(Q[:m_b]@U1,Q[m_b:]@U1,extras='')
         return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
 
     @cache
@@ -187,60 +188,65 @@ class PolygonEVP:
         return np.sort(np.sqrt(e.real))
 
     @cache
-    def sigma(self,lambda_,rtol=None,btol=None,mult_check=False,pivot=True):
+    def gsvd_weighted_subspace_tans(self,lambda_):
+        """Computes the subspace angle tangents for the quadrature-weighted problem
+        using the GSVD"""
+        A = self.weights*self.n_basis(lambda_)
+        m_b = len(self.bdry_nodes)
+        C,S,_ = gsvd(A[:m_b],A[m_b:],extras='')
+        return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
+
+    @cache
+    def rgsvd_weighted_subspace_tans(self,lambda_,rtol=None):
+        """Computes the subspace angle tangents for the quadrature-weighted problem
+        using the regularized GSVD"""
+        if rtol is None: rtol = self.rtol
+        A = self.weights*self.n_basis(lambda_)
+        m_b = len(self.bdry_nodes)
+        Q,R = la.qr(A, mode='economic')
+        U,s,V = la.svd(R)
+        cutoff = (s>rtol).sum()
+        if cutoff == 0:
+            cutoff = 1
+        U1 = U[:,:cutoff]
+
+        C,S,_ = gsvd(Q[:m_b]@U1,Q[m_b:]@U1,extras='')
+        return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
+
+    @cache
+    def sigma(self,lambda_,rtol=None,pivot=True):
         """Compute the smallest singular value of Q_B(\lambda)"""
         if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
-        s = self.subspace_sines(lambda_,rtol,btol,pivot)
-        if mult_check:
-            mult = (s<btol*s[0]).sum()
-            return s[0], mult
-        else:
-            return s[0]
+        s = self.subspace_sines(lambda_,rtol,pivot)
+        return s[0]
 
     @cache
-    def gsigma(self,lambda_,btol=None,mult_check=False):
+    def gsigma(self,lambda_):
         """Compute the smallest generalized singular value of the pencil {A_B,A_I}"""
-        if btol is None: btol = self.btol
         s = self.gsvd_subspace_tans(lambda_)
-        if mult_check:
-            mult = (s<btol*s[0]).sum()
-            return s[0], mult
-        else:
-            return s[0]
+        return s[0]
 
     @cache
-    def rgsigma(self,lambda_,btol=None,mult_check=False,tol=1e-14):
+    def rgsigma(self,lambda_,rtol=None):
         """Compute the smallest generalized singular value of the pencil {A_B,A_I}"""
-        if btol is None: btol = self.btol
-        s = self.rgsvd_subspace_tans(lambda_,tol=tol)
-        if mult_check:
-            mult = (s<btol*s[0]).sum()
-            return s[0], mult
-        else:
-            return s[0]
+        if rtol is None: rtol = self.rtol
+        s = self.rgsvd_subspace_tans(lambda_,rtol=rtol)
+        return s[0]
 
     @cache
-    def gesigma(self,lambda_,btol=None,mult_check=False):
+    def gesigma(self,lambda_):
         """Compute the smallest generalized eigenvalue value of the pencil {(A_B^T)A_B,(A_I^T)A_I}"""
-        if btol is None: btol = self.btol
         s = self.gevd_subspace_tans(lambda_)
-        if mult_check:
-            mult = (s<btol*s[0]).sum()
-            return s[0], mult
-        else:
-            return s[0]
+        return s[0]
 
     @lru_cache
-    def eigenbasis(self,lambda_,rtol=None,btol=None):
+    def eigenbasis(self,lambda_,rtol=None,mtol=None):
         """Returns a callable function which evaluates the approximate eigenbasis
         corresponding to lambda_"""
-        # get default tolerances
         if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
-
+        if mtol is None: mtol = self.mtol
         # get eigenbasis coefficient matrix
-        C = self.eigenbasis_coef(lambda_,rtol,btol)
+        C = self.eigenbasis_coef(lambda_,rtol,mtol)
 
         # return callable function of x,y from the basis
         def func(x,y):
@@ -250,10 +256,10 @@ class PolygonEVP:
         return func
 
     @lru_cache
-    def eigenbasis_unweighted_coef(self,lambda_,rtol=None,btol=None):
+    def eigenbasis_unweighted_coef(self,lambda_,rtol=None,mtol=None):
+        """Returns the coefficients of an eigenbasis derived without quadrature weighting"""
         if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
-
+        if mtol is None: mtol = self.mtol
         A = self.basis(lambda_)
         m_b = len(self.boundary_pts)
         Q,R,P = la.qr(A, mode='economic', pivoting=True)
@@ -270,7 +276,9 @@ class PolygonEVP:
             raise ValueError('non-finite SVD')
 
         # determine multiplicity
-        mult = (s<btol*s[-1]).sum()
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol:.3e} = mtol)')
 
         # compute C
         C = np.zeros((A.shape[1],mult))
@@ -278,12 +286,10 @@ class PolygonEVP:
         return C[Pinv]
 
     @lru_cache
-    def eigenbasis_coef(self,lambda_,rtol=None,btol=None):
+    def eigenbasis_coef(self,lambda_,rtol=None,mtol=None):
         """Compute the coefficients of an eigenbasis, assuming lambda_ is an eigenvalue"""
-        # get default tolerances
         if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
-
+        if mtol is None: mtol = self.mtol
         A = self.weights*self.n_basis(lambda_)
         m_b = len(self.bdry_nodes)
         Q,R,P = la.qr(A, mode='economic', pivoting=True)
@@ -300,7 +306,9 @@ class PolygonEVP:
             raise ValueError('non-finite SVD')
 
         # determine multiplicity
-        mult = (s<btol*s[-1]).sum()
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
 
         # compute C
         C = np.zeros((A.shape[1],mult))
@@ -308,16 +316,59 @@ class PolygonEVP:
         return C[Pinv]
 
     @lru_cache
-    def eigenbasis_node_eval(self,lambda_,rtol=None,btol=None):
-        """Evaluate the eigenbasis on the quadrature nodes, assuming lambda_
-        is an eigenvalue"""
-        # get default tolerances
-        if rtol is None: rtol = self.rtol
-        if btol is None: btol = self.btol
-
+    def gsvd_eigenbasis_coef(self,lambda_,mtol=None):
+        """Compute the coefficients of an eigenbasis, assuming lambda_ is an eigenvalue
+        using the GSVD formulation"""
+        if mtol is None: mtol = self.mtol
         A = self.weights*self.n_basis(lambda_)
         m_b = len(self.bdry_nodes)
-        Q,R,p = la.qr(A, mode='economic', pivoting=True)
+        C,S,X = gsvd(A[:m_b],A[m_b:],extras='')
+        s = np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))
+
+        # determine multiplicity
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
+
+        # least squares solution for the right singular vectors
+        return la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
+
+    @lru_cache
+    def rgsvd_eigenbasis_coef(self,lambda_,rtol=None,mtol=None):
+        """Compute the coefficients of an eigenbasis, assuming lambda_ is an eigenvalue
+        using the GSVD formulation with regularization"""
+        raise NotImplementedError('rgsvd_eigenbasis_coef needs debugging')
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+        A = self.weights*self.n_basis(lambda_)
+        m_b = len(self.bdry_nodes)
+        Q,R = la.qr(A, mode='economic')
+        U,s,V = la.svd(R)
+        cutoff = (s>rtol).sum()
+        if cutoff == 0:
+            cutoff = 1
+        U1 = U[:,:cutoff]
+
+        C,S,X = gsvd(Q[:m_b]@U1,Q[m_b:]@U1,extras='')
+        s = np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))
+
+        # determine multiplicity
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
+
+        # least squares solution for the right singular vectors
+        return la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
+
+    @lru_cache
+    def eigenbasis_node_eval(self,lambda_,rtol=None,mtol=None):
+        """Evaluate the eigenbasis on the quadrature nodes, assuming lambda_
+        is an eigenvalue"""
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+        A = self.weights*self.n_basis(lambda_)
+        m_b = len(self.bdry_nodes)
+        Q,R,_ = la.qr(A, mode='economic', pivoting=True)
 
         # drop columns of Q corresponding to small diagonal entries of R
         r = np.abs(np.diag(R))
@@ -330,13 +381,17 @@ class PolygonEVP:
             raise ValueError('non-finite SVD')
 
         # determine multiplicity
-        mult = (s<btol*s[-1]).sum()
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
 
         return (Q[:,:cutoff]@(Vh[-mult:].T))/self.weights
 
-    def eigenbasis_grad(self,lambda_,x,y,rtol=None,btol=None):
+    def eigenbasis_grad(self,lambda_,x,y,rtol=None,mtol=None):
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
         # get eigenbasis coefficient matrix
-        C = self.eigenbasis_coef(lambda_,rtol,btol)
+        C = self.eigenbasis_coef(lambda_,rtol,mtol)
 
         # evaluate partial derivatives
         du_dx, du_dy = self.basis.grad(lambda_,x,y)
@@ -344,7 +399,9 @@ class PolygonEVP:
         return du_dx@C, du_dy@C
 
     @lru_cache
-    def outward_normal_derivatives(self,lambda_,n=20,rtol=None,btol=None):
+    def outward_normal_derivatives(self,lambda_,n=20,rtol=None,mtol=None):
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
         # polygon vertices
         x_v,y_v = self.vertices.T
 
@@ -358,7 +415,7 @@ class PolygonEVP:
         y_b = qnodes[np.newaxis]*slope_y[:,np.newaxis] + int_y[:,np.newaxis]
 
         # get basis gradients & reshape
-        du_dx, du_dy = self.eigenbasis_grad(lambda_,x_b,y_b,rtol,btol)
+        du_dx, du_dy = self.eigenbasis_grad(lambda_,x_b,y_b,rtol,mtol)
         du_dx = du_dx.reshape((self.n_vert,-1,du_dx.shape[1]))
         du_dy = du_dy.reshape((self.n_vert,-1,du_dy.shape[1]))
 
@@ -367,7 +424,9 @@ class PolygonEVP:
         return n[:,:1]*du_dx + n[:,1:]*du_dy
 
     @lru_cache
-    def _gram_tensors(self,lambda_,n=20,rtol=None,btol=None):
+    def _gram_tensors(self,lambda_,n=20,rtol=None,mtol=None):
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
         # polygon vertices
         x_v,y_v = self.vertices.T
 
@@ -375,7 +434,7 @@ class PolygonEVP:
         qnodes, qweights = cached_leggauss(n)
 
         # outward normal derivatives
-        du_dn = self.outward_normal_derivatives(lambda_,n,rtol,btol)
+        du_dn = self.outward_normal_derivatives(lambda_,n,rtol,mtol)
 
         # get edge lengths & weighting arrays
         d = calc_dists(x_v,y_v)[1][:,np.newaxis]
@@ -393,7 +452,9 @@ class PolygonEVP:
         Y = np.roll(dx,1)*np.roll(I,1,axis=0).T + dx*J.T
         return X,Y
 
-    def dlambda(self,lambda_,dx=None,dy=None,n=20,rtol=None,btol=None):
+    def dlambda(self,lambda_,dx=None,dy=None,n=20,rtol=None,mtol=None):
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
         # catch direction derivative input errors
         if (dx is None) != (dy is None):
             raise ValueError('dx and dy must both be set, or left unset')
@@ -410,7 +471,7 @@ class PolygonEVP:
             raise ValueError(f'Repeated eigenvalues only have a directional derivative (mult = {mult})')
 
         # compute gram tensors
-        X,Y = self._gram_tensors(lambda_,n,rtol,btol)
+        X,Y = self._gram_tensors(lambda_,n,rtol,mtol)
 
         # catch multiplicity mismatch
         if X.shape[1] != mult:
