@@ -112,7 +112,7 @@ class PolygonEVP:
 
     @cache
     def subspace_sines(self,lambda_,rtol=None,pivot=True):
-        """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)"""
+        """Compute the sines of subspace angles, which are the singular values of Q_B(\\lambda)"""
         if rtol is None: rtol = self.rtol
         A = self.basis(lambda_)
         m_b = self.boundary_pts.shape[0]
@@ -133,7 +133,7 @@ class PolygonEVP:
 
     @cache
     def weighted_subspace_sines(self,lambda_,rtol=None,pivot=True):
-        """Compute the sines of subspace angles, which are the singular values of Q_B(\lambda)
+        """Compute the sines of subspace angles, which are the singular values of Q_B(\\lambda)
         for the quadrature-weighted problem"""
         if rtol is None: rtol = self.rtol
         A = self.weights*self.n_basis(lambda_)
@@ -156,7 +156,6 @@ class PolygonEVP:
     @cache
     def gsvd_subspace_tans(self,lambda_):
         """Use GSVD to compute the tangents of the subspace angles"""
-        if rtol is None: rtol = self.rtol
         A = self.basis(lambda_)
         m_b = self.boundary_pts.shape[0]
         C,S,_ = gsvd(A[:m_b],A[m_b:],extras='')
@@ -177,6 +176,20 @@ class PolygonEVP:
         U1 = U[:,:cutoff]
 
         C,S,_ = gsvd(Q[:m_b]@U1,Q[m_b:]@U1,extras='')
+        return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
+
+    @cache
+    def r2gsvd_subspace_tans(self,lambda_,rtol=None):
+        """Use regularized GSVD to compute the tangents of the subspace angles"""
+        if rtol is None: rtol = self.rtol
+        A = self.basis(lambda_)
+        m_b = self.boundary_pts.shape[0]
+
+        Q,R,_ = la.qr(A, mode='economic',pivoting=True)
+        r = np.abs(np.diag(R))
+        cutoff = (r>r[0]*rtol).sum()
+
+        C,S,_ = gsvd(Q[:m_b,:cutoff],Q[m_b:,:cutoff],extras='')
         return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
 
     @cache
@@ -214,8 +227,22 @@ class PolygonEVP:
         return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
 
     @cache
+    def r2gsvd_weighted_subspace_tans(self,lambda_,rtol=None):
+        """Computes the subspace angle tangents for the quadrature-weighted problem
+        using the regularized GSVD"""
+        if rtol is None: rtol = self.rtol
+        A = self.weights*self.n_basis(lambda_)
+        m_b = len(self.bdry_nodes)
+        Q,R,_ = la.qr(A, mode='economic',pivoting=True)
+        r = np.abs(np.diag(R))
+        cutoff = (r>r[0]*rtol).sum()
+
+        C,S,_ = gsvd(Q[:m_b,:cutoff],Q[m_b:,:cutoff],extras='')
+        return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
+
+    @cache
     def sigma(self,lambda_,rtol=None,pivot=True):
-        """Compute the smallest singular value of Q_B(\lambda)"""
+        """Compute the smallest singular value of Q_B(\\lambda)"""
         if rtol is None: rtol = self.rtol
         s = self.subspace_sines(lambda_,rtol,pivot)
         return s[0]
@@ -231,6 +258,13 @@ class PolygonEVP:
         """Compute the smallest generalized singular value of the pencil {A_B,A_I}"""
         if rtol is None: rtol = self.rtol
         s = self.rgsvd_subspace_tans(lambda_,rtol=rtol)
+        return s[0]
+
+    @cache
+    def r2gsigma(self,lambda_,rtol=None):
+        """Compute the smallest generalized singular value of the pencil {A_B,A_I}"""
+        if rtol is None: rtol = self.rtol
+        s = self.r2gsvd_subspace_tans(lambda_,rtol=rtol)
         return s[0]
 
     @cache
@@ -342,7 +376,8 @@ class PolygonEVP:
         if mtol is None: mtol = self.mtol
         A = self.weights*self.n_basis(lambda_)
         m_b = len(self.bdry_nodes)
-        Q,R = la.qr(A, mode='economic')
+        Q,R,P = la.qr(A, mode='economic', pivoting=True)
+        Pinv = invert_permutation(P)
         U,s,V = la.svd(R)
         cutoff = (s>rtol).sum()
         if cutoff == 0:
@@ -358,7 +393,39 @@ class PolygonEVP:
             raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
 
         # least squares solution for the right singular vectors
-        return la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
+        C = np.zeros((A.shape[1],mult))
+        v = la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
+        C[:cutoff] = la.solve_triangular(R[:cutoff,:cutoff],v)
+        return C[Pinv]
+
+    @lru_cache
+    def r2gsvd_eigenbasis_coef(self,lambda_,rtol=None,mtol=None):
+        """Compute the coefficients of an eigenbasis, assuming lambda_ is an eigenvalue
+        using the GSVD formulation with regularization"""
+        # raise NotImplementedError('rgsvd_eigenbasis_coef needs debugging')
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+        A = self.weights*self.n_basis(lambda_)
+        m_b = len(self.bdry_nodes)
+        Q,R,P = la.qr(A, mode='economic', pivoting=True)
+        Pinv = invert_permutation(P)
+        # drop columns of Q corresponding to small diagonal entries of R
+        r = np.abs(np.diag(R))
+        cutoff = (r>r[0]*rtol).sum()
+
+        C,S,X = gsvd(Q[:m_b,:cutoff],Q[m_b:,:cutoff],extras='')
+        s = np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))
+
+        # determine multiplicity
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
+
+        # least squares solution for the right singular vectors
+        C = np.zeros((A.shape[1],mult))
+        v = la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
+        C[:cutoff] = la.solve_triangular(R[:cutoff,:cutoff],v)
+        return C[Pinv]
 
     @lru_cache
     def eigenbasis_node_eval(self,lambda_,rtol=None,mtol=None):
@@ -486,69 +553,66 @@ class PolygonEVP:
             else: # repeated eigenvalue
                 return la.eigh(M,eigvals_only=True)
 
-    def solve_ordered_eigs(self,k,xtol=1e-8,ytol=1e-5,verbose=False):
+    def solve_eigs(self,k,xtol=1e-8,ytol=1e-5,verbose=False):
         """Finds the first k eigenvalues of the eigenvalue problem"""
         def obj(x):
             # subspace angle tangents
-            sines = self.subspace_sines(x)[:2]
-            return sines/np.sqrt(1-sines**2)
-        # obj = lambda x: evp.subspace_sines(x)[:2]
+            # sines = self.subspace_sines(x)[:2]
+            # return sines/np.sqrt(1-sines**2)
+            return self.gsvd_subspace_tans(x)[:2]
 
+        # number of eigenvalues found
+        n_eigs = len(self.eigs)
+        # already found eigs at previous step
+        if n_eigs >= k:
+            return self.eigs[:k]
+
+        # extend search of not enough eigs are found
         fevals = 0
-        i = 0
-        extend=False
-        while len(self.ordered_eigs)<k:
-            # get length of current array of eigenvalues
-            k_current = len(self.ordered_eigs)
-            if verbose: print(f'# of eigs found: {k_current}')
+        extensions = 0
+        # looking for new eigs
+        while len(self.eigs)<k:
+            if verbose: print(f'# of eigs found: {n_eigs}')
 
-            # set starting point
-            if extend: pass
-            elif k_current == 0: start = self.lambda_1_lb
-            else: start = self.ordered_eigs[k_current-1]
+            # set search starting point
+            if n_eigs == 0: start = self.lambda_1_lb
+            else: start = self.eigs[-1]+xtol
 
-            # search up to Weyl asymptotic guess
-            if not extend:
-                end = self.weyl_k(k_current+1)
-                lev = 1
+            # search up to weyl_{k+1}
+            kplus = 1
+            while self.weyl_k(k+kplus)-xtol < start: kplus += 1
+            end = self.weyl_k(k+kplus+extensions)
 
-                # search higher if asymptotics are off
-                while end+1e8*xtol < start:
-                    lev += 1
-                    end = self.weyl_k(k_current+lev)
+            # levels checked, points per level
+            levels = k+kplus+extensions-n_eigs
+            ppl = 20
 
-            # stepsizing
-            n_pts = 20*lev
+            # search spacing
+            n_pts = ppl*levels
             h = (end-start)/n_pts
 
-            # minsearch over [start,end]
-            # add ghost points if needed
-            if k_current != 0: start -= h
+            # search
             minima, fe = minsearch(obj,start,end+h,h,xtol=xtol,verbose=verbose)
             fevals += fe
             for x_min in minima:
-                print(x_min)
                 if verbose: print(f"x_min={x_min:.3e},f(x_min)={obj(x_min)[0]:.3e}")
-                mult = (self.subspace_sines(x_min)<ytol).sum()
+                mult = (self.gsvd_subspace_tans(x_min)<ytol).sum()
                 is_duplicate = False
                 if len(self.ordered_eigs) > 0:
-                    is_duplicate = (np.abs(x_min-self.ordered_eigs).min()<xtol)
+                    is_duplicate = (np.abs(x_min-self.eigs).min()<xtol)
                 if verbose: print(f'mult={mult}, dup={is_duplicate}')
                 if not is_duplicate and mult>0:
-                    self.ordered_eigs = np.concatenate((self.ordered_eigs,mult*[x_min]))
-                    if verbose: print(self.ordered_eigs)
-                    if len(self.ordered_eigs)>=k:
+                    self.eigs = np.concatenate((self.eigs,mult*[x_min]))
+                    if verbose: print(self.eigs)
+                    if len(self.eigs)>=k:
                         break
-            # check if no eigenvalue found
-            if len(self.ordered_eigs) == k_current:
-                if verbose: print('no eigenvalue found this step, extending search')
-                gap = end-start
-                start = end
-                end = start+gap
-                extend = True
-            else:
-                extend = False
-        return self.ordered_eigs, fevals
+
+            n_eigs = len(self.eigs)
+            # need to find more eigenvalues
+            if n_eigs < k:
+                if verbose: print(f"still need {k-n_eigs} eigenvalues; extending search interval")
+                extensions += 1
+        return self.eigs[:k], fevals
 
     def sigma_min(self,a,b,ppl=10,tol=1e-8):
         if a < self.lambda_1_lb: a = self.lambda_1_lb
@@ -577,12 +641,13 @@ class PolygonEVP:
         P = self.perimiter
         return ((P+np.sqrt(P**2+16*np.pi*A*k))/(2*A))**2
 
-    def plot_sigma(self,low,high,nlam,ax=None,**kwargs):
+    def plot_sigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
+        if rtol is None: rtol = self.rtol
         if low < 1e-16 : low = 1e-16
         L = np.linspace(low,high,nlam+1)
         sigma = []
         for lam in L:
-            sigma.append(self.sigma(lam))
+            sigma.append(self.sigma(lam,rtol))
         if ax is None:
             fig = plt.figure()
             plt.plot(L,sigma,**kwargs)
@@ -601,12 +666,26 @@ class PolygonEVP:
         else:
             ax.plot(L,gsigma,**kwargs)
 
-    def plot_rgsigma(self,low,high,nlam,ax=None,tol=1e-14,**kwargs):
+    def plot_rgsigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
+        if rtol is None: rtol = self.rtol
         if low < 1e-16 : low = 1e-16
         L = np.linspace(low,high,nlam+1)
         rgsigma = []
         for lam in L:
-            rgsigma.append(self.rgsigma(lam,tol=tol))
+            rgsigma.append(self.rgsigma(lam,rtol=rtol))
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,rgsigma,**kwargs)
+        else:
+            ax.plot(L,rgsigma,**kwargs)
+
+    def plot_r2gsigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
+        if rtol is None: rtol = self.rtol
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        rgsigma = []
+        for lam in L:
+            rgsigma.append(self.r2gsigma(lam,rtol=rtol))
         if ax is None:
             fig = plt.figure()
             plt.plot(L,rgsigma,**kwargs)

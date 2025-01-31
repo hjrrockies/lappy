@@ -1,10 +1,10 @@
 import numpy as np
+import scipy.linalg as la
 import matplotlib.pyplot as plt
-from matplotlib import patches
+from matplotlib import patches, cm, ticker, colors
 from shapely.geometry import Polygon
 from shapely import points
 from scipy.spatial.distance import cdist
-import sklearn.gaussian_process as gp
 
 def radii(x,y,x_v,y_v):
     """Computes the radial distance from each point in x,y to each polygon vertex
@@ -105,7 +105,7 @@ def eps_boundary_points(x,y,m,eps,method='even',skip=None):
         pass
     return x_b_eps,y_b_eps
 
-def plot_polygon(x,y,ax=None):
+def plot_polygon(x,y,ax=None,**plotkwargs):
     """Plot a polygon with vertices x and y, which are assumed to be in
     counter-clockwise order."""
     x_ = np.append(x,x[0])
@@ -113,7 +113,7 @@ def plot_polygon(x,y,ax=None):
     if ax is None:
         fig = plt.figure()
         ax = plt.gca()
-    ax.plot(x_,y_,c='k')
+    ax.plot(x_,y_,**plotkwargs)
     if ax is None:
         plt.show()
 
@@ -150,6 +150,39 @@ def random_polygon(n,r_avg,eps,sigma):
 def rect_lambda(m,n,L,H):
     """Computes the (m,n) Dirichlet eigenvalue of an L-by-H rectangle"""
     return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
+
+rect_eig = rect_lambda
+
+def rect_eigs_k(L,H,k,ret_mn=False):
+    """Gets first k Dirichlet eigenvalues for an LxH rectangle.
+    Vectorized to handle arrays for L and H of various shapes, returning
+    an array such that rect_eigs_k(L,H,k).flatten()[idx] is the first
+    k eigenvalues of an L.flatten()[idx]xH.flatten()[idx] rectangle.
+
+    Optionally returns the indices of the corresponding eigenvalues."""
+    L,H = np.asarray(L), np.asarray(H)
+    mn = np.arange(1,k+1)
+    M,N = np.meshgrid(mn,mn,indexing='ij')
+    eigs = rect_eig(M.flatten()[np.newaxis],
+                    N.flatten()[np.newaxis],
+                    L.flatten()[:,np.newaxis],
+                    H.flatten()[:,np.newaxis])
+
+    idx = np.argsort(eigs,axis=-1)
+    eigs = np.take_along_axis(eigs,idx,axis=-1)[:,:k]
+    eigs = eigs.reshape((*L.shape,k))
+    if ret_mn:
+        m = np.take_along_axis(M.flatten()[np.newaxis],idx,axis=-1)[:,:k]
+        n = np.take_along_axis(N.flatten()[np.newaxis],idx,axis=-1)[:,:k]
+        return eigs,m.reshape((*L.shape,k)),n.reshape((*L.shape,k))
+    else:
+        return eigs
+
+def rect_eig_grad(m,n,L,H):
+    """Derivatives of rectangular eigenvalues wrt length and width"""
+    m,n = np.asarray(m), np.asarray(n)
+    L,H = np.asarray(L), np.asarray(H)
+    return (-2*(np.pi*m.T)**2/L**3).T, (-2*(np.pi*n.T)**2/H**3).T
 
 def rect_eig_bound_idx(bound,L,H):
     """Identifies the indices of Dirichlet eigenvalues foran L-by-H rectangles
@@ -258,46 +291,144 @@ def golden_search(f,a,b,tol=1e-14,maxiter=100):
     if f(a)<f(b): return a,i
     else: return b,i
 
-def gp_minsearch(f,a,b,length_scale=2.5,nu=2.5,scale=0.3**2,n=30,alpha=0.3,beta=0.0,gamma=0.1,tol=1e-5):
-    kernel = scale*gp.kernels.Matern(nu=nu,length_scale=length_scale)
-    gpr = gp.GaussianProcessRegressor(kernel=kernel,n_targets=2,optimizer=None)
+# def gp_minsearch(f,a,b,length_scale=2.5,nu=2.5,scale=0.3**2,n=30,alpha=0.3,beta=0.0,gamma=0.1,tol=1e-5):
+#     kernel = scale*gp.kernels.Matern(nu=nu,length_scale=length_scale)
+#     gpr = gp.GaussianProcessRegressor(kernel=kernel,n_targets=2,optimizer=None)
+#
+#     x_train = np.linspace(a,b,n)
+#     y_train = np.array([f(x) for x in x_train])
+#     intervals = np.array([x_train[:-1],x_train[1:]]).T
+#     x_train = x_train.reshape(-1,1)
+#     gpr.fit(x_train,y_train)
+#
+#     def obj(x,alpha=alpha,beta=beta,gamma=gamma):
+#         if x.ndim==0: x = x.reshape(1,-1)
+#         mu,sigma = gpr.predict(x,return_std=True)
+#         return (mu[:,0] - alpha*(sigma[:,0])/(mu[:,1]-beta*sigma[:,1]+gamma))
+#
+#     feval = len(x_train)
+#     while len(intervals) > 0:
+#         new_intervals = []
+#         for interval in intervals:
+#             lcb_min = golden_search(obj,interval[0],interval[1],tol=tol)
+#             if (lcb_min == interval[0]) or (lcb_min == interval[1]):
+#                 pass
+#             else:
+#                 x_new = lcb_min
+#                 y_new = f(x_new)
+#                 feval += 1
+#                 x_train = np.append(x_train,[[x_new]],axis=0)
+#                 y_train = np.append(y_train,[y_new],axis=0)
+#                 gpr.fit(x_train,y_train)
+#                 if x_new-interval[0]>tol:
+#                     new_intervals.append((interval[0],x_new))
+#                 if interval[1]-x_new>tol:
+#                     new_intervals.append((x_new,interval[1]))
+#         intervals = new_intervals
+#
+#     x_train = x_train.flatten()
+#     sort_idx = x_train.argsort()
+#     x_train = x_train[sort_idx]
+#     y_train = y_train[sort_idx]
+#     return gpr,x_train,y_train
 
-    x_train = np.linspace(a,b,n)
-    y_train = np.array([f(x) for x in x_train])
-    intervals = np.array([x_train[:-1],x_train[1:]]).T
-    x_train = x_train.reshape(-1,1)
-    gpr.fit(x_train,y_train)
+def loss_plot(L,H,loss,log=True,ax=None):
+    n_levels = 50
+    if ax is None:
+        fig = plt.figure()
+        ax = plt.gca()
+    if log:
+        low = np.floor(np.log10(loss.min()+1e-16))
+        high = np.ceil(np.log10(loss.max()))
+        levels = 10.0**np.linspace(low,high,n_levels)
+        norm = colors.LogNorm(vmin=loss.min()+1e-16, vmax=loss.max())
+    else:
+        levels = n_levels
+        norm = 'linear'
+    cs = ax.contourf(L,H,loss+1e-16,levels,norm=norm)
+    cbar = ax.get_figure().colorbar(cs,ax=ax)
+    if log: cbar.set_ticks(10.0**np.arange(low,(high+1)))
+    ax.set_xlabel('L')
+    ax.set_ylabel('H')
+    return ax,cs
 
-    def obj(x,alpha=alpha,beta=beta,gamma=gamma):
-        if x.ndim==0: x = x.reshape(1,-1)
-        mu,sigma = gpr.predict(x,return_std=True)
-        return (mu[:,0] - alpha*(sigma[:,0])/(mu[:,1]-beta*sigma[:,1]+gamma))
+def eig_ratios(eigs):
+    """Computes the ratios lambda_j/lambda_1, assuming the eigenvalues are
+    indexed along the last dimension of the array"""
+    return (eigs.T[1:]/eigs.T[0]).T
 
-    feval = len(x_train)
-    while len(intervals) > 0:
-        new_intervals = []
-        for interval in intervals:
-            lcb_min = golden_search(obj,interval[0],interval[1],tol=tol)
-            if (lcb_min == interval[0]) or (lcb_min == interval[1]):
-                pass
-            else:
-                x_new = lcb_min
-                y_new = f(x_new)
-                feval += 1
-                x_train = np.append(x_train,[[x_new]],axis=0)
-                y_train = np.append(y_train,[y_new],axis=0)
-                gpr.fit(x_train,y_train)
-                if x_new-interval[0]>tol:
-                    new_intervals.append((interval[0],x_new))
-                if interval[1]-x_new>tol:
-                    new_intervals.append((x_new,interval[1]))
-        intervals = new_intervals
+def rect_loss_std(L,H,eigs_true,weights=1,jac=False):
+    """Computes the standard loss function for a rectangle against
+    target eigenvalues. Can use weights."""
+    weights = np.asarray(weights).flatten()
+    k = len(eigs_true)
+    eigs,m,n = rect_eigs_k(L,H,k,ret_mn=True)
+    pweights = weights**(0.5)
+    out = la.norm(pweights*(eigs-eigs_true),axis=-1)**2
+    if jac:
+        grad = weights*2*(eigs-eigs_true)
+        deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
+        grad = np.array([(grad*deig_dL).sum(axis=-1), (grad*deig_dH).sum(axis=-1)])
+        return out,grad
+    else:
+        return out
 
-    x_train = x_train.flatten()
-    sort_idx = x_train.argsort()
-    x_train = x_train[sort_idx]
-    y_train = y_train[sort_idx]
-    return gpr,x_train,y_train
+def rect_loss_reciprocal(L,H,eigs_true,weights=1):
+    """Computes the standard loss function for a rectangle against
+    target eigenvalues in reciprocal form. Can use weights."""
+    weights = np.asarray(weights).flatten()
+    k = len(eigs_true)
+    eigs,m,n = rect_eigs_k(L,H,k,ret_mn=True)
+    pweights = weights**(0.5)
+    out = la.norm(pweights*(1/eigs-1/eigs_true),axis=-1)**2
+    jac = False
+    if jac:
+        grad = weights*2*(eigs-eigs_true)
+        deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
+        grad = np.array([(grad*deig_dL).sum(axis=-1), (grad*deig_dH).sum(axis=-1)])
+        return out,grad
+    else:
+        return out
+
+def rect_loss_outerlog(L,H,eigs_true,weights=1,eps=1e-200,jac=False):
+    """Computes the 'outer-log loss' for rectangular eigenvalues"""
+    L,H = np.asarray(L), np.asarray(H)
+    weights = np.asarray(weights).flatten()
+    k = len(eigs_true)
+    if len(weights) == 1:
+        weights = weights*np.ones(k)
+    eigs,m,n = rect_eigs_k(L,H,k,ret_mn=True)
+    eigsT = eigs.T
+    eigs_trueT = eigs_true.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
+    weightsT = weights.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
+    out = weightsT[0]*np.log((eigsT[0]-eigs_trueT[0])**2+eps)
+    eigdiff = eigsT[1:][np.newaxis]-eigs_trueT[1:][:,np.newaxis]
+    out += (weightsT[1:]*np.log(eigdiff**2 + eps).sum(axis=0)).sum(axis=0)
+    if jac:
+        deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
+        C = np.empty((k,*L.shape))
+        C[0] = (eigsT[0]-eigs_trueT[0])/((eigsT[0]-eigs_trueT[0])**2+eps)
+        eigdiff_sum = eigdiff.sum(axis=0)
+        C[1:] = eigdiff_sum/(eigdiff_sum**2+eps)
+        C *= 2*weightsT
+        grad = np.array([(C.T*deig_dL).sum(axis=-1),(C.T*deig_dH).sum(axis=-1)])
+        return out,grad
+    else:
+        return out
+
+def logify(obj):
+    def log_obj(*args,**kwargs):
+        if 'jac' in kwargs.keys():
+            if kwargs['jac'] == True:
+                jac = True
+            else: jac = False
+        else: jac = False
+        if jac:
+            out,grad = obj(*args,**kwargs)
+            return np.log(out+1e-200), grad/(out+1e-200)
+        else:
+            return np.log(obj(*args,**kwargs)+1e-200)
+    return log_obj
 
 def discrete_local_min_idx(x,y):
     x = x.flatten()
