@@ -21,4 +21,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-pygsvd = { path = "../python/pygsvd" }
+pygsvd = { path = "../pygsvd" }
