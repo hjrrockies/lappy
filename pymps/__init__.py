@@ -10,7 +10,7 @@ from . import utils
 from . import cubature_rules
 
 # classes and functions available directly from tsunamibayes
-from .mps import PolygonEP, PolygonEVP, golden_search
+from .mps import PolygonEVP, golden_search
 from .bases import FourierBesselBasis
 from .quad import triangular_mesh,  tri_quad, quadrilateral_mesh, quadrilateral_quad, boundary_nodes_polygon
 from .utils import *

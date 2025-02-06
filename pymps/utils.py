@@ -15,7 +15,7 @@ def interior_angles(vertices,y=None):
     if y is not None:
         vertices = complex_form(vertices,y)
     psis = edge_angles(vertices)
-    phis = edge_angles-np.roll(edge_angles,1)
+    phis = psis-np.roll(psis,1)
     phis[phis<0] += 2*np.pi
     return phis
 

@@ -29,7 +29,7 @@ def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None)
     the given vertices."""
     if y is not None:
         vertices = complex_form(vertices,y)
-    
+
     # select quadrature rule
     if rule == 'chebyshev': quadfunc = cached_chebgauss
     elif rule == 'legendre': quadfunc = cached_leggauss
@@ -59,7 +59,8 @@ def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None)
         if orders[i] > 0:
             start = np.sum(orders[:i])
             end = np.sum(orders[:i+1])
-            qnodes,qweights = quadfunc(orders[i]) # get quadrature nodes and weights for interval [0,1]
+            # get quadrature nodes and weights for interval [0,1]
+            qnodes,qweights = quadfunc(orders[i]) 
             # space nodes along edge, adjust weights for edge length
             nodes[start:end] = edges[i]*qnodes + vertices[i]
             weights[start:end] = qweights*lens[i]
@@ -67,16 +68,18 @@ def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None)
 
 ### Triangular meshes and cubature rules
 def load_cubature_rules(path='cubature_rules/'):
-    kinds = ['7pts','alb_col','bern_esp1','bern_esp2,','bern_esp4','cowper','day_taylor',
+    kinds = ['7pts','alb_col','bern_esp1','bern_esp2','bern_esp4','cowper','day_taylor',
              'dedon_rob','dunavant','vior_rok','xiao_gim','lether','stroud']
     rules = {}
     for kind in kinds:
         try:
-            rules[kind] = np.loadz(path+kind)
+            arrs = dict(np.load(path+kind+'.npz'))
+            rules[kind] = {int(deg):arr for deg,arr in arrs.items()}
         except:
             from .cubature_rules import build_cubature_rules, save_cubature_rules
             save_cubature_rules(build_cubature_rules(),path)
-            rules[kind] = np.loadz(path+kind)
+            arrs = dict(np.load(path+kind+'.npz'))
+            rules[kind] = {int(deg):arr for deg,arr in arrs.items()}
     return rules
 
 rules = load_cubature_rules()
@@ -95,7 +98,8 @@ def triangle_areas(mesh_vertices,triangles):
 
 def triangular_mesh(vertices,mesh_size):
     """Builds a triangular mesh with pygmsh"""
-    vertices = np.array(vertices)
+    vertices = np.asarray(vertices)
+    vertices = np.array([vertices.real,vertices.imag]).T
     if vertices.shape[0] == 2:
         vertices = vertices.T
     if vertices.shape[1] != 2 or vertices.ndim != 2:
@@ -121,7 +125,7 @@ def tri_quad(mesh,kind='dunavant',deg=10):
     # get cubature nodes and weights in barycentric form
     # convert to array of nodes in complex form
     bary_coords, bary_weights = get_cubature_rule(kind,deg)
-    nodes = np.flatten(tri_vertices_complex@(bary_coords.T))
+    nodes = (tri_vertices_complex@(bary_coords.T)).flatten()
 
     # get areas of triangles, scale weights appropriately
     areas = triangle_areas(mesh_vertices,triangles)

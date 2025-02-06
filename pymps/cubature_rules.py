@@ -6,8 +6,10 @@ def process_array(string):
 
 def save_cubature_rules(rules,path='cubature_rules/'):
     """Saves cubature rules"""
-    for kind, dict in rules.items():
-        np.savez(path+kind,dict)
+    if not os.path.exists(path):
+        os.makedirs(path)
+    for kind, arrs in rules.items():
+        np.savez(path+kind,**{str(deg):arr for deg,arr in arrs.items()})
 
 def build_cubature_rules():
     """Builds cubature rules"""

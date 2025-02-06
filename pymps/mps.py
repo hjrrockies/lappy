@@ -1,16 +1,13 @@
 import numpy as np
 import scipy.linalg as la
 from .bases import FourierBesselBasis
-from .quad import boundary_nodes, cached_leggauss
+from .quad import boundary_nodes_polygon, cached_leggauss
 from .utils import *
 from functools import cache, lru_cache
 from pygsvd import gsvd
 
 class PolygonEVP:
     """Class for polygonal Dirichlet Laplacian eigenproblems
-    Builds a Fouier-Bessel basis which is adapdated to the polygon with given
-    vertices and number of expansion orders. Evaluates this basis on a set of
-
     """
     def __init__(self,vertices,orders,boundary_pts=20,interior_pts=50,
                 boundary_method='even',interior_method='random',
@@ -34,7 +31,7 @@ class PolygonEVP:
                 skip = np.concatenate((idx-1,idx))
             else:
                 skip = None
-            boundary_pts = boundary_nodes(vertices,orders=boundary_pts,rule=boundary_method,skip=skip)[0]
+            boundary_pts = boundary_nodes_polygon(vertices,orders=boundary_pts,rule=boundary_method,skip=skip)[0]
 
         # process boundary_pts array to be in complex form
         self.boundary_pts = np.asarray(boundary_pts)
@@ -47,7 +44,7 @@ class PolygonEVP:
         # catch integer argument to construct interior points
         if type(interior_pts) is int:
             if interior_method == 'random':
-                interior_pts = interior_points(self.vertices,interior_pts)
+                interior_pts = interior_points(interior_pts,self.vertices)
             else:
                 raise Exception(f"No interior point selection named {interior_method}")
 
@@ -60,7 +57,7 @@ class PolygonEVP:
                 self.interior_pts = complex_form(self.interior_pts[:,0],self.interior_pts[:,1])
 
         # set default points for the basis to be boundary_pts and interior_pts
-        self.basis.set_default_points(np.concatenate(self.boundary_pts,self.interior_pts))
+        self.basis.set_default_points(np.concatenate((self.boundary_pts,self.interior_pts)))
 
         # default tolerance parameters
         self.rtol = 0
@@ -79,8 +76,8 @@ class PolygonEVP:
             self.n_basis.set_default_points(self.nodes)
 
         # area and perimiter
-        self.area = polygon_area(*self.vertices.T)
-        self.perimiter = polygon_perimiter(*self.vertices.T)
+        self.area = polygon_area(self.vertices)
+        self.perimiter = polygon_perimiter(self.vertices)
 
         # lower bound for first eigenvalue
         self.lambda_1_lb = 5.76*np.pi/self.area

@@ -5,7 +5,7 @@ from .utils import *
 
 class PlanarBasis:
     """Base class for function bases on the plane. Can be parametric, as with FourierBesselBasis,
-    which depends on the spectral parameter \lambda"""
+    which depends on the spectral parameter lambda"""
     def __init__(self):
         pass
     def __call__(self,x,y):
@@ -53,7 +53,7 @@ class FourierBesselBasis(PlanarBasis):
         psis = edge_angles(vertices)
         int_angles = interior_angles(vertices)
         ext_angles = 2*np.pi-int_angles
-        angles = -np.subtract.outer(psis,np.angle(points))
+        angles = np.subtract.outer(np.angle(points),psis)
         angles[angles<0] += 2*np.pi # puts into form for 'positive_edge' mode
         if branch_cuts == 'positive_edge':
             pass
@@ -61,7 +61,7 @@ class FourierBesselBasis(PlanarBasis):
             angles[angles>int_angles] -= 2*np.pi
         elif branch_cuts == 'middle_out':
             angles[angles>(2*np.pi - ext_angles/2)] -= 2*np.pi
-        elif type(branch_cuts) is 'float':
+        elif type(branch_cuts) is float:
             c = 1-branch_cuts
             if c > 1 or c < 0:
                 raise ValueError('branch cuts must be placed at a fraction of the exterior angle')
@@ -74,8 +74,7 @@ class FourierBesselBasis(PlanarBasis):
         else:
             raise ValueError(f"'{branch_cuts}' not a valid branch cut type")
         
-        # return transpose to match expected shape
-        return angles.T
+        return angles
 
     def _set_basis_eval(self,points,y=None):
         """
@@ -91,7 +90,6 @@ class FourierBesselBasis(PlanarBasis):
 
         # compute radii and angles relative to corners with expansions
         orders = self.orders
-        mask = orders>0
         r = np.abs(np.subtract.outer(points,self.vertices))
         theta = self.fourier_bessel_angles(points,self.vertices,self.branch_cuts)
 
@@ -105,7 +103,7 @@ class FourierBesselBasis(PlanarBasis):
                 sin[:,cumk[i]:cumk[i+1]] = np.sin(np.outer(theta[:,i],alphak[i]))
 
         # set up evaluations of bessel part
-        r_rep = np.repeat(r,orders[mask],axis=1)
+        r_rep = np.repeat(r,orders,axis=1)
 
         return r_rep,sin
 

@@ -162,3 +162,7 @@ cython_debug/
 
 # uv lock
 uv.lock
+
+# .npz,.npy files
+*.npz
+*.npy

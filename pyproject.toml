@@ -18,6 +18,7 @@ dependencies = [
     "shapely >= 2.0",
     "joblib >= 1.4",
     "pygsvd>=0.0.2",
+    "jupyter>=1.1.1",
 ]
 
 [tool.uv.sources]
