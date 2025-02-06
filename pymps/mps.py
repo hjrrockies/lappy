@@ -721,9 +721,9 @@ if __name__ == "__main__":
             vertices = np.asarray(vertices)
             if vertices.ndim == 2:
                 if vertices.shape[0] == 2:
-                    vertices = vertices[0] + 1j*vertices[1]
+                    vertices = complex_form(vertices[0],vertices[1])
                 elif vertices.shape[1] == 2:
-                    vertices = vertices[:,0] + 1j*vertices[:,1]
+                    vertices = complex_form(vertices[:,0],vertices[:,1])
             self.basis = FourierBesselBasis(vertices,orders,branch_cuts)
             self.vertices = self.basis.vertices
             self.n_vert = self.basis.n_vert
@@ -742,22 +742,24 @@ if __name__ == "__main__":
             self.boundary_pts = np.asarray(boundary_pts)
             if self.boundary_pts.ndim == 2:
                 if self.boundary_pts.shape[0] == 2:
-                    self.boundary_pts = self.boundary_pts[0] + 1j*self.boundary_pts[1]
+                    self.boundary_pts = complex_form(self.boundary_pts[0],self.boundary_pts[1])
                 elif self.boundary_pts.shape[1] == 2:
-                    self.boundary_pts = self.boundary_pts[:,0] + 1j*self.boundary_pts[:,1]
+                    self.boundary_pts = complex_form(self.boundary_pts[:,0],self.boundary_pts[:,1])
 
             # catch integer argument to construct interior points
             if type(interior_pts) is int:
                 if interior_method == 'random':
-                    interior_pts = interior_points(vertices,interior_pts)
+                    interior_pts = interior_points(self.vertices,interior_pts)
+                else:
+                    raise Exception(f"No interior point selection named {interior_method}")
 
             # process interior_pts array to be in complex form
             self.interior_pts = np.asarray(interior_pts)
             if self.interior_pts.ndim == 2:
                 if self.interior_pts.shape[0] == 2:
-                    self.interior_pts = self.interior_pts[0] + 1j*self.interior_pts[1]
+                    self.interior_pts = complex_form(self.interior_pts[0],self.interior_pts[1])
                 elif self.boundary_pts.shape[1] == 2:
-                    self.interior_pts = self.interior_pts[:,0] + 1j*self.interior_pts[:,1]
+                    self.interior_pts = complex_form(self.interior_pts[:,0],self.interior_pts[:,1])
 
             # set default points for the basis to be boundary_pts and interior_pts
             self.basis.set_default_points(np.concatenate(self.boundary_pts,self.interior_pts))
@@ -957,11 +959,13 @@ if __name__ == "__main__":
             # get eigenbasis coefficient matrix
             C = self.eigenbasis_coef(lambda_,rtol,mtol)
 
-            # return callable function of x,y from the basis
-            def func(x,y):
-                shape = np.asarray(x).shape
+            # return callable function from the basis
+            def func(points,y=None):
+                if y is not None:
+                    points = complex_form(points,y)
+                shape = np.asarray(points).shape
                 shape = (*shape,C.shape[1])
-                return (self.basis(lambda_,x,y)@C).reshape(shape)
+                return (self.basis(lambda_,points)@C).reshape(shape)
             return func
 
         @lru_cache
@@ -1129,19 +1133,25 @@ if __name__ == "__main__":
 
             return (Q[:,:cutoff]@(Vh[-mult:].T))/self.weights
 
-        def eigenbasis_grad(self,lambda_,x,y,rtol=None,mtol=None):
+        def eigenbasis_grad(self,lambda_,points,y=None,rtol=None,mtol=None):
+            """Evaluates the gradient of the eigenbasis. Returns in complex form,
+            with the real part being the partials w.r.t. x, and the imaginary part
+            being the partials w.r.t. to y"""
             if rtol is None: rtol = self.rtol
             if mtol is None: mtol = self.mtol
             # get eigenbasis coefficient matrix
             C = self.eigenbasis_coef(lambda_,rtol,mtol)
 
+            if y is not None:
+                points = complex_form(points,y)
             # evaluate partial derivatives
-            du_dx, du_dy = self.basis.grad(lambda_,x,y)
+            du_dz = self.basis.grad(lambda_,points)
 
-            return du_dx@C, du_dy@C
+            return du_dz@C
 
         @lru_cache
         def outward_normal_derivatives(self,lambda_,n=20,rtol=None,mtol=None):
+            raise NotImplementedError('Needs to be updated for complex arithmetic')
             if rtol is None: rtol = self.rtol
             if mtol is None: mtol = self.mtol
             # polygon vertices
@@ -1167,6 +1177,7 @@ if __name__ == "__main__":
 
         @lru_cache
         def _gram_tensors(self,lambda_,n=20,rtol=None,mtol=None):
+            raise NotImplementedError('Needs to be updated for complex arithmetic')
             if rtol is None: rtol = self.rtol
             if mtol is None: mtol = self.mtol
             # polygon vertices
@@ -1195,6 +1206,7 @@ if __name__ == "__main__":
             return X,Y
 
         def dlambda(self,lambda_,dx=None,dy=None,n=20,rtol=None,mtol=None):
+            raise NotImplementedError('Needs to be updated for complex arithmetic')
             if rtol is None: rtol = self.rtol
             if mtol is None: mtol = self.mtol
             # catch direction derivative input errors
