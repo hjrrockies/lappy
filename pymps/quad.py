@@ -182,6 +182,7 @@ if __name__ == "__main__":
         # select quadrature rule
         if rule == 'chebyshev': quadfunc = cached_chebgauss
         elif rule == 'legendre': quadfunc = cached_leggauss
+        elif rule == 'even': quadfunc = lambda n: (np.linspace(0,1,n+2)[1:-1], np.ones(n)/n)
         else: raise(NotImplementedError(f"quadrature rule {rule} is not implemented"))
 
         # build array of orders (number of nodes/weights) for each edge

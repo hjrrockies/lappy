@@ -567,23 +567,6 @@ if __name__ == "__main__":
     def complex_form(x,y):
         """Converts points on the plane to complex form"""
         return x + 1j*y
-    
-    def thetas(x,y,x_v,y_v):
-        """Computes the angles between given points and the polygon edges which are
-        counter-clockwise from the vertices (x_i,v_i). For use in evaluating Fourier-Bessel
-        functions in the Method of Particular Solutions."""
-        dx_v = np.roll(x_v,-1)-x_v
-        dy_v = np.roll(y_v,-1)-y_v
-        int_angles = calc_angles(x_v,y_v)
-
-        out = np.empty((len(x_v),len(x)))
-        for i in range(len(x_v)):
-            dx,dy = x-x_v[i],y-y_v[i]
-            out[i] = np.arctan2(dx_v[i]*dy-dx*dy_v[i],dx_v[i]*dx+dy_v[i]*dy)
-            out[i][out[i]<0] += 2*np.pi
-            out[i][out[i]>(int_angles[i]/2+np.pi)] -= 2*np.pi
-
-        return out.T
 
     def interior_angles(vertices,y=None):
         """Computes the interior angles of a polygon with given vertices (assumed in complex form x + 1j*y), ordered
@@ -622,7 +605,6 @@ if __name__ == "__main__":
             vertices = complex_form(vertices,y)
         e = polygon_edges(vertices)
         psis = np.angle(e)
-        psis[psis<0] += 2*np.pi
         return psis
     
     def edge_midpoints(vertices,y=None):
