@@ -4,68 +4,59 @@ import matplotlib.pyplot as plt
 from matplotlib import patches, cm, ticker, colors
 from shapely.geometry import Polygon
 from shapely import points
-from scipy.spatial.distance import cdist
 
-def radii(x,y,x_v,y_v):
-    """Computes the radial distance from each point in x,y to each polygon vertex
-    in x_v, y_v. For use in evaluating Fourier-Bessel functions in the Method of
-    Particular Solutions.
-    """
-    return cdist(np.array([x,y]).T,np.array([x_v,y_v]).T)
+def complex_form(x,y):
+    """Converts points on the plane to complex form"""
+    return x + 1j*y
 
-def thetas(x,y,x_v,y_v):
-    """Computes the angles between given points and the polygon edges which are
-    counter-clockwise from the vertices (x_i,v_i). For use in evaluating Fourier-Bessel
-    functions in the Method of Particular Solutions."""
-    dx_v = np.roll(x_v,-1)-x_v
-    dy_v = np.roll(y_v,-1)-y_v
-    int_angles = calc_angles(x_v,y_v)
-
-    out = np.empty((len(x_v),len(x)))
-    for i in range(len(x_v)):
-        dx,dy = x-x_v[i],y-y_v[i]
-        out[i] = np.arctan2(dx_v[i]*dy-dx*dy_v[i],dx_v[i]*dx+dy_v[i]*dy)
-        out[i][out[i]<0] += 2*np.pi
-        out[i][out[i]>(int_angles[i]/2+np.pi)] -= 2*np.pi
-
-    return out.T
-
-def calc_angles(x,y):
-    """Computes the interior angles of a polygon with vertices x and y, ordered
+def interior_angles(vertices,y=None):
+    """Computes the interior angles of a polygon with given vertices (assumed in complex form x + 1j*y), ordered
     counter-clockwise"""
-    dx_p, dx_m = np.roll(x,-1)-x, np.roll(x,1)-x
-    dy_p, dy_m = np.roll(y,-1)-y, np.roll(y,1)-y
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    psis = edge_angles(vertices)
+    phis = edge_angles-np.roll(edge_angles,1)
+    phis[phis<0] += 2*np.pi
+    return phis
 
-    theta = np.arctan2(dx_p*dy_m-dx_m*dy_p,dx_p*dx_m+dy_p*dy_m)
-    theta[theta<0] += 2*np.pi
-    return theta
+def polygon_edges(vertices,y=None):
+    """Computes the edges of a polygon with vertices (assumed in complex form), ordered counter-clockwise"""
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    return np.roll(vertices,-1)-vertices
 
-def calc_dists(x,y):
-    """Computes the side lengths of a polygon with vertices x and y, ordered
+def edge_lengths(vertices,y=None):
+    """Computes the edge lengths of a polygon with vertices in complex form, ordered
     counter-clockwise"""
-    dx_p, dx_m = np.roll(x,1)-x, np.roll(x,-1)-x
-    dy_p, dy_m = np.roll(y,1)-y, np.roll(y,-1)-y
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    return np.abs(polygon_edges(vertices))
 
-    return (dx_p**2+dy_p**2)**0.5, (dx_m**2+dy_m**2)**0.5
+def side_normals(vertices,y=None):
+    """Computes the outward-pointing unit normals to the sides of a
+    polygon with vertices in complex form, ordered counter-clockwise"""
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    e = polygon_edges(vertices)
+    return (e.imag-1j*e.real)/np.abs(e)
 
-def calc_normals(x,y):
-    """Computes the outward-pointing unit normal vectors to the sides of a
-    polygon with vertices x and y, ordered counter-clockwise"""
-    dx, dy = np.roll(x,-1)-x, np.roll(y,-1)-y
-    d = (dx**2+dy**2)**0.5
-    n = np.vstack((dy,-dx))/d
-    return n
+def edge_angles(vertices,y=None):
+    """Gets the angle of each side of a polygon with the given vertices, with respect to the real axis."""
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    e = polygon_edges(vertices)
+    psis = np.angle(e)
+    return psis
 
-def seg_angles(x,y):
-    """Gets the angle of each side of the polygon compared to the x-axis. Purely
-    a helper function"""
-    dx_m = np.roll(x,-1)-x
-    dy_m = np.roll(y,-1)-y
-    return np.arctan2(dy_m,dx_m)
+def edge_midpoints(vertices,y=None):
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    return 0.5*(np.roll(vertices,-1)+vertices)
 
 def boundary_points(x,y,m,method='even',skip=None):
     """Generates points along the boundary of a polygon with vertices x and y,
     ordered counter-clockwise. Makes m points for each side."""
+    raise NotImplementedError('Needs to be updated for complex arithmetic')
     mask = np.ones(len(x),dtype=bool)
     if skip is not None:
         mask[skip] = 0
@@ -76,82 +67,88 @@ def boundary_points(x,y,m,method='even',skip=None):
         raise(NotImplementedError)
     return x_b,y_b
 
-def interior_points(x,y,m,oversamp=10):
-    """Computes random interior points for a polygon with vertices x and y,
+def interior_points(m,vertices,y=None,oversamp=10):
+    """Computes random interior points for a polygon with vertices in complex form,
     ordered counter-clockwise."""
-    x_min, x_max = np.min(x), np.max(x)
-    y_min, y_max = np.min(y), np.max(y)
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    x_min, x_max = np.min(vertices.real), np.max(vertices.real)
+    y_min, y_max = np.min(vertices.imag), np.max(vertices.imag)
     x_i = (x_max-x_min)*np.random.rand(oversamp*m)+x_min
     y_i = (y_max-y_min)*np.random.rand(oversamp*m)+y_min
 
-    poly = Polygon(np.array([x,y]).T)
+    poly = Polygon(np.array([vertices.real,vertices.imag]).T)
     pts = points(np.array([x_i,y_i]).T)
     mask = poly.contains(pts)
     if mask.sum() < m:
-        return interior_points(x,y,oversamp=2*oversamp)
-    return x_i[mask][:m], y_i[mask][:m]
+        return interior_points(m,vertices,oversamp=2*oversamp)
+    return x_i[mask][:m] + 1j*y_i[mask][:m]
 
-def eps_boundary_points(x,y,m,eps,method='even',skip=None):
-    """Computetes points near the boundary. Probably not needed anymore with
-    the most recent developments in boundary derivative calculation."""
-    mask = np.ones(len(x),dtype=bool)
-    n = calc_normals(x,y)
-    if skip is not None:
-        mask[skip] = 0
-    if method == 'even':
-        x_b_eps = (np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask]-eps*n[0][mask]).flatten(order='F')
-        y_b_eps = (np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask]-eps*n[1][mask]).flatten(order='F')
-    elif method == 'chebyshev':
-        pass
-    return x_b_eps,y_b_eps
-
-def plot_polygon(x,y,ax=None,**plotkwargs):
-    """Plot a polygon with vertices x and y, which are assumed to be in
+def plot_polygon(vertices,y=None,ax=None,**plotkwargs):
+    """Plot a polygon with vertices in complex form, which are assumed to be in
     counter-clockwise order."""
-    x_ = np.append(x,x[0])
-    y_ = np.append(y,y[0])
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    v_ = np.append(vertices,vertices[0])
     if ax is None:
         fig = plt.figure()
         ax = plt.gca()
-    ax.plot(x_,y_,**plotkwargs)
+    ax.plot(v_.real,v_.imag,**plotkwargs)
     if ax is None:
         plt.show()
 
-def plot_angles(x,y,ax=None):
+def plot_angles(vertices,y=None,ax=None):
     """Plots the angle arcs to confirm accurate calculation of angles. Also looks
     nice."""
-    theta = np.rad2deg(calc_angles(x,y))
-    d = .5*np.minimum(*calc_dists(x,y))
-    start = np.rad2deg(seg_angles(x,y))
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    phis = np.rad2deg(interior_angles(vertices))
+    d = .5*np.minimum(*edge_lengths(vertices))
+    start = np.rad2deg(edge_angles(vertices))
     if ax is None:
         fig = plt.figure()
         ax = plt.gca()
-    for i in range(len(theta)):
-        arc = patches.Arc((x[i],y[i]),d[i],d[i],angle=start[i],theta2=theta[i])
+    for i in range(len(phis)):
+        arc = patches.Arc((vertices.real[i],vertices.imag[i]),d[i],d[i],angle=start[i],theta2=phis[i])
         ax.add_patch(arc)
 
-def random_polygon(n,r_avg,eps,sigma):
-    """Generate the vertices of a random polygon, with vertices ordered
-    counter-clockwise."""
-    u = np.random.rand(n)
-    dtheta = (2*np.pi/n+eps)*u + (2*np.pi/n-eps)*(1-u)
-    k = dtheta.sum()/(2*np.pi)
-    theta = np.zeros(n)
-    theta[0] = dtheta[0]/k
-    for i in range(1,n):
-        theta[i] = theta[i-1] + dtheta[i]/k
-    r = sigma*np.random.randn(n)+r_avg
-    r[r<0] = 0
-    r[r>2*r_avg] = 2*r_avg
-    x = r*np.cos(theta)
-    y = r*np.sin(theta)
-    return x,y
+def polygon_area(vertices,y=None):
+    """Computes the area of a polygon with vertices in complex form,
+    ordered counter-clockwise. Uses the Shoelace formula."""
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    x,y = vertices.real, vertices.imag
+    return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
 
-def rect_lambda(m,n,L,H):
+def polygon_perimiter(vertices,y=None):
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    return np.sum(edge_lengths(vertices))
+
+def reg_polygon(r,n):
+    """Generates a regular polygon with n vertices and radius r."""
+    theta = np.linspace(0,2*np.pi,n+1)
+    return r*np.exp(1j*theta)[:-1]
+
+def edge_indices(points,vertices):
+    """Takes an array of points and identifies which polygon edge the points lie on,
+    or if they are not on an edge."""
+    raise NotImplementedError('Needs to be updated for complex arithmetic')
+    x,y = points[:,0],points[:,1]
+    n = len(vertices)
+    arr = np.full(len(points),n,dtype='int')
+    for i in range(n):
+        j = i+1
+        if j==n: j=0
+        u,v = vertices[i],vertices[j]
+        mask = np.isclose(np.sqrt((x-u[0])**2+(y-u[1])**2)+np.sqrt((x-v[0])**2+(y-v[1])**2),
+                        np.sqrt((u[0]-v[0])**2+(u[1]-v[1])**2))
+        arr[mask] = i
+    return arr
+
+def rect_eig(m,n,L,H):
     """Computes the (m,n) Dirichlet eigenvalue of an L-by-H rectangle"""
     return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
-
-rect_eig = rect_lambda
 
 def rect_eigs_k(L,H,k,ret_mn=False):
     """Gets first k Dirichlet eigenvalues for an LxH rectangle.
@@ -189,35 +186,22 @@ def rect_eig_bound_idx(bound,L,H):
     which less than a given upper bound"""
     m_max = 1
     while True:
-        eig = rect_lambda(m_max,1,L,H)
+        eig = rect_eig(m_max,1,L,H)
         if eig > bound: break
         m_max += 1
 
     n_max = 1
     while True:
-        eig = rect_lambda(1,n_max,L,H)
+        eig = rect_eig(1,n_max,L,H)
         if eig > bound: break
         n_max += 1
 
     M = np.arange(1,m_max+1)[:,np.newaxis]
     N = np.arange(1,n_max+1)[np.newaxis]
-    Lambda = rect_lambda(M,N,L,H)
+    Lambda = rect_eig(M,N,L,H)
     return np.argwhere(Lambda <= bound)+1
 
-def polygon_area(x,y):
-    """Computes the area of a polygon with vertices x and y,
-    ordered counter-clockwise. Uses the Shoelace formula."""
-    return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
-
-def polygon_perimiter(x,y):
-    return np.sqrt((np.roll(x,-1)-x)**2+(np.roll(y,-1)-y)**2).sum()
-
-def poly_eig_lower_bound(k,x,y):
-    """Very very weak lower bound for planar Dirichlet eigenvalues."""
-    A = polygon_area(x,y)
-    return 2/A*k
-
-def rect_lambda_grad(m,n,L,H):
+def rect_eig_grad(m,n,L,H):
     """Gradients of *simple* rectangular eigenvalues with respect to rectangle
     vertices. Used to test derivative estimation code."""
     m2L3 = m**2/L**3
@@ -227,7 +211,7 @@ def rect_lambda_grad(m,n,L,H):
 def rect_eig_mult(lambda_,L,H,maxind=1000):
     """Compute the indices of rectangle Dirichlet eigenvalues which are
     duplicates of lambda_. For use in testing multiplicity."""
-    Lam = rect_lambda(np.arange(1,maxind)[np.newaxis],np.arange(1,maxind)[:,np.newaxis],L,H)
+    Lam = rect_eig(np.arange(1,maxind)[np.newaxis],np.arange(1,maxind)[:,np.newaxis],L,H)
     diff = np.abs(lambda_-Lam)
     tot = (diff<1e-12).sum()
     ind = np.unravel_index(np.argsort(diff, axis=None), diff.shape)
@@ -236,28 +220,7 @@ def rect_eig_mult(lambda_,L,H,maxind=1000):
 def rect_eig_mult_mn(m,n,L,H):
     """Compute the indices of rectangle Dirichlet eigenvalues which are
     duplicates of the (m,n) eigenvalue. For use in testing multiplicity."""
-    return rect_eig_mult(rect_lambda(m,n,L,H),L,H,maxind=10*max(m,n))
-
-def reg_polygon(r,n):
-    """Generates a regular polygon with n vertices and radius r."""
-    theta = np.linspace(0,2*np.pi,n+1)
-    z = r*np.exp(1j*theta)[:-1]
-    return list(z.real),list(z.imag)
-
-def edge_indices(points,vertices):
-    """Takes an array of points and identifies which polygon edge the points lie on,
-    or if they are not on an edge."""
-    x,y = points[:,0],points[:,1]
-    n = len(vertices)
-    arr = np.full(len(points),n,dtype='int')
-    for i in range(n):
-        j = i+1
-        if j==n: j=0
-        u,v = vertices[i],vertices[j]
-        mask = np.isclose(np.sqrt((x-u[0])**2+(y-u[1])**2)+np.sqrt((x-v[0])**2+(y-v[1])**2),
-                          np.sqrt((u[0]-v[0])**2+(u[1]-v[1])**2))
-        arr[mask] = i
-    return arr
+    return rect_eig_mult(rect_eig(m,n,L,H),L,H,maxind=10*max(m,n))
 
 def invert_permutation(p):
     """Invert a pertmutation vector. For use with column-pivoted QR solves"""
@@ -290,47 +253,6 @@ def golden_search(f,a,b,tol=1e-14,maxiter=100):
             fv = f(v)
     if f(a)<f(b): return a,i
     else: return b,i
-
-# def gp_minsearch(f,a,b,length_scale=2.5,nu=2.5,scale=0.3**2,n=30,alpha=0.3,beta=0.0,gamma=0.1,tol=1e-5):
-#     kernel = scale*gp.kernels.Matern(nu=nu,length_scale=length_scale)
-#     gpr = gp.GaussianProcessRegressor(kernel=kernel,n_targets=2,optimizer=None)
-#
-#     x_train = np.linspace(a,b,n)
-#     y_train = np.array([f(x) for x in x_train])
-#     intervals = np.array([x_train[:-1],x_train[1:]]).T
-#     x_train = x_train.reshape(-1,1)
-#     gpr.fit(x_train,y_train)
-#
-#     def obj(x,alpha=alpha,beta=beta,gamma=gamma):
-#         if x.ndim==0: x = x.reshape(1,-1)
-#         mu,sigma = gpr.predict(x,return_std=True)
-#         return (mu[:,0] - alpha*(sigma[:,0])/(mu[:,1]-beta*sigma[:,1]+gamma))
-#
-#     feval = len(x_train)
-#     while len(intervals) > 0:
-#         new_intervals = []
-#         for interval in intervals:
-#             lcb_min = golden_search(obj,interval[0],interval[1],tol=tol)
-#             if (lcb_min == interval[0]) or (lcb_min == interval[1]):
-#                 pass
-#             else:
-#                 x_new = lcb_min
-#                 y_new = f(x_new)
-#                 feval += 1
-#                 x_train = np.append(x_train,[[x_new]],axis=0)
-#                 y_train = np.append(y_train,[y_new],axis=0)
-#                 gpr.fit(x_train,y_train)
-#                 if x_new-interval[0]>tol:
-#                     new_intervals.append((interval[0],x_new))
-#                 if interval[1]-x_new>tol:
-#                     new_intervals.append((x_new,interval[1]))
-#         intervals = new_intervals
-#
-#     x_train = x_train.flatten()
-#     sort_idx = x_train.argsort()
-#     x_train = x_train[sort_idx]
-#     y_train = y_train[sort_idx]
-#     return gpr,x_train,y_train
 
 def loss_plot(L,H,loss,log=True,ax=None):
     n_levels = 50

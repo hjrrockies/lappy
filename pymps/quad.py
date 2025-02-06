@@ -23,29 +23,47 @@ def cached_chebgauss(order):
     weights = weights/2 #adjust weights to interval of unit length
     return nodes,weights
 
-def boundary_nodes(vertices,order=20,method='legendre',skip=None):
+def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
-    quadrature rules. Transforms the nodes to lie along the given polygon vertices"""
-    if method == 'chebyshev': qnodes,qweights = cached_chebgauss(order)
-    elif method == 'legendre': qnodes,qweights = cached_leggauss(order)
-    else: raise(NotImplementedError(f"method {method} is not implemented"))
-    mask = np.ones(len(vertices),dtype=bool)
-    if skip is not None:
-        mask[skip] = 0
-    n_nodes = order*mask.sum()
-    nodes = np.empty((2,n_nodes))
-    weights = np.empty(n_nodes)
-    x_v,y_v = vertices.T
-    j = 0
+    quadrature rules. Transforms the nodes to lie along the edges of the polygon with
+    the given vertices."""
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    
+    # select quadrature rule
+    if rule == 'chebyshev': quadfunc = cached_chebgauss
+    elif rule == 'legendre': quadfunc = cached_leggauss
+    elif rule == 'even': quadfunc = lambda n: (np.linspace(0,1,n+2)[1:-1], np.ones(n)/n)
+    else: raise(NotImplementedError(f"quadrature rule {rule} is not implemented"))
+
+    # build array of orders (number of nodes/weights) for each edge
+    if type(orders) is int:
+        orders = orders*np.ones(len(vertices),dtype='int')
+        if skip is not None:
+            orders[skip] = 0
+    elif len(orders) != len(vertices):
+        raise ValueError("quadrature orders do not match number of polygon edges")
+    else:
+        if skip is not None:
+            raise ValueError("skip must be 'None' if orders are provided for each edge")
+
+    # set up arrays for nodes and weights
+    n_nodes = np.sum(orders)
+    nodes = np.empty(n_nodes,dtype='complex')
+    weights = np.empty(n_nodes,dtype='float')
+
+    # get polygon edges and lengths
+    edges = polygon_edges(vertices)
+    lens = edge_lengths(vertices)
     for i in range(len(vertices)):
-        if mask[i-1]:
-            a,b = (x_v[i]-x_v[i-1])/2,(x_v[i]+x_v[i-1])/2
-            c,d = (y_v[i]-y_v[i-1])/2,(y_v[i]+y_v[i-1])/2
-            sprime = np.sqrt(a**2+c**2)
-            nodes[:,j*order:(j+1)*order] = a*qnodes + b, c*qnodes + d
-            weights[j*order:(j+1)*order] = qweights*sprime
-            j += 1
-    return nodes.T, weights
+        if orders[i] > 0:
+            start = np.sum(orders[:i])
+            end = np.sum(orders[:i+1])
+            qnodes,qweights = quadfunc(orders[i]) # get quadrature nodes and weights for interval [0,1]
+            # space nodes along edge, adjust weights for edge length
+            nodes[start:end] = edges[i]*qnodes + vertices[i]
+            weights[start:end] = qweights*lens[i]
+    return nodes, weights
 
 ### Triangular meshes and cubature rules
 def load_cubature_rules(path='cubature_rules/'):
@@ -91,18 +109,22 @@ def triangular_mesh(vertices,mesh_size):
     return mesh
 
 def tri_quad(mesh,kind='dunavant',deg=10):
-    """For a given mesh, computes nodes and weights for a specified cubature rule"""
+    """"Sets up a cubature rule for a given mesh, in complex form"""
     # extract mesh vertices and triangle-to-vertex array
     mesh_vertices = mesh.points[:,:2]
     triangles = mesh.cells[1].data
 
+    # get triangle vertices in complex form
     tri_vertices = mesh_vertices[triangles]
-    areas = triangle_areas(mesh_vertices,triangles)
-    bary_coords, bary_weights = get_cubature_rule(kind,deg)
+    tri_vertices_complex = tri_vertices[:,:,0] + 1j*tri_vertices[:,:,1]
 
-    x = tri_vertices[:,:,0]@(bary_coords.T)
-    y = tri_vertices[:,:,1]@(bary_coords.T)
-    nodes = np.array((x.flatten(),y.flatten())).T
+    # get cubature nodes and weights in barycentric form
+    # convert to array of nodes in complex form
+    bary_coords, bary_weights = get_cubature_rule(kind,deg)
+    nodes = np.flatten(tri_vertices_complex@(bary_coords.T))
+
+    # get areas of triangles, scale weights appropriately
+    areas = triangle_areas(mesh_vertices,triangles)
     weights = np.outer(areas,bary_weights).flatten()
     return nodes, weights
 
@@ -169,67 +191,3 @@ def quadrilateral_quad(mesh,order=5):
     mesh_vertices = mesh.points[:,:2]
     quads = mesh.cells[1].data
     return gauss_quad_nodes(mesh_vertices,quads,order)
-
-### Updates for complex form
-if __name__ == "__main__":
-    def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None):
-        """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
-        quadrature rules. Transforms the nodes to lie along the edges of the polygon with
-        the given vertices."""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        
-        # select quadrature rule
-        if rule == 'chebyshev': quadfunc = cached_chebgauss
-        elif rule == 'legendre': quadfunc = cached_leggauss
-        elif rule == 'even': quadfunc = lambda n: (np.linspace(0,1,n+2)[1:-1], np.ones(n)/n)
-        else: raise(NotImplementedError(f"quadrature rule {rule} is not implemented"))
-
-        # build array of orders (number of nodes/weights) for each edge
-        if type(orders) is int:
-            orders = orders*np.ones(len(vertices),dtype='int')
-            if skip is not None:
-                orders[skip] = 0
-        elif len(orders) != len(vertices):
-            raise ValueError("quadrature orders do not match number of polygon edges")
-        else:
-            if skip is not None:
-                raise ValueError("skip must be 'None' if orders are provided for each edge")
-
-        # set up arrays for nodes and weights
-        n_nodes = np.sum(orders)
-        nodes = np.empty(n_nodes,dtype='complex')
-        weights = np.empty(n_nodes,dtype='float')
-
-        # get polygon edges and lengths
-        edges = polygon_edges(vertices)
-        lens = edge_lengths(vertices)
-        for i in range(len(vertices)):
-            if orders[i] > 0:
-                start = np.sum(orders[:i])
-                end = np.sum(orders[:i+1])
-                qnodes,qweights = quadfunc(orders[i]) # get quadrature nodes and weights for interval [0,1]
-                # space nodes along edge, adjust weights for edge length
-                nodes[start:end] = edges[i]*qnodes + vertices[i]
-                weights[start:end] = qweights*lens[i]
-        return nodes, weights
-    
-    def tri_quad(mesh,kind='dunavant',deg=10):
-        """"Sets up a cubature rule for a given mesh, in complex form"""
-        # extract mesh vertices and triangle-to-vertex array
-        mesh_vertices = mesh.points[:,:2]
-        triangles = mesh.cells[1].data
-
-        # get triangle vertices in complex form
-        tri_vertices = mesh_vertices[triangles]
-        tri_vertices_complex = tri_vertices[:,:,0] + 1j*tri_vertices[:,:,1]
-
-        # get cubature nodes and weights in barycentric form
-        # convert to array of nodes in complex form
-        bary_coords, bary_weights = get_cubature_rule(kind,deg)
-        nodes = np.flatten(tri_vertices_complex@(bary_coords.T))
-
-        # get areas of triangles, scale weights appropriately
-        areas = triangle_areas(mesh_vertices,triangles)
-        weights = np.outer(areas,bary_weights).flatten()
-        return nodes, weights
