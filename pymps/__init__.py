@@ -7,7 +7,7 @@ from . import mps
 from . import bases
 from . import quad
 from . import utils
-from . import cubature
+from . import cubature_rules
 
 # classes and functions available directly from tsunamibayes
 from .mps import PolygonEP, PolygonEVP, golden_search
