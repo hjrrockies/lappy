@@ -3,10 +3,19 @@ from scipy.special import jv, jvp, jve
 import scipy.linalg as la
 from .utils import *
 
-# TODO
-# 1. Add "plot_subspace_angles" method or similar
+class PlanarBasis:
+    """Base class for function bases on the plane. Can be parametric, as with FourierBesselBasis,
+    which depends on the spectral parameter \lambda"""
+    def __init__(self):
+        pass
+    def __call__(self,x,y):
+        """Evaluate the basis on a given set of points in the plane"""
+        pass
+    def grad(self,x,y):
+        """Evaluate the gradients of the basis functions on a given set of points in the plane"""
+        pass
 
-class FourierBesselBasis:
+class FourierBesselBasis(PlanarBasis):
     """A class for Fourier-Bessel bases on polygons. Allows the user to fix an evaluation
     set to reduce computation when evaluating on the same grid for several lambdas.
     Also allows the user to evaluate the basis on an arbitrary set."""
@@ -146,3 +155,7 @@ class FourierBesselBasis:
         dtheta = self.alphak_vec*jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*cos
 
         return dr*dr_dx + dtheta*dtheta_dx, dr*dr_dy + dtheta*dtheta_dy
+
+### Updates for complex arithmetic
+if __name__ == "__main__":
+    pass

@@ -561,3 +561,164 @@ def minsearch(f,start,end,h,xtol=1e-8,verbose=False,maxdepth=10):
         print(spaces+f"minsearch on [{start:.3e},{end:.3e}] concluded")
         print(spaces+f"found minima: {minima}")
     return minima, fevals
+
+### Rewrite of utils for complex arithmetic ###
+if __name__ == "__main__":
+    def complex_form(x,y):
+        """Converts points on the plane to complex form"""
+        return x + 1j*y
+    
+    def thetas(x,y,x_v,y_v):
+        """Computes the angles between given points and the polygon edges which are
+        counter-clockwise from the vertices (x_i,v_i). For use in evaluating Fourier-Bessel
+        functions in the Method of Particular Solutions."""
+        dx_v = np.roll(x_v,-1)-x_v
+        dy_v = np.roll(y_v,-1)-y_v
+        int_angles = calc_angles(x_v,y_v)
+
+        out = np.empty((len(x_v),len(x)))
+        for i in range(len(x_v)):
+            dx,dy = x-x_v[i],y-y_v[i]
+            out[i] = np.arctan2(dx_v[i]*dy-dx*dy_v[i],dx_v[i]*dx+dy_v[i]*dy)
+            out[i][out[i]<0] += 2*np.pi
+            out[i][out[i]>(int_angles[i]/2+np.pi)] -= 2*np.pi
+
+        return out.T
+
+    def interior_angles(vertices,y=None):
+        """Computes the interior angles of a polygon with given vertices (assumed in complex form x + 1j*y), ordered
+        counter-clockwise"""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        psis = edge_angles(vertices)
+        phis = edge_angles-np.roll(edge_angles,1)
+        phis[phis<0] += 2*np.pi
+        return phis
+    
+    def polygon_edges(vertices,y=None):
+        """Computes the edges of a polygon with vertices (assumed in complex form), ordered counter-clockwise"""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        return np.roll(vertices,-1)-vertices
+
+    def edge_lengths(vertices,y=None):
+        """Computes the edge lengths of a polygon with vertices in complex form, ordered
+        counter-clockwise"""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        return np.abs(polygon_edges(vertices))
+
+    def side_normals(vertices,y=None):
+        """Computes the outward-pointing unit normals to the sides of a
+        polygon with vertices in complex form, ordered counter-clockwise"""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        e = polygon_edges(vertices)
+        return (e.imag-1j*e.real)/np.abs(e)
+
+    def edge_angles(vertices,y=None):
+        """Gets the angle of each side of a polygon with the given vertices, with respect to the real axis."""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        e = polygon_edges(vertices)
+        psis = np.angle(e)
+        psis[psis<0] += 2*np.pi
+        return psis
+    
+    def edge_midpoints(vertices,y=None):
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        return 0.5*(np.roll(vertices,-1)+vertices)
+
+    def boundary_points(x,y,m,method='even',skip=None):
+        """Generates points along the boundary of a polygon with vertices x and y,
+        ordered counter-clockwise. Makes m points for each side."""
+        raise NotImplementedError('Needs to be updated for complex arithmetic')
+        mask = np.ones(len(x),dtype=bool)
+        if skip is not None:
+            mask[skip] = 0
+        if method == 'even':
+            x_b = np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask].flatten(order='F')
+            y_b = np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask].flatten(order='F')
+        elif method == 'legguass':
+            raise(NotImplementedError)
+        return x_b,y_b
+
+    def interior_points(m,vertices,y=None,oversamp=10):
+        """Computes random interior points for a polygon with vertices in complex form,
+        ordered counter-clockwise."""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        x_min, x_max = np.min(vertices.real), np.max(vertices.real)
+        y_min, y_max = np.min(vertices.imag), np.max(vertices.imag)
+        x_i = (x_max-x_min)*np.random.rand(oversamp*m)+x_min
+        y_i = (y_max-y_min)*np.random.rand(oversamp*m)+y_min
+
+        poly = Polygon(np.array([vertices.real,vertices.imag]).T)
+        pts = points(np.array([x_i,y_i]).T)
+        mask = poly.contains(pts)
+        if mask.sum() < m:
+            return interior_points(m,vertices,oversamp=2*oversamp)
+        return x_i[mask][:m] + 1j*y_i[mask][:m]
+
+    def plot_polygon(vertices,y=None,ax=None,**plotkwargs):
+        """Plot a polygon with vertices in complex form, which are assumed to be in
+        counter-clockwise order."""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        v_ = np.append(vertices,vertices[0])
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.gca()
+        ax.plot(v_.real,v_.imag,**plotkwargs)
+        if ax is None:
+            plt.show()
+
+    def plot_angles(vertices,y=None,ax=None):
+        """Plots the angle arcs to confirm accurate calculation of angles. Also looks
+        nice."""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        phis = np.rad2deg(interior_angles(vertices))
+        d = .5*np.minimum(*edge_lengths(vertices))
+        start = np.rad2deg(edge_angles(vertices))
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.gca()
+        for i in range(len(phis)):
+            arc = patches.Arc((vertices.real[i],vertices.imag[i]),d[i],d[i],angle=start[i],theta2=phis[i])
+            ax.add_patch(arc)
+
+    def polygon_area(vertices,y=None):
+        """Computes the area of a polygon with vertices in complex form,
+        ordered counter-clockwise. Uses the Shoelace formula."""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        x,y = vertices.real, vertices.imag
+        return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
+
+    def polygon_perimiter(vertices,y=None):
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        return np.sum(edge_lengths(vertices))
+
+    def reg_polygon(r,n):
+        """Generates a regular polygon with n vertices and radius r."""
+        theta = np.linspace(0,2*np.pi,n+1)
+        return r*np.exp(1j*theta)[:-1]
+
+    def edge_indices(points,vertices):
+        """Takes an array of points and identifies which polygon edge the points lie on,
+        or if they are not on an edge."""
+        raise NotImplementedError('Needs to be updated for complex arithmetic')
+        x,y = points[:,0],points[:,1]
+        n = len(vertices)
+        arr = np.full(len(points),n,dtype='int')
+        for i in range(n):
+            j = i+1
+            if j==n: j=0
+            u,v = vertices[i],vertices[j]
+            mask = np.isclose(np.sqrt((x-u[0])**2+(y-u[1])**2)+np.sqrt((x-v[0])**2+(y-v[1])**2),
+                            np.sqrt((u[0]-v[0])**2+(u[1]-v[1])**2))
+            arr[mask] = i
+        return arr

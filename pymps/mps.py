@@ -109,7 +109,6 @@ class PolygonEVP:
     def eigs(self,arr):
         self._eigs = np.sort(arr)
 
-
     @cache
     def subspace_sines(self,lambda_,rtol=None,pivot=True):
         """Compute the sines of subspace angles, which are the singular values of Q_B(\\lambda)"""

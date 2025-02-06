@@ -1,20 +1,26 @@
 import numpy as np
 from .utils import *
-from .cubature import get_cubature_rule
 from pygmsh.geo import Geometry
 from numpy.polynomial.chebyshev import chebgauss
 from numpy.polynomial.legendre import leggauss
 from functools import cache
 
+
+### Quadrature rules for domain boundaries
 @cache
 def cached_leggauss(order):
-    return leggauss(order)
+    nodes,weights = leggauss(order)
+    nodes = (nodes+1)/2 #adjust nodes to interval [0,1]
+    weights = weights/2 #adjust weights to interval of unit length
+    return nodes,weights
 
 @cache
 def cached_chebgauss(order):
     nodes,weights = chebgauss(order)
-    # note: we adjust the weights to cancel-out the Gauss-Cheb weighting function!
+    # adjust the weights to cancel-out the Gauss-Cheb weighting function
     weights = weights*np.sqrt(1-nodes**2)
+    nodes = (nodes+1)/2 #adjust nodes to interval [0,1]
+    weights = weights/2 #adjust weights to interval of unit length
     return nodes,weights
 
 def boundary_nodes(vertices,order=20,method='legendre',skip=None):
@@ -40,6 +46,83 @@ def boundary_nodes(vertices,order=20,method='legendre',skip=None):
             weights[j*order:(j+1)*order] = qweights*sprime
             j += 1
     return nodes.T, weights
+
+### Triangular meshes and cubature rules
+def load_cubature_rules(path='cubature_rules/'):
+    kinds = ['7pts','alb_col','bern_esp1','bern_esp2,','bern_esp4','cowper','day_taylor',
+             'dedon_rob','dunavant','vior_rok','xiao_gim','lether','stroud']
+    rules = {}
+    for kind in kinds:
+        try:
+            rules[kind] = np.loadz(path+kind)
+        except:
+            from .cubature_rules import build_cubature_rules, save_cubature_rules
+            save_cubature_rules(build_cubature_rules(),path)
+            rules[kind] = np.loadz(path+kind)
+    return rules
+
+rules = load_cubature_rules()
+def get_cubature_rule(kind,deg):
+    """Returns a cubature rule of a specified kind and degree in barycentric form"""
+    try: arr = rules[kind][deg]
+    except: raise ValueError(f"rule of kind '{kind}' and degree {deg} is not defined")
+    bary_coords = arr[:,:3]
+    bary_weights = arr[:,3]
+    return bary_coords, bary_weights
+
+def triangle_areas(mesh_vertices,triangles):
+    """Computes the areas of triangles in a triangular mesh"""
+    v = mesh_vertices[triangles]
+    return 0.5*np.abs((v[:,0,0]-v[:,2,0])*(v[:,1,1]-v[:,0,1])-(v[:,0,0]-v[:,1,0])*(v[:,2,1]-v[:,0,1]))
+
+def triangular_mesh(vertices,mesh_size):
+    """Builds a triangular mesh with pygmsh"""
+    vertices = np.array(vertices)
+    if vertices.shape[0] == 2:
+        vertices = vertices.T
+    if vertices.shape[1] != 2 or vertices.ndim != 2:
+        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
+
+    # build triangular mesh with pygmsh
+    with Geometry() as geom:
+        geom.add_polygon(vertices,mesh_size)
+        mesh = geom.generate_mesh()
+
+    return mesh
+
+def tri_quad(mesh,kind='dunavant',deg=10):
+    """For a given mesh, computes nodes and weights for a specified cubature rule"""
+    # extract mesh vertices and triangle-to-vertex array
+    mesh_vertices = mesh.points[:,:2]
+    triangles = mesh.cells[1].data
+
+    tri_vertices = mesh_vertices[triangles]
+    areas = triangle_areas(mesh_vertices,triangles)
+    bary_coords, bary_weights = get_cubature_rule(kind,deg)
+
+    x = tri_vertices[:,:,0]@(bary_coords.T)
+    y = tri_vertices[:,:,1]@(bary_coords.T)
+    nodes = np.array((x.flatten(),y.flatten())).T
+    weights = np.outer(areas,bary_weights).flatten()
+    return nodes, weights
+
+### Quadrilateral meshes and quadrature rules
+def quadrilateral_mesh(vertices,mesh_size):
+    """Builds a quadrilateral mesh using pygmsh. NOTE: This function does not always
+    give purely quadrilateral meshes. It is retained only for convenience, and should
+    not be relied on in general."""
+    vertices = np.array(vertices)
+    if vertices.shape[0] == 2:
+        vertices = vertices.T
+    if vertices.shape[1] != 2 or vertices.ndim != 2:
+        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
+
+    # build quadrilateral mesh with pygmsh
+    with Geometry() as geom:
+        polygon = geom.add_polygon(vertices,mesh_size)
+        geom.set_recombined_surfaces([polygon.surface])
+        mesh = geom.generate_mesh(dim=2,algorithm=8)
+    return mesh
 
 def transform_quad(xi,eta,x_v,y_v):
     """Computes a transformation from the reference square [-1,1]^2 to a
@@ -81,95 +164,71 @@ def gauss_quad_nodes(mesh_vertices,quads,order=5):
 
     return nodes.T,weights
 
-def triangle_areas(mesh_vertices,triangles):
-    v = mesh_vertices[triangles]
-    return 0.5*np.abs((v[:,0,0]-v[:,2,0])*(v[:,1,1]-v[:,0,1])-(v[:,0,0]-v[:,1,0])*(v[:,2,1]-v[:,0,1]))
-
-def aggregate_weights(weights,nodes_idx):
-    w = np.zeros(int(nodes_idx.max()+1))
-    for i in range(nodes_idx.shape[0]):
-        for j in range(nodes_idx.shape[1]):
-            w[nodes_idx[i,j]] += weights[i,j]
-    return w
-
-def tri_midpoints(mesh_vertices,triangles):
-    midpoints = np.empty((mesh_vertices.shape[0],mesh_vertices.shape[0],2))
-    midpoints[:,:,0] = np.add.outer(mesh_vertices[:,0],mesh_vertices[:,0])/2
-    midpoints[:,:,1] = np.add.outer(mesh_vertices[:,1],mesh_vertices[:,1])/2
-
-    edges = {}
-    nodes = []
-    nodes_idx = []
-    j = 0
-    for triangle in triangles:
-        for i in range(3):
-            edge = (triangle[i-1],triangle[i])
-            if (edge not in edges.keys()) and (edge[::-1] not in edges.keys()):
-                edges[edge] = j
-                nodes.append(midpoints[edge])
-                j += 1
-            try: nodes_idx.append(edges[edge])
-            except: nodes_idx.append(edges[edge[::-1]])
-    return np.array(nodes),np.array(nodes_idx).reshape(-1,3)
-
-def triangular_mesh(vertices,mesh_size):
-    vertices = np.array(vertices)
-    if vertices.shape[0] == 2:
-        vertices = vertices.T
-    if vertices.shape[1] != 2 or vertices.ndim != 2:
-        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
-
-    # build triangular mesh with pygmsh
-    with Geometry() as geom:
-        geom.add_polygon(vertices,mesh_size)
-        mesh = geom.generate_mesh()
-
-    return mesh
-
-def quadrilateral_mesh(vertices,mesh_size):
-    vertices = np.array(vertices)
-    if vertices.shape[0] == 2:
-        vertices = vertices.T
-    if vertices.shape[1] != 2 or vertices.ndim != 2:
-        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
-
-    # build quadrilateral mesh with pygmsh
-    with Geometry() as geom:
-        polygon = geom.add_polygon(vertices,mesh_size)
-        geom.set_recombined_surfaces([polygon.surface])
-        mesh = geom.generate_mesh(dim=2,algorithm=8)
-    return mesh
-
-def quad_quad(mesh,order=5):
+def quadrilateral_quad(mesh,order=5):
+    """Sets up a quadrature rule for a quadrilateral mesh"""
     mesh_vertices = mesh.points[:,:2]
     quads = mesh.cells[1].data
     return gauss_quad_nodes(mesh_vertices,quads,order)
 
-def tri_quad2(mesh):
-    # extract mesh vertices and triangle-to-vertex array
-    mesh_vertices = mesh.points[:,:2]
-    triangles = mesh.cells[1].data
+### Updates for complex form
+if __name__ == "__main__":
+    def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None):
+        """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
+        quadrature rules. Transforms the nodes to lie along the edges of the polygon with
+        the given vertices."""
+        if y is not None:
+            vertices = complex_form(vertices,y)
+        
+        # select quadrature rule
+        if rule == 'chebyshev': quadfunc = cached_chebgauss
+        elif rule == 'legendre': quadfunc = cached_leggauss
+        else: raise(NotImplementedError(f"quadrature rule {rule} is not implemented"))
 
-    # compute quadrature nodes
-    nodes, nodes_idx = tri_midpoints(mesh_vertices,triangles)
+        # build array of orders (number of nodes/weights) for each edge
+        if type(orders) is int:
+            orders = orders*np.ones(len(vertices),dtype='int')
+            if skip is not None:
+                orders[skip] = 0
+        elif len(orders) != len(vertices):
+            raise ValueError("quadrature orders do not match number of polygon edges")
+        else:
+            if skip is not None:
+                raise ValueError("skip must be 'None' if orders are provided for each edge")
 
-    areas = triangle_areas(mesh_vertices,triangles)
-    weights = np.repeat((areas/3)[:,np.newaxis],3,axis=1)
-    weights = aggregate_weights(weights,nodes_idx)
+        # set up arrays for nodes and weights
+        n_nodes = np.sum(orders)
+        nodes = np.empty(n_nodes,dtype='complex')
+        weights = np.empty(n_nodes,dtype='float')
 
-    return nodes, weights
+        # get polygon edges and lengths
+        edges = polygon_edges(vertices)
+        lens = edge_lengths(vertices)
+        for i in range(len(vertices)):
+            if orders[i] > 0:
+                start = np.sum(orders[:i])
+                end = np.sum(orders[:i+1])
+                qnodes,qweights = quadfunc(orders[i]) # get quadrature nodes and weights for interval [0,1]
+                # space nodes along edge, adjust weights for edge length
+                nodes[start:end] = edges[i]*qnodes + vertices[i]
+                weights[start:end] = qweights*lens[i]
+        return nodes, weights
+    
+    def tri_quad(mesh,kind='dunavant',deg=10):
+        """"Sets up a cubature rule for a given mesh, in complex form"""
+        # extract mesh vertices and triangle-to-vertex array
+        mesh_vertices = mesh.points[:,:2]
+        triangles = mesh.cells[1].data
 
-def tri_quad(mesh,kind='dunavant',deg=10):
-    # extract mesh vertices and triangle-to-vertex array
-    mesh_vertices = mesh.points[:,:2]
-    triangles = mesh.cells[1].data
+        # get triangle vertices in complex form
+        tri_vertices = mesh_vertices[triangles]
+        tri_vertices_complex = tri_vertices[:,:,0] + 1j*tri_vertices[:,:,1]
 
-    tri_vertices = mesh_vertices[triangles]
-    areas = triangle_areas(mesh_vertices,triangles)
-    bary_coords, bary_weights = get_cubature_rule(kind,deg)
+        # get cubature nodes and weights in barycentric form
+        # convert to array of nodes in complex form
+        bary_coords, bary_weights = get_cubature_rule(kind,deg)
+        nodes = np.flatten(tri_vertices_complex@(bary_coords.T))
 
-    x = tri_vertices[:,:,0]@(bary_coords.T)
-    y = tri_vertices[:,:,1]@(bary_coords.T)
-    nodes = np.array((x.flatten(),y.flatten())).T
-    weights = np.outer(areas,bary_weights).flatten()
-    return nodes, weights
+        # get areas of triangles, scale weights appropriately
+        areas = triangle_areas(mesh_vertices,triangles)
+        weights = np.outer(areas,bary_weights).flatten()
+        return nodes, weights
