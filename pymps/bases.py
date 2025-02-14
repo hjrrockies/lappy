@@ -53,7 +53,7 @@ class FourierBesselBasis(PlanarBasis):
         psis = edge_angles(vertices)
         int_angles = interior_angles(vertices)
         ext_angles = 2*np.pi-int_angles
-        angles = np.subtract.outer(np.angle(points),psis)
+        angles = np.angle(np.subtract.outer(points,vertices))-psis
         angles[angles<0] += 2*np.pi # puts into form for 'positive_edge' mode
         if branch_cuts == 'positive_edge':
             pass
@@ -126,10 +126,10 @@ class FourierBesselBasis(PlanarBasis):
                 points = complex_form(points,y)
             r_rep,sin = self._set_basis_eval(points)
 
-        out = jve(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+        out = jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
         return out
 
-    def _set_derivative_eval(self,points,y=None):
+    def _set_gradient_eval(self,points,y=None):
         if y is None:
             x,y = points.real,points.imag
         else:
@@ -172,16 +172,34 @@ class FourierBesselBasis(PlanarBasis):
 
         return cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy
 
-    def grad(self,lambda_,points,y=None):
+    def grad(self,lambda_,points=None,y=None):
         """Computes the gradients of the basis functions at the given points, returning
         the values in complex form (real part for partials w.r.t. to x_i, imaginary part 
         for partials w.r.t. y_i)"""
         if y is not None:
             points = complex_form(points,y)
         r_rep,sin = self._set_basis_eval(points)
-        cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy = self._set_derivative_eval(points)
+        cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy = self._set_gradient_eval(points)
 
         dr = np.sqrt(lambda_)*jvp(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
         dtheta = self.alphak_vec*jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*cos
 
         return dr*dr_dx + dtheta*dtheta_dx + 1j*(dr*dr_dy + dtheta*dtheta_dy)
+    
+    def Aprime(self,lambda_,points=None,y=None):
+        """Computes the derivatives of the basis functions with respect to the spectral
+        parameter lambda. In other words, computes the matrix A'(lambda)."""
+        if (points is None) and (y is not None):
+            raise ValueError('x coordinates must be provided when y coordinates are provided')
+        elif points is None:
+            if self.r_rep is None:
+                raise ValueError('Basis has no default points. Provide evaluation '\
+                                'points or use FourierBesselBasis.set_default_points')
+            r_rep,sin = self.r_rep,self.sin
+        else:
+            if y is not None:
+                points = complex_form(points,y)
+            r_rep,sin = self._set_basis_eval(points)
+
+
+        return (0.5/np.sqrt(lambda_))*r_rep*jvp(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin

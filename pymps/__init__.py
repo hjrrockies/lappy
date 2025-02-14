@@ -8,6 +8,7 @@ from . import bases
 from . import quad
 from . import utils
 from . import cubature_rules
+from . import opt
 
 # classes and functions available directly from tsunamibayes
 from .mps import PolygonEVP, golden_search

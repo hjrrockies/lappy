@@ -1,3 +1,5 @@
+import collections
+import functools
 import numpy as np
 import scipy.linalg as la
 import matplotlib.pyplot as plt
@@ -14,8 +16,8 @@ def interior_angles(vertices,y=None):
     counter-clockwise"""
     if y is not None:
         vertices = complex_form(vertices,y)
-    psis = edge_angles(vertices)
-    phis = psis-np.roll(psis,1)
+    e = polygon_edges(vertices)
+    phis = np.roll(np.angle(-e),1)-np.angle(e)
     phis[phis<0] += 2*np.pi
     return phis
 
@@ -87,14 +89,17 @@ def interior_points(m,vertices,y=None,oversamp=10):
 def plot_polygon(vertices,y=None,ax=None,**plotkwargs):
     """Plot a polygon with vertices in complex form, which are assumed to be in
     counter-clockwise order."""
+    if ax is None: makeax = True
+    else: makeax = False
     if y is not None:
         vertices = complex_form(vertices,y)
     v_ = np.append(vertices,vertices[0])
-    if ax is None:
+    if makeax:
         fig = plt.figure()
         ax = plt.gca()
     ax.plot(v_.real,v_.imag,**plotkwargs)
-    if ax is None:
+    if makeax:
+        ax.set_aspect('equal')
         plt.show()
 
 def plot_angles(vertices,y=None,ax=None):
@@ -352,277 +357,3 @@ def logify(obj):
             return np.log(obj(*args,**kwargs)+1e-200)
     return log_obj
 
-def discrete_local_min_idx(x,y):
-    x = x.flatten()
-    sort_idx = x.argsort()
-    x = x[sort_idx]
-    y = y[sort_idx]
-
-    min_idx = np.argwhere((y[1:-1]<y[:-2])*(y[1:-1]<y[2:]))
-    return min_idx+1
-
-def parabola_vertex(x,y):
-    """Finds the vertex of a parabola passing through the points
-    {(x[0],y[0]),(x[1],y[1]),(x[2],y[2])}"""
-    dx0,dx1,dx2 = x[1]-x[0],x[2]-x[1],x[2]-x[0]
-    dy0,dy1,dy2 = y[1]-y[0],y[2]-y[1],y[2]-y[0]
-
-    C = (dx0*dy1 - dx1*dy0)/(dx0*dx1*dx2)
-    if C<=0 or np.isnan(C): vertex = x[np.argmin(y)]
-    else: vertex = (x[1]+x[2]-dy1/(dx1*C))/2
-    return vertex
-
-def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,verbose=False):
-    """Finds a local minimum of f in the interval [x[0],x[2]] by repeated parabolic interpolation."""
-    if x[1]<=x[0] or x[2]<=x[1]:
-        raise ValueError('x not increasing!')
-
-    # shift left endpoint to zero for maximum precisioon
-    z = x-x[0]
-
-    # shifted interval bounds
-    zlo, zhi = z[0],z[2]
-
-    # function evaluation & rescue counters
-    fevals = 0
-    rescues = 0
-
-    # previous vertex
-    vold = np.nan
-
-    if verbose: print(f'parabolic_iter_min on ({x[0]:.3e},{x[1]:.3e},{x[2]:.3e})')
-    # iterative parabolic interpolation
-    for i in range(maxiter):
-        v = parabola_vertex(z,y)
-
-        # if the vertex hasn't changed much, conclude iteration
-        if np.abs(v-vold)<xtol:
-            break
-
-        # vertex falls off left, rescue if possible
-        elif v<zlo:
-            if verbose: print('fell off left')
-            if rescues < maxresc:
-                rescues += 1
-                v = (1-resc_param)*zlo + resc_param*z[1]
-            else:
-                if verbose: print('too many rescues')
-                return None, fevals
-        # vertex falls off right, rescue if possible
-        elif v>zhi:
-            if verbose: print('fell off right')
-            if rescues < maxresc:
-                rescues += 1
-                v = (1-resc_param)*zhi + resc_param*z[1]
-            else:
-                if verbose: print('too many rescues')
-                return None, fevals
-        # if vertex too close to old points, wiggle it
-        if np.abs(z-v).min() < xtol/2: v += xtol
-
-        # interpolate using new vertex and adjacent points in z
-        vold = v
-        yv = f(v+x[0])
-        fevals += 1
-        if v<z[1]:
-            z = np.array([z[0],v,z[1]])
-            y = np.array([y[0],yv,y[1]])
-        elif z[1]<v:
-            z = np.array([z[1],v,z[2]])
-            y = np.array([y[1],yv,y[2]])
-        if verbose: print(f'z={np.array_str(z,precision=3)}')
-
-    # return final vertex, shifted back to original interval
-    if verbose: print(f'parabolic_iter_min concluded, x_min={v+x[0]}')
-    return v+x[0], fevals
-
-def minsearch(f,start,end,h,xtol=1e-8,verbose=False,maxdepth=10):
-    """Finds all minima in the interval [start,end]"""
-    spaces = (10-maxdepth)*('  ')
-    x0,x1 = start, start+h
-    y0,y1 = f(x0), f(x1)
-    fevals = 2
-    n_intervals = int(np.ceil((end-start)/h))
-    minima = []
-    if h<= xtol:
-        maxdepth = 0
-    if verbose:
-        print(spaces+f'minsearch on [{start:.3e},{end:.3e}]')
-        print(spaces+f'h={h}, n_intervals={n_intervals}')
-    for i in range(n_intervals-2):
-        x2 = x1 + h
-        y2 = f(x2)
-        fevals += 1
-        x = np.array([x0,x1,x2])
-        y = np.vstack((y0,y1,y2)).T
-        if verbose:
-            print(spaces+f'x={np.array_str(x,precision=3)}')
-            print(spaces+f'sigma1={np.array_str(y[0],precision=3)}')
-            print(spaces+f'sigma2={np.array_str(y[1],precision=3)}')
-
-        # catch discrete local min
-        if (y1[0]<y0[0] and y1[0]<y2[0]):
-            if verbose: print(spaces+f'discrete local min at x={x1:.3e}')
-
-            # catch small second subspace angle, recurse on finer grid
-            if np.min(y[1]) < 1.1*h and maxdepth > 0:
-                if verbose:
-                    print(spaces+f'sigma2 = {np.min(y[1]):.3e}<1.1*h={1.1*h:.3e}')
-                    print('recursing on finer grid...')
-                mins, fe = minsearch(f,x0-h/2,x2+h/2,h/2,xtol=xtol,verbose=verbose,maxdepth=maxdepth-1)
-                minima += [x for x in mins if (x>=x0) and (x<=x2)]
-                fevals += fe
-            else:
-                min, fe = parabolic_iter_min(lambda x: f(x)[0]**2,x,y[0]**2,xtol=xtol,verbose=verbose)
-                if min is not None: minima.append(min)
-                fevals += fe
-
-        x0,x1 = x1,x2
-        y0,y1 = y1,y2
-    if verbose:
-        print(spaces+f"minsearch on [{start:.3e},{end:.3e}] concluded")
-        print(spaces+f"found minima: {minima}")
-    return minima, fevals
-
-### Rewrite of utils for complex arithmetic ###
-if __name__ == "__main__":
-    def complex_form(x,y):
-        """Converts points on the plane to complex form"""
-        return x + 1j*y
-
-    def interior_angles(vertices,y=None):
-        """Computes the interior angles of a polygon with given vertices (assumed in complex form x + 1j*y), ordered
-        counter-clockwise"""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        psis = edge_angles(vertices)
-        phis = edge_angles-np.roll(edge_angles,1)
-        phis[phis<0] += 2*np.pi
-        return phis
-    
-    def polygon_edges(vertices,y=None):
-        """Computes the edges of a polygon with vertices (assumed in complex form), ordered counter-clockwise"""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        return np.roll(vertices,-1)-vertices
-
-    def edge_lengths(vertices,y=None):
-        """Computes the edge lengths of a polygon with vertices in complex form, ordered
-        counter-clockwise"""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        return np.abs(polygon_edges(vertices))
-
-    def side_normals(vertices,y=None):
-        """Computes the outward-pointing unit normals to the sides of a
-        polygon with vertices in complex form, ordered counter-clockwise"""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        e = polygon_edges(vertices)
-        return (e.imag-1j*e.real)/np.abs(e)
-
-    def edge_angles(vertices,y=None):
-        """Gets the angle of each side of a polygon with the given vertices, with respect to the real axis."""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        e = polygon_edges(vertices)
-        psis = np.angle(e)
-        return psis
-    
-    def edge_midpoints(vertices,y=None):
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        return 0.5*(np.roll(vertices,-1)+vertices)
-
-    def boundary_points(x,y,m,method='even',skip=None):
-        """Generates points along the boundary of a polygon with vertices x and y,
-        ordered counter-clockwise. Makes m points for each side."""
-        raise NotImplementedError('Needs to be updated for complex arithmetic')
-        mask = np.ones(len(x),dtype=bool)
-        if skip is not None:
-            mask[skip] = 0
-        if method == 'even':
-            x_b = np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask].flatten(order='F')
-            y_b = np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask].flatten(order='F')
-        elif method == 'legguass':
-            raise(NotImplementedError)
-        return x_b,y_b
-
-    def interior_points(m,vertices,y=None,oversamp=10):
-        """Computes random interior points for a polygon with vertices in complex form,
-        ordered counter-clockwise."""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        x_min, x_max = np.min(vertices.real), np.max(vertices.real)
-        y_min, y_max = np.min(vertices.imag), np.max(vertices.imag)
-        x_i = (x_max-x_min)*np.random.rand(oversamp*m)+x_min
-        y_i = (y_max-y_min)*np.random.rand(oversamp*m)+y_min
-
-        poly = Polygon(np.array([vertices.real,vertices.imag]).T)
-        pts = points(np.array([x_i,y_i]).T)
-        mask = poly.contains(pts)
-        if mask.sum() < m:
-            return interior_points(m,vertices,oversamp=2*oversamp)
-        return x_i[mask][:m] + 1j*y_i[mask][:m]
-
-    def plot_polygon(vertices,y=None,ax=None,**plotkwargs):
-        """Plot a polygon with vertices in complex form, which are assumed to be in
-        counter-clockwise order."""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        v_ = np.append(vertices,vertices[0])
-        if ax is None:
-            fig = plt.figure()
-            ax = plt.gca()
-        ax.plot(v_.real,v_.imag,**plotkwargs)
-        if ax is None:
-            plt.show()
-
-    def plot_angles(vertices,y=None,ax=None):
-        """Plots the angle arcs to confirm accurate calculation of angles. Also looks
-        nice."""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        phis = np.rad2deg(interior_angles(vertices))
-        d = .5*np.minimum(*edge_lengths(vertices))
-        start = np.rad2deg(edge_angles(vertices))
-        if ax is None:
-            fig = plt.figure()
-            ax = plt.gca()
-        for i in range(len(phis)):
-            arc = patches.Arc((vertices.real[i],vertices.imag[i]),d[i],d[i],angle=start[i],theta2=phis[i])
-            ax.add_patch(arc)
-
-    def polygon_area(vertices,y=None):
-        """Computes the area of a polygon with vertices in complex form,
-        ordered counter-clockwise. Uses the Shoelace formula."""
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        x,y = vertices.real, vertices.imag
-        return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
-
-    def polygon_perimiter(vertices,y=None):
-        if y is not None:
-            vertices = complex_form(vertices,y)
-        return np.sum(edge_lengths(vertices))
-
-    def reg_polygon(r,n):
-        """Generates a regular polygon with n vertices and radius r."""
-        theta = np.linspace(0,2*np.pi,n+1)
-        return r*np.exp(1j*theta)[:-1]
-
-    def edge_indices(points,vertices):
-        """Takes an array of points and identifies which polygon edge the points lie on,
-        or if they are not on an edge."""
-        raise NotImplementedError('Needs to be updated for complex arithmetic')
-        x,y = points[:,0],points[:,1]
-        n = len(vertices)
-        arr = np.full(len(points),n,dtype='int')
-        for i in range(n):
-            j = i+1
-            if j==n: j=0
-            u,v = vertices[i],vertices[j]
-            mask = np.isclose(np.sqrt((x-u[0])**2+(y-u[1])**2)+np.sqrt((x-v[0])**2+(y-v[1])**2),
-                            np.sqrt((u[0]-v[0])**2+(u[1]-v[1])**2))
-            arr[mask] = i
-        return arr

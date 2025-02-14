@@ -3,8 +3,18 @@ import scipy.linalg as la
 from .bases import FourierBesselBasis
 from .quad import boundary_nodes_polygon, cached_leggauss
 from .utils import *
+from .opt import minsearch, minsearch2
 from functools import cache, lru_cache
 from pygsvd import gsvd
+from scipy.special import jv
+from joblib import Parallel, delayed
+
+def solve_obj(lambda_,sin,r_rep,alphak_vec,m_b):
+    """Function for solving for the spectrum"""
+    A = jv(alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+    C,S,_ = gsvd(A[:m_b],A[m_b:],extras='')
+    sigmas = np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
+    return sigmas[:2]
 
 class PolygonEVP:
     """Class for polygonal Dirichlet Laplacian eigenproblems
@@ -80,7 +90,14 @@ class PolygonEVP:
         self.perimiter = polygon_perimiter(self.vertices)
 
         # lower bound for first eigenvalue
-        self.lambda_1_lb = 5.76*np.pi/self.area
+        self.eig1_lb = 5.76*np.pi/self.area
+
+        # asymptotic adjustment parameter
+        int_angles = interior_angles(self.vertices)
+        self.asym_K = (np.pi/int_angles - int_angles/np.pi).sum()/24
+
+        # eigenvalues
+        self.eigenvalues = np.array([],dtype='float')
 
     @cache
     def subspace_sines(self,lambda_,rtol=None,pivot=True):
@@ -132,6 +149,13 @@ class PolygonEVP:
         m_b = self.boundary_pts.shape[0]
         C,S,_ = gsvd(A[:m_b],A[m_b:],extras='')
         return np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))[::-1]
+    
+    def _get_obj_args(self):
+        """Builds the objective function and arguments for the eigensolver"""
+        sin,r_rep = self.basis.sin, self.basis.r_rep
+        alphak_vec = self.basis.alphak_vec
+        m_b = int(self.boundary_pts.shape[0])
+        return sin,r_rep,alphak_vec,m_b
 
     @cache
     def rgsvd_subspace_tans(self,lambda_,rtol=None):
@@ -141,7 +165,7 @@ class PolygonEVP:
         m_b = self.boundary_pts.shape[0]
 
         Q,R = la.qr(A, mode='economic')
-        U,s,V = la.svd(R)
+        U,s,_ = la.svd(R)
         cutoff = (s>rtol).sum()
         if cutoff == 0:
             cutoff = 1
@@ -244,6 +268,91 @@ class PolygonEVP:
         """Compute the smallest generalized eigenvalue value of the pencil {(A_B^T)A_B,(A_I^T)A_I}"""
         s = self.gevd_subspace_tans(lambda_)
         return s[0]
+    
+    def solve_eigs_interval(self,a,b,n_levels=None,ppl=10,xtol=1e-8,maxdepth=10,rtol=None,mtol=None,n_jobs=1,verbose=False):
+        """Finds all the eigenvalues in an interval [a,b]"""
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+
+        # extract objective function arguments
+        fargs = self._get_obj_args()
+
+        # define number of grid points
+        if n_levels is None:
+            n_levels = int(np.ceil(self.weyl_N(b)-self.weyl_N(a))) + 1
+        n = n_levels*ppl
+
+        # single process mode
+        if n_jobs == 1:
+            minima, fevals = minsearch2(solve_obj,a,b,n,xtol,fargs,maxdepth,verbose)
+        # multi-process mode
+        else:
+            minima, fevals = [],0
+            # split search domain into n_jobs pieces
+            length = (b-a)/n_jobs
+            n = int(np.ceil(n/n_jobs))
+            A = length*np.arange(n_jobs) + a
+            B = length*np.arange(1,n_jobs+1) + a
+            res = Parallel(n_jobs=n_jobs)(delayed(minsearch2)(solve_obj,a_,b_,n,xtol,fargs,maxdepth,verbose) for a_,b_ in zip(A,B))
+            for mins,fe in res:
+                minima += mins
+                fevals += fe
+        
+        # process to check for multiplicity
+        minima = np.sort(minima)
+        eigs = []
+        for min in minima:
+            tans = self.gsvd_subspace_tans(min)
+            fevals += 1
+            mult = int((tans<mtol).sum())
+            eigs += mult*[min]
+        eigs = np.sort(eigs)
+
+        # # weyl check
+        # weyl_est = self.weyl_N(eigs)
+        # increments = weyl_est[1:]-weyl_est[0]
+        # diff = increments - np.arange(len(eigs)-1)
+        # if np.any(diff>1):
+        #     print(f"warning: fewer eigenvalues detected in interval ({a:.3e},{b:.3e}) than expected")
+        #     first_exception = np.nonzero(diff>1)[0]
+        #     print(f"deficiency detected at lam={eigs[first_exception+1]}")
+        # if np.any(diff<-1):
+        #     print(f"warning: excess eigenvalues detected in interval ({a:.3e},{b:.3e}) than expected")
+        #     first_exception = np.nonzero(diff<-1)[0]
+        #     print(f"excess detected at lam={eigs[first_exception+1]}")
+        return eigs,fevals
+        
+    
+    def solve_eigs_ordered(self,N,ppl=10,xtol=1e-8,rtol=None,mtol=None,maxdepth=10,n_jobs=1,verbose=False):
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+        # check for solved eigenvalues
+        N_current = len(self.eigenvalues)
+        
+        # already have enough eigs
+        if N_current >= N:
+            return self.eigenvalues[:N]
+        # need more eigs
+        else:
+            N_needed = N - N_current
+            # set up search domain
+            if len(self.eigenvalues) == 0:
+                a = self.eig1_lb
+            else:
+                a = self.eigenvalues.max()+xtol
+            b = self.weyl_k(N+1)
+            n_levels = N_needed+1
+            eigs,fevals = self.solve_eigs_interval(a,b,n_levels,ppl,xtol,maxdepth,rtol,mtol,n_jobs,verbose)
+            self.eigenvalues = np.sort(np.concatenate((self.eigenvalues,eigs)))
+            return self.eigenvalues[:N], fevals
+
+        # # check if enough eigenvalues have been found
+        # if len(self.eigenvalues) >= N:
+        #     return self.eigenvalues[:N]
+        # # if still deficient, check weyl asymptotics
+        # else:
+        #     argdiff, diff = self.weyl_check(self.eigenvalues)
+
 
     @lru_cache
     def eigenbasis(self,lambda_,rtol=None,mtol=None):
@@ -450,24 +559,23 @@ class PolygonEVP:
         if rtol is None: rtol = self.rtol
         if mtol is None: mtol = self.mtol
         # polygon vertices
-        x_v,y_v = self.vertices.T
+        x_v,y_v = self.vertices.real, self.vertices.imag
+        e = polygon_edges(self.vertices)
 
         # Gaussian quadrature nodes
-        qnodes = cached_leggauss(n)[0]
+        qnodes = cached_leggauss(n)[0][np.newaxis]
 
         # transform nodes to boundary intervals
-        slope_x, int_x = (np.roll(x_v,-1)-x_v)/2, (np.roll(x_v,-1)+x_v)/2
-        slope_y, int_y = (np.roll(y_v,-1)-y_v)/2, (np.roll(y_v,-1)+y_v)/2
-        x_b = qnodes[np.newaxis]*slope_x[:,np.newaxis] + int_x[:,np.newaxis]
-        y_b = qnodes[np.newaxis]*slope_y[:,np.newaxis] + int_y[:,np.newaxis]
+        boundary_nodes = e[:,np.newaxis]*qnodes + self.vertices[:,np.newaxis]
 
         # get basis gradients & reshape
-        du_dx, du_dy = self.eigenbasis_grad(lambda_,x_b,y_b,rtol,mtol)
-        du_dx = du_dx.reshape((self.n_vert,-1,du_dx.shape[1]))
-        du_dy = du_dy.reshape((self.n_vert,-1,du_dy.shape[1]))
+        du_dz = self.eigenbasis_grad(lambda_,boundary_nodes.flatten(),rtol,mtol)
+        mult = du_dz.shape[1]
+        du_dz = du_dz.reshape()
 
         # compute outward normal derivatives
-        n = calc_normals(x_v,y_v).T[:,:,np.newaxis]
+        n = side_normals(self.vertices)
+
         return n[:,:1]*du_dx + n[:,1:]*du_dy
 
     @lru_cache
@@ -501,7 +609,6 @@ class PolygonEVP:
         return X,Y
 
     def dlambda(self,lambda_,dx=None,dy=None,n=20,rtol=None,mtol=None):
-        raise NotImplementedError('Needs to be updated for complex arithmetic')
         if rtol is None: rtol = self.rtol
         if mtol is None: mtol = self.mtol
         # catch direction derivative input errors
@@ -513,7 +620,7 @@ class PolygonEVP:
                 raise ValueError(f'dx and dy must both be length {self.n_vert}')
 
         # compute multiplicity
-        _,mult = self.sigma(lambda_,rtol,btol,mult_check=True)
+        _,mult = self.sigma(lambda_,rtol,mtol,mult_check=True)
 
         # catch repeated eigs
         if (mult > 1) and (dx is None):
@@ -534,12 +641,40 @@ class PolygonEVP:
                 return M[0,0]
             else: # repeated eigenvalue
                 return la.eigh(M,eigvals_only=True)
+            
+    ### Asymptotics
+    def weyl_N(self,lam):
+        """Two-term Weyl asymptotics for the eigenvalue counting function"""
+        A = self.area
+        P = self.perimiter
+        return (A*lam - P*np.sqrt(lam))/(4*np.pi)
 
     def weyl_k(self,k):
+        """Weyl asymptotic estimate for the kth eigenvalue"""
         A = self.area
         P = self.perimiter
         return ((P+np.sqrt(P**2+16*np.pi*A*k))/(2*A))**2
+    
+    def adj_weyl_N(self,lam):
+        A = self.area
+        P = self.perimiter
+        K = self.asym_K
+        return (A*lam - P*np.sqrt(lam))/(4*np.pi) + K
+    
+    def adj_weyl_k(self,k):
+        A = self.area
+        P = self.perimiter
+        K = self.asym_K
+        return ((P+np.sqrt(P**2+16*np.pi*A*(k-K)))/(2*A))**2
+    
+    def weyl_check(self,eigs,tol=1):
+        weyl_est = self.weyl_N(eigs)
+        true_N = np.arange(1,len(eigs)+1)
+        diff = weyl_est - true_N
+        argdiff = eigs[diff>tol]
+        return argdiff, diff
 
+    ### Helper functions for plotting subspace angles
     def plot_sigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
         if rtol is None: rtol = self.rtol
         if low < 1e-16 : low = 1e-16
@@ -564,6 +699,18 @@ class PolygonEVP:
             plt.plot(L,gsigma,**kwargs)
         else:
             ax.plot(L,gsigma,**kwargs)
+
+    def plot_gsvd_subspace_tans(self,low,high,nlam,n_angle,ax=None,**kwargs):
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        tans = np.empty((len(L),n_angle))
+        for i,lam in enumerate(L):
+            tans[i] = self.gsvd_subspace_tans(lam)[:n_angle]
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,tans,**kwargs)
+        else:
+            ax.plot(L,tans,**kwargs)
 
     def plot_rgsigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
         if rtol is None: rtol = self.rtol
