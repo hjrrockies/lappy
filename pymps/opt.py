@@ -23,8 +23,9 @@ def parabola_vertex(x,y):
     else: vertex = (x[1]+x[2]-dy1/(dx1*C))/2
     return vertex
 
-def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,verbose=False):
+def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,nrecurse=0,verbose=False):
     """Finds a local minimum of f in the interval [x[0],x[2]] by repeated parabolic interpolation."""
+    tabs = min(nrecurse,10)*"\t"
     if x[1]<=x[0] or x[2]<=x[1]:
         raise ValueError('x not increasing!')
 
@@ -41,7 +42,7 @@ def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,verbo
     # previous vertex
     vold = np.nan
 
-    if verbose: print(f'parabolic_iter_min on ({x[0]:.3e},{x[1]:.3e},{x[2]:.3e})')
+    if verbose: print(tabs+f"parabolic_iter_min on ({x[0]:.3e},{x[1]:.3e},{x[2]:.3e})")
     # iterative parabolic interpolation
     for i in range(maxiter):
         v = parabola_vertex(z,y)
@@ -52,21 +53,21 @@ def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,verbo
 
         # vertex falls off left, rescue if possible
         elif v<zlo-2*xtol:
-            if verbose: print('fell off left')
+            if verbose: print(tabs+'fell off left')
             if rescues < maxresc:
                 rescues += 1
                 v = (1-resc_param)*zlo + resc_param*z[1]
             else:
-                if verbose: print('too many rescues')
+                if verbose: print(tabs+'too many rescues')
                 return None, fevals
         # vertex falls off right, rescue if possible
         elif v>zhi+2*xtol:
-            if verbose: print('fell off right')
+            if verbose: print(tabs+'fell off right')
             if rescues < maxresc:
                 rescues += 1
                 v = (1-resc_param)*zhi + resc_param*z[1]
             else:
-                if verbose: print('too many rescues')
+                if verbose: print(tabs+'too many rescues')
                 return None, fevals
         # if vertex too close to old points, wiggle it
         if np.abs(z-v).min() < xtol/2: v += xtol
@@ -81,10 +82,10 @@ def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,verbo
         elif z[1]<v:
             z = np.array([z[1],v,z[2]])
             y = np.array([y[1],yv,y[2]])
-        if verbose: print(f'z={np.array_str(z,precision=3)}')
+        if verbose: print(tabs+f"z={np.array_str(z,precision=3)}")
 
     # return final vertex, shifted back to original interval
-    if verbose: print(f'parabolic_iter_min concluded, x_min={v+x[0]}')
+    if verbose: print(tabs+f'parabolic_iter_min concluded, x_min={v+x[0]}')
     return float(v+x[0]), fevals
 
 def minsearch(f,a,b,n,xtol=1e-8,maxdepth=10,fargs=(),verbose=False):
@@ -363,3 +364,31 @@ def eig_obj(p,eigs_target,perim_tol=1e-15):
 
     return loss, obj_grad
 
+rho = (3-5**0.5)/2
+def golden_search(f,a,b,tol=1e-14,maxiter=100):
+    """Golden ratio minimization search"""
+    h = b-a
+    u, v = a+rho*h, b-rho*h
+    fu, fv = f(u), f(v)
+    i = 0
+    while (b-a>=tol)&(i<=maxiter):
+        i += 1
+        if fu < fv:
+            b = v
+            h = b-a
+            v = u
+            u = a+rho*h
+            fv = fu
+            fu = f(u)
+        else:
+            a = u
+            h = b-a
+            u = v
+            v = b-rho*h
+            fu = fv
+            fv = f(v)
+    if f(a)<f(b): return a,i
+    else: return b,i
+
+def dirichlet_eigenvalues(*args):
+    pass

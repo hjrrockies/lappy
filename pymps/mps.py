@@ -213,7 +213,7 @@ class PolygonEVP:
         A = self.weights*self.n_basis(lambda_)
         m_b = len(self.bdry_nodes)
         Q,R = la.qr(A, mode='economic')
-        U,s,V = la.svd(R)
+        U,s,_ = la.svd(R)
         cutoff = (s>rtol).sum()
         if cutoff == 0:
             cutoff = 1
@@ -401,6 +401,44 @@ class PolygonEVP:
         C = np.zeros((A.shape[1],mult))
         C[:cutoff] = la.solve_triangular(R[:cutoff,:cutoff],Vh[-mult:].T)
         return C[Pinv]
+    
+    @lru_cache
+    def rgsvd_eigenbasis_unweighted_coef(self,lambda_,rtol=None,mtol=None):
+        """Returns the coefficients of an eigenbasis derived without quadrature weighting"""
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+
+        A = self.basis(lambda_)
+        m_b = len(self.boundary_pts)
+        Q,R = la.qr(A, mode='economic')
+        U,s,Vh = la.svd(R)
+        cutoff = (s>rtol).sum()
+        if cutoff == 0:
+            cutoff = 1
+        U1 = U[:,:cutoff]
+
+        C,S,X = gsvd(Q[:m_b]@U1,Q[m_b:]@U1,extras='')
+        s = np.divide(C,S,out=np.full(C.shape,np.inf),where=(S!=0))
+
+        # determine multiplicity
+        mult = (s<mtol).sum()
+        if mult == 0:
+            raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
+
+        Xinv = la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
+        C = np.zeros((A.shape[1],mult))
+        C[:cutoff] = la.solve_triangular(R[:cutoff,:cutoff],(U1@Xinv)[:cutoff])
+        return C
+    
+    @lru_cache
+    def rgsvd_eigenbasis_unweighted_eval(self,lambda_,rtol=None,mtol=None):
+        """Returns the coefficients of an eigenbasis derived without quadrature weighting"""
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+
+        A = self.basis(lambda_)
+        C = self.rgsvd_eigenbasis_unweighted_coef(lambda_,rtol,mtol)
+        return A@C
 
     @lru_cache
     def eigenbasis_coef(self,lambda_,rtol=None,mtol=None):
@@ -454,14 +492,13 @@ class PolygonEVP:
     def rgsvd_eigenbasis_coef(self,lambda_,rtol=None,mtol=None):
         """Compute the coefficients of an eigenbasis, assuming lambda_ is an eigenvalue
         using the GSVD formulation with regularization"""
-        raise NotImplementedError('rgsvd_eigenbasis_coef needs debugging')
+
         if rtol is None: rtol = self.rtol
         if mtol is None: mtol = self.mtol
         A = self.weights*self.n_basis(lambda_)
         m_b = len(self.bdry_nodes)
-        Q,R,P = la.qr(A, mode='economic', pivoting=True)
-        Pinv = invert_permutation(P)
-        U,s,V = la.svd(R)
+        Q,R = la.qr(A, mode='economic')
+        U,s,_ = la.svd(R)
         cutoff = (s>rtol).sum()
         if cutoff == 0:
             cutoff = 1
@@ -475,11 +512,17 @@ class PolygonEVP:
         if mult == 0:
             raise ValueError(f'lambda = {lambda_:.3e} has multiplicity zero (sigma = {s[-1]:.3e} > {mtol} = mtol)')
 
-        # least squares solution for the right singular vectors
+        Xinv = la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
         C = np.zeros((A.shape[1],mult))
-        v = la.lstsq(X.T,np.eye(X.T.shape[0])[:,-mult:])[0]
-        C[:cutoff] = la.solve_triangular(R[:cutoff,:cutoff],v)
-        return C[Pinv]
+        C[:cutoff] = la.solve_triangular(R[:cutoff,:cutoff],(U1@Xinv)[:cutoff])
+        return C
+    
+    def rgsvd_eigenbasis_node_eval(self,lambda_,rtol=None,mtol=None):
+        if rtol is None: rtol = self.rtol
+        if mtol is None: mtol = self.mtol
+
+        A = self.n_basis(lambda_)
+        return A@self.rgsvd_eigenbasis_coef(lambda_,rtol,mtol)
 
     @lru_cache
     def r2gsvd_eigenbasis_coef(self,lambda_,rtol=None,mtol=None):
@@ -688,6 +731,18 @@ class PolygonEVP:
         else:
             ax.plot(L,sigma,**kwargs)
 
+    def plot_subspace_sines(self,low,high,nlam,n_angle,ax=None,**kwargs):
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        sines = np.empty((len(L),n_angle))
+        for i,lam in enumerate(L):
+            sines[i] = self.subspace_sines(lam)[:n_angle]
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,sines,**kwargs)
+        else:
+            ax.plot(L,sines,**kwargs)
+
     def plot_gsigma(self,low,high,nlam,ax=None,**kwargs):
         if low < 1e-16 : low = 1e-16
         L = np.linspace(low,high,nlam+1)
@@ -699,6 +754,18 @@ class PolygonEVP:
             plt.plot(L,gsigma,**kwargs)
         else:
             ax.plot(L,gsigma,**kwargs)
+
+    def plot_weighted_subspace_sines(self,low,high,nlam,n_angle,ax=None,**kwargs):
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        sines = np.empty((len(L),n_angle))
+        for i,lam in enumerate(L):
+            sines[i] = self.weighted_subspace_sines(lam)[:n_angle]
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,sines,**kwargs)
+        else:
+            ax.plot(L,sines,**kwargs)
 
     def plot_gsvd_subspace_tans(self,low,high,nlam,n_angle,ax=None,**kwargs):
         if low < 1e-16 : low = 1e-16
@@ -712,7 +779,19 @@ class PolygonEVP:
         else:
             ax.plot(L,tans,**kwargs)
 
-    def plot_rgsigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
+    def plot_gsvd_weighted_subspace_tans(self,low,high,nlam,n_angle,ax=None,**kwargs):
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        tans = np.empty((len(L),n_angle))
+        for i,lam in enumerate(L):
+            tans[i] = self.gsvd_weighted_subspace_tans(lam)[:n_angle]
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,tans,**kwargs)
+        else:
+            ax.plot(L,tans,**kwargs)
+
+    def plot_rgsigma(self,low,high,nlam,rtol=None,ax=None,**kwargs):
         if rtol is None: rtol = self.rtol
         if low < 1e-16 : low = 1e-16
         L = np.linspace(low,high,nlam+1)
@@ -724,6 +803,30 @@ class PolygonEVP:
             plt.plot(L,rgsigma,**kwargs)
         else:
             ax.plot(L,rgsigma,**kwargs)
+
+    def plot_rgsvd_subspace_tans(self,low,high,nlam,n_angle,rtol=None,ax=None,**kwargs):
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        tans = np.empty((len(L),n_angle))
+        for i,lam in enumerate(L):
+            tans[i] = self.rgsvd_subspace_tans(lam,rtol)[:n_angle]
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,tans,**kwargs)
+        else:
+            ax.plot(L,tans,**kwargs)
+
+    def plot_rgsvd_weighted_subspace_tans(self,low,high,nlam,n_angle,rtol=None,ax=None,**kwargs):
+        if low < 1e-16 : low = 1e-16
+        L = np.linspace(low,high,nlam+1)
+        tans = np.empty((len(L),n_angle))
+        for i,lam in enumerate(L):
+            tans[i] = self.rgsvd_weighted_subspace_tans(lam,rtol)[:n_angle]
+        if ax is None:
+            fig = plt.figure()
+            plt.plot(L,tans,**kwargs)
+        else:
+            ax.plot(L,tans,**kwargs)
 
     def plot_r2gsigma(self,low,high,nlam,ax=None,rtol=None,**kwargs):
         if rtol is None: rtol = self.rtol
