@@ -1,7 +1,8 @@
 import numpy as np
-from scipy.special import jv, jvp, jve
+from scipy.special import jv, jvp
 import scipy.linalg as la
-from .utils import *
+from .utils import complex_form, interior_angles, edge_angles
+from functools import cache, lru_cache
 
 class PlanarBasis:
     """Base class for function bases on the plane. Can be parametric, as with FourierBesselBasis,
@@ -19,7 +20,7 @@ class FourierBesselBasis(PlanarBasis):
     """A class for Fourier-Bessel bases on polygons. Allows the user to fix an evaluation
     set to reduce computation when evaluating on the same grid for several lambdas.
     Also allows the user to evaluate the basis on an arbitrary set."""
-    def __init__(self,vertices,orders,branch_cuts='middle_out'):
+    def __init__(self,vertices,orders,normalize=True,branch_cuts='middle_out'):
         # unpack vertices, put in complex form
         vertices = np.array(vertices)
         if vertices.ndim > 1:
@@ -29,6 +30,7 @@ class FourierBesselBasis(PlanarBasis):
                 vertices = complex_form(vertices[:,0],vertices[:,1])
         self.vertices = vertices
         self.n_vert = len(self.vertices)
+        self.normalize = normalize
 
         if isinstance(orders,int):
             self.orders = orders*np.ones(self.n_vert,dtype='int')
@@ -112,8 +114,18 @@ class FourierBesselBasis(PlanarBasis):
             points = complex_form(points,y)
         self.points = points
         self.r_rep,self.sin = self._set_basis_eval(points)
+        self.cos, self.dr_dx, self.dr_dy, self.dtheta_dx, self.dtheta_dy = self._set_gradient_eval(points)
 
-    def __call__(self,lambda_,points=None,y=None):
+    @cache
+    def basis_norms(self,lam):
+        if self.r_rep is None:
+            raise ValueError('Basis has no default points. Provide evaluation '\
+                            'points or use FourierBesselBasis.set_default_points')
+        r_rep,sin = self.r_rep,self.sin
+        out = jv(self.alphak_vec,np.sqrt(lam)*r_rep)*sin
+        return la.norm(out,axis=0)
+
+    def __call__(self,lam,points=None,y=None):
         if (points is None) and (y is not None):
             raise ValueError('x coordinates must be provided when y coordinates are provided')
         elif points is None:
@@ -126,7 +138,9 @@ class FourierBesselBasis(PlanarBasis):
                 points = complex_form(points,y)
             r_rep,sin = self._set_basis_eval(points)
 
-        out = jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+        out = jv(self.alphak_vec,np.sqrt(lam)*r_rep)*sin
+        if self.normalize:
+            out = out/self.basis_norms(lam)
         return out
 
     def _set_gradient_eval(self,points,y=None):
@@ -172,21 +186,34 @@ class FourierBesselBasis(PlanarBasis):
 
         return cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy
 
-    def grad(self,lambda_,points=None,y=None):
+    def grad(self,lam,points=None,y=None):
         """Computes the gradients of the basis functions at the given points, returning
         the values in complex form (real part for partials w.r.t. to x_i, imaginary part 
         for partials w.r.t. y_i)"""
         if y is not None:
             points = complex_form(points,y)
-        r_rep,sin = self._set_basis_eval(points)
-        cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy = self._set_gradient_eval(points)
+        if points is not None:
+            r_rep,sin = self._set_basis_eval(points)
+            cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy = self._set_gradient_eval(points)
+        else:
+            r_rep,sin = self.r_rep,self.sin
+            cos, dr_dx, dr_dy, dtheta_dx, dtheta_dy = self.cos, self.dr_dx, self.dr_dy, self.dtheta_dx, self.dtheta_dy
 
-        dr = np.sqrt(lambda_)*jvp(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
-        dtheta = self.alphak_vec*jv(self.alphak_vec,np.sqrt(lambda_)*r_rep)*cos
+        sqrtlam_r = np.sqrt(lam)*r_rep
+        jv_ = jv(self.alphak_vec,sqrtlam_r)
+        jvp_ = jvp(self.alphak_vec,sqrtlam_r)
+        dr = np.sqrt(lam)*jvp_*sin
+        dtheta = self.alphak_vec*jv_*cos
+
+        if self.normalize:
+            out = jv_*sin
+            norms = la.norm(out,axis=0)
+            dr = dr/norms
+            dtheta = dtheta/norms
 
         return dr*dr_dx + dtheta*dtheta_dx + 1j*(dr*dr_dy + dtheta*dtheta_dy)
     
-    def Aprime(self,lambda_,points=None,y=None):
+    def Aprime(self,lam,points=None,y=None):
         """Computes the derivatives of the basis functions with respect to the spectral
         parameter lambda. In other words, computes the matrix A'(lambda)."""
         if (points is None) and (y is not None):
@@ -201,5 +228,4 @@ class FourierBesselBasis(PlanarBasis):
                 points = complex_form(points,y)
             r_rep,sin = self._set_basis_eval(points)
 
-
-        return (0.5/np.sqrt(lambda_))*r_rep*jvp(self.alphak_vec,np.sqrt(lambda_)*r_rep)*sin
+        return (0.5/np.sqrt(lam))*r_rep*jvp(self.alphak_vec,np.sqrt(lam)*r_rep)*sin

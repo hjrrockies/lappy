@@ -1,5 +1,5 @@
 import numpy as np
-from .utils import *
+from .utils import complex_form, real_form, polygon_edges, edge_lengths
 from pygmsh.geo import Geometry
 from numpy.polynomial.chebyshev import chebgauss
 from numpy.polynomial.legendre import leggauss
@@ -23,12 +23,13 @@ def cached_chebgauss(order):
     weights = weights/2 #adjust weights to interval of unit length
     return nodes,weights
 
-def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None):
+def boundary_nodes_polygon(vertices,n_pts=20,rule='chebyshev',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
     quadrature rules. Transforms the nodes to lie along the edges of the polygon with
     the given vertices."""
-    if y is not None:
-        vertices = complex_form(vertices,y)
+    vertices = np.asarray(vertices)
+    if vertices.ndim > 1:
+        vertices = complex_form(vertices)
 
     # select quadrature rule
     if rule == 'chebyshev': quadfunc = cached_chebgauss
@@ -36,19 +37,19 @@ def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None)
     elif rule == 'even': quadfunc = lambda n: (np.linspace(0,1,n+2)[1:-1], np.ones(n)/n)
     else: raise(NotImplementedError(f"quadrature rule {rule} is not implemented"))
 
-    # build array of orders (number of nodes/weights) for each edge
-    if type(orders) is int:
-        orders = orders*np.ones(len(vertices),dtype='int')
+    # build array of n_pts (number of nodes/weights) for each edge
+    if type(n_pts) in [int,np.int64]:
+        n_pts = n_pts*np.ones(len(vertices),dtype='int')
         if skip is not None:
-            orders[skip] = 0
-    elif len(orders) != len(vertices):
-        raise ValueError("quadrature orders do not match number of polygon edges")
+            n_pts[skip] = 0
+    elif len(n_pts) != len(vertices):
+        raise ValueError("quadrature n_pts do not match number of polygon edges")
     else:
         if skip is not None:
-            raise ValueError("skip must be 'None' if orders are provided for each edge")
+            raise ValueError("skip must be 'None' if n_pts are provided for each edge")
 
     # set up arrays for nodes and weights
-    n_nodes = np.sum(orders)
+    n_nodes = np.sum(n_pts)
     nodes = np.empty(n_nodes,dtype='complex')
     weights = np.empty(n_nodes,dtype='float')
 
@@ -56,11 +57,11 @@ def boundary_nodes_polygon(vertices,y=None,orders=20,rule='chebyshev',skip=None)
     edges = polygon_edges(vertices)
     lens = edge_lengths(vertices)
     for i in range(len(vertices)):
-        if orders[i] > 0:
-            start = np.sum(orders[:i])
-            end = np.sum(orders[:i+1])
+        if n_pts[i] > 0:
+            start = np.sum(n_pts[:i])
+            end = np.sum(n_pts[:i+1])
             # get quadrature nodes and weights for interval [0,1]
-            qnodes,qweights = quadfunc(orders[i]) 
+            qnodes,qweights = quadfunc(n_pts[i])
             # space nodes along edge, adjust weights for edge length
             nodes[start:end] = edges[i]*qnodes + vertices[i]
             weights[start:end] = qweights*lens[i]
@@ -99,7 +100,8 @@ def triangle_areas(mesh_vertices,triangles):
 def triangular_mesh(vertices,mesh_size):
     """Builds a triangular mesh with pygmsh"""
     vertices = np.asarray(vertices)
-    vertices = np.array([vertices.real,vertices.imag]).T
+    if vertices.dtype == 'complex128':
+        vertices = real_form(vertices)
     if vertices.shape[0] == 2:
         vertices = vertices.T
     if vertices.shape[1] != 2 or vertices.ndim != 2:
@@ -112,7 +114,7 @@ def triangular_mesh(vertices,mesh_size):
 
     return mesh
 
-def tri_quad(mesh,kind='dunavant',deg=10):
+def tri_quad(mesh,kind='dunavant',deg=5):
     """"Sets up a cubature rule for a given mesh, in complex form"""
     # extract mesh vertices and triangle-to-vertex array
     mesh_vertices = mesh.points[:,:2]

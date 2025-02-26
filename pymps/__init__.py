@@ -4,6 +4,7 @@ name = "pymps"
 
 # modules available on package load
 from . import mps
+from . import evp
 from . import bases
 from . import quad
 from . import utils
@@ -11,7 +12,7 @@ from . import cubature_rules
 from . import opt
 
 # classes and functions available directly from tsunamibayes
-from .mps import PolygonEVP, golden_search
+from .evp import PolygonEVP, Spectrum, Eigenvalue
 from .bases import FourierBesselBasis
-from .quad import triangular_mesh,  tri_quad, quadrilateral_mesh, quadrilateral_quad, boundary_nodes_polygon
+from .quad import triangular_mesh,  tri_quad, boundary_nodes_polygon
 from .utils import *

@@ -1,15 +1,31 @@
-import collections
-import functools
+from functools import cache
 import numpy as np
 import scipy.linalg as la
 import matplotlib.pyplot as plt
-from matplotlib import patches, cm, ticker, colors
+from matplotlib import patches, colors
 from shapely.geometry import Polygon
 from shapely import points
 
-def complex_form(x,y):
-    """Converts points on the plane to complex form"""
-    return x + 1j*y
+def complex_form(pts,y=None):
+    """Converts points in the plane to complex form"""
+    pts = np.asarray(pts)
+    if y is not None:
+        return pts + 1j*y
+    elif pts.ndim == 1:
+        raise ValueError('pts must be 2-dimensional')
+    elif pts.shape[1] == 2:
+        return pts[:,0] + 1j*pts[:,1]
+    else:
+        return pts[0] + 1j*pts[1]
+
+def real_form(pts):
+    return np.array([pts.real,pts.imag]).T
+
+def polygon_edges(vertices,y=None):
+    """Computes the edges of a polygon with vertices (assumed in complex form), ordered counter-clockwise"""
+    if y is not None:
+        vertices = complex_form(vertices,y)
+    return np.roll(vertices,-1)-vertices
 
 def interior_angles(vertices,y=None):
     """Computes the interior angles of a polygon with given vertices (assumed in complex form x + 1j*y), ordered
@@ -20,12 +36,6 @@ def interior_angles(vertices,y=None):
     phis = np.roll(np.angle(-e),1)-np.angle(e)
     phis[phis<0] += 2*np.pi
     return phis
-
-def polygon_edges(vertices,y=None):
-    """Computes the edges of a polygon with vertices (assumed in complex form), ordered counter-clockwise"""
-    if y is not None:
-        vertices = complex_form(vertices,y)
-    return np.roll(vertices,-1)-vertices
 
 def edge_lengths(vertices,y=None):
     """Computes the edge lengths of a polygon with vertices in complex form, ordered
@@ -50,26 +60,23 @@ def edge_angles(vertices,y=None):
     psis = np.angle(e)
     return psis
 
+def singular_corner_check(angles,tol=1e-15):
+    """Checks to see if polygon corners are singular (not an integer fraction of pi)"""
+    alpha = np.pi/angles
+    maxalph = np.ceil(alpha.max())
+    diffs = np.abs(np.subtract.outer(alpha,np.arange(1,maxalph+1)))
+    return (diffs>tol).min(axis=1)
+
 def edge_midpoints(vertices,y=None):
     if y is not None:
         vertices = complex_form(vertices,y)
     return 0.5*(np.roll(vertices,-1)+vertices)
 
-def boundary_points(x,y,m,method='even',skip=None):
-    """Generates points along the boundary of a polygon with vertices x and y,
-    ordered counter-clockwise. Makes m points for each side."""
-    raise NotImplementedError('Needs to be updated for complex arithmetic')
-    mask = np.ones(len(x),dtype=bool)
-    if skip is not None:
-        mask[skip] = 0
-    if method == 'even':
-        x_b = np.linspace(x,np.roll(x,-1),m+2)[1:-1,mask].flatten(order='F')
-        y_b = np.linspace(y,np.roll(y,-1),m+2)[1:-1,mask].flatten(order='F')
-    elif method == 'legguass':
-        raise(NotImplementedError)
-    return x_b,y_b
+def boundary_pts_polygon(vertices,n_pts=20,rule='chebyshev',skip=None):
+    from .quad import boundary_nodes_polygon
+    return boundary_nodes_polygon(vertices,n_pts,rule,skip)
 
-def interior_points(m,vertices,y=None,oversamp=10):
+def rand_interior_points(vertices,m,y=None,oversamp=10):
     """Computes random interior points for a polygon with vertices in complex form,
     ordered counter-clockwise."""
     if y is not None:
@@ -83,7 +90,7 @@ def interior_points(m,vertices,y=None,oversamp=10):
     pts = points(np.array([x_i,y_i]).T)
     mask = poly.contains(pts)
     if mask.sum() < m:
-        return interior_points(m,vertices,oversamp=2*oversamp)
+        return rand_interior_points(m,vertices,oversamp=2*oversamp)
     return x_i[mask][:m] + 1j*y_i[mask][:m]
 
 def plot_polygon(vertices,y=None,ax=None,**plotkwargs):
@@ -125,7 +132,7 @@ def polygon_area(vertices,y=None):
     x,y = vertices.real, vertices.imag
     return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
 
-def polygon_perimiter(vertices,y=None):
+def polygon_perimeter(vertices,y=None):
     if y is not None:
         vertices = complex_form(vertices,y)
     return np.sum(edge_lengths(vertices))
@@ -135,27 +142,20 @@ def reg_polygon(r,n):
     theta = np.linspace(0,2*np.pi,n+1)
     return r*np.exp(1j*theta)[:-1]
 
-def edge_indices(points,vertices):
-    """Takes an array of points and identifies which polygon edge the points lie on,
-    or if they are not on an edge."""
-    raise NotImplementedError('Needs to be updated for complex arithmetic')
-    x,y = points[:,0],points[:,1]
-    n = len(vertices)
-    arr = np.full(len(points),n,dtype='int')
-    for i in range(n):
-        j = i+1
-        if j==n: j=0
-        u,v = vertices[i],vertices[j]
-        mask = np.isclose(np.sqrt((x-u[0])**2+(y-u[1])**2)+np.sqrt((x-v[0])**2+(y-v[1])**2),
-                        np.sqrt((u[0]-v[0])**2+(u[1]-v[1])**2))
-        arr[mask] = i
-    return arr
+### Miscellaneous utils
+def invert_permutation(p):
+    """Invert a pertmutation vector. For use with column-pivoted QR solves"""
+    s = np.empty(p.size, p.dtype)
+    s[p] = np.arange(p.size)
+    return s
+
+### Eigenvalues of rectangles (for validation purposes)
 
 def rect_eig(m,n,L,H):
     """Computes the (m,n) Dirichlet eigenvalue of an L-by-H rectangle"""
     return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
 
-def rect_eigs_k(L,H,k,ret_mn=False):
+def rect_eigs_k(k,L,H,ret_mn=False):
     """Gets first k Dirichlet eigenvalues for an LxH rectangle.
     Vectorized to handle arrays for L and H of various shapes, returning
     an array such that rect_eigs_k(L,H,k).flatten()[idx] is the first
@@ -206,13 +206,6 @@ def rect_eig_bound_idx(bound,L,H):
     Lambda = rect_eig(M,N,L,H)
     return np.argwhere(Lambda <= bound)+1
 
-def rect_eig_grad(m,n,L,H):
-    """Gradients of *simple* rectangular eigenvalues with respect to rectangle
-    vertices. Used to test derivative estimation code."""
-    m2L3 = m**2/L**3
-    n2H3 = n**2/H**3
-    return (np.pi**2)*np.array([m2L3,-m2L3,-m2L3,m2L3,n2H3,n2H3,-n2H3,-n2H3])
-
 def rect_eig_mult(lambda_,L,H,maxind=1000):
     """Compute the indices of rectangle Dirichlet eigenvalues which are
     duplicates of lambda_. For use in testing multiplicity."""
@@ -226,12 +219,6 @@ def rect_eig_mult_mn(m,n,L,H):
     """Compute the indices of rectangle Dirichlet eigenvalues which are
     duplicates of the (m,n) eigenvalue. For use in testing multiplicity."""
     return rect_eig_mult(rect_eig(m,n,L,H),L,H,maxind=10*max(m,n))
-
-def invert_permutation(p):
-    """Invert a pertmutation vector. For use with column-pivoted QR solves"""
-    s = np.empty(p.size, p.dtype)
-    s[p] = np.arange(p.size)
-    return s
 
 rho = (3-5**0.5)/2
 def golden_search(f,a,b,tol=1e-14,maxiter=100):
