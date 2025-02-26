@@ -92,7 +92,8 @@ class FourierBesselBasis(PlanarBasis):
 
         # compute radii and angles relative to corners with expansions
         orders = self.orders
-        r = np.abs(np.subtract.outer(points,self.vertices))
+        mask = orders>0
+        r = np.abs(np.subtract.outer(points,self.vertices[mask]))
         theta = self.fourier_bessel_angles(points,self.vertices,self.branch_cuts)
 
         # set up evaluations of Fourier-Bessel
@@ -105,7 +106,7 @@ class FourierBesselBasis(PlanarBasis):
                 sin[:,cumk[i]:cumk[i+1]] = np.sin(np.outer(theta[:,i],alphak[i]))
 
         # set up evaluations of bessel part
-        r_rep = np.repeat(r,orders,axis=1)
+        r_rep = np.repeat(r,orders[mask],axis=1)
 
         return r_rep,sin
 
@@ -162,7 +163,7 @@ class FourierBesselBasis(PlanarBasis):
         # compute radii and angles relative to corners with expansions
         orders = self.orders
         mask = orders>0
-        r = np.abs(np.subtract.outer(points,self.vertices))
+        r = np.abs(np.subtract.outer(points,self.vertices[mask]))
         theta = self.fourier_bessel_angles(points,self.vertices,self.branch_cuts)
 
         # set up evaluations of Fourier-Bessel
@@ -175,9 +176,8 @@ class FourierBesselBasis(PlanarBasis):
                 cos[:,cumk[i]:cumk[i+1]] = np.cos(np.outer(theta[:,i],alphak[i]))
 
         # set up x & y partial derivatives
-        x_ve, y_ve = x_v[mask], y_v[mask]
-        deltax = np.subtract.outer(x,x_ve)
-        deltay = np.subtract.outer(y,y_ve)
+        deltax = np.subtract.outer(x,x_v[mask])
+        deltay = np.subtract.outer(y,y_v[mask])
 
         dr_dx = np.repeat(deltax/r,orders[mask],axis=1)
         dr_dy = np.repeat(deltay/r,orders[mask],axis=1)

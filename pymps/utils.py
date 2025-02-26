@@ -220,32 +220,6 @@ def rect_eig_mult_mn(m,n,L,H):
     duplicates of the (m,n) eigenvalue. For use in testing multiplicity."""
     return rect_eig_mult(rect_eig(m,n,L,H),L,H,maxind=10*max(m,n))
 
-rho = (3-5**0.5)/2
-def golden_search(f,a,b,tol=1e-14,maxiter=100):
-    """Golden ratio minimization search"""
-    h = b-a
-    u, v = a+rho*h, b-rho*h
-    fu, fv = f(u), f(v)
-    i = 0
-    while (b-a>=tol)&(i<=maxiter):
-        i += 1
-        if fu < fv:
-            b = v
-            h = b-a
-            v = u
-            u = a+rho*h
-            fv = fu
-            fu = f(u)
-        else:
-            a = u
-            h = b-a
-            u = v
-            v = b-rho*h
-            fu = fv
-            fv = f(v)
-    if f(a)<f(b): return a,i
-    else: return b,i
-
 def loss_plot(L,H,loss,log=True,ax=None):
     n_levels = 50
     if ax is None:

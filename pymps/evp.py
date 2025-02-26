@@ -1,19 +1,21 @@
 import numpy as np
 from . import mps
 from .utils import (complex_form, rand_interior_points, polygon_area, polygon_perimeter, 
-                    interior_angles, singular_corner_check, invert_permutation)
+                    interior_angles, singular_corner_check, invert_permutation, plot_polygon)
 from .bases import FourierBesselBasis
 from .quad import boundary_nodes_polygon, triangular_mesh, tri_quad
 from .opt import gridmin
 from functools import cache, lru_cache
 import matplotlib.pyplot as plt
+from shapely.geometry import Polygon
+from shapely import points
 import warnings
 
 class PolygonEVP:
     """Class for polygonal Dirichlet Laplacian eigenproblems
     """
     def __init__(self,vertices,basis='auto',boundary_pts='auto',interior_pts='auto',
-                 weights='auto',rtol=1e-14,mtol=1e-4,order=40):
+                 weights='auto',rtol=1e-14,mtol=1e-4,order=10):
         vertices = np.asarray(vertices)
         if vertices.ndim == 2:
             if vertices.shape[0] == 2:
@@ -35,22 +37,32 @@ class PolygonEVP:
         if type(weights) is np.ndarray:
             if len(boundary_pts) + len(interior_pts) != len(weights):
                 raise ValueError('provided boundary & interior pts not compatible with provided weights')
-            self.weights = weights
+            self.weights = weights.reshape((-1,1))
         elif weights is None:
             self.weights = None
         elif weights == 'auto':
-            if boundary_pts != 'auto' or interior_pts != 'auto':
-                raise ValueError("if weights are set to auto, then so must be boundary_pts and interior_pts")
+            if interior_pts != 'auto' or not (type(boundary_pts) is int or boundary_pts == 'auto'):
+                raise ValueError("if weights are set to auto, interior_pts must be auto and boundary pts may be int array")
             
             # set up boundary pts and weights
             # if only expanding around one vertex with Fourier-Bessel, discard boundary pts next to this vertex
             if np.sum(self.basis.orders>0) == 1 and type(self.basis) is FourierBesselBasis:
-                n_pts = self.basis.orders.max()
+                if boundary_pts == 'auto':
+                    n_pts = self.basis.orders.max()
+                    # triangles need more points!
+                    if (len(self.vertices)) == 3:
+                        n_pts = 2*n_pts
+                else:
+                    n_pts = boundary_pts
                 idx = np.nonzero(self.basis.orders)[0][0]
                 skip = [idx-1,idx]
+                
             else:
-                n_pts = 2*int(np.ceil(self.basis.orders.mean()))
                 skip = None
+                if boundary_pts == 'auto':
+                    n_pts = int(np.ceil(self.basis.orders.mean()))+1
+                else:
+                    n_pts = boundary_pts
             self.boundary_pts, boundary_wts = boundary_nodes_polygon(vertices,n_pts=n_pts,skip=skip)
 
             # set up interior pts and weights
@@ -58,10 +70,13 @@ class PolygonEVP:
             mesh = triangular_mesh(vertices,mesh_size)
             self.interior_pts, interior_wts = tri_quad(mesh)
 
-            self.weights = np.sqrt(np.concatenate((boundary_wts,interior_wts)))[:,np.newaxis]         
+            self.weights = np.sqrt(np.concatenate((boundary_wts,interior_wts))).reshape((-1,1))
 
         # only consider boundary_pts and interior_pts args if weights is not auto
-        if weights != 'auto':
+        weights_auto = False
+        if type(weights) is str:
+            weights_auto = (weights == 'auto')
+        if not weights_auto:
             # set up boundary points
             if type(boundary_pts) is np.ndarray:
                 if boundary_pts.ndim > 1:
@@ -115,9 +130,20 @@ class PolygonEVP:
         # spectrum tracker
         self.spectrum = Spectrum()
 
+        # shapely polygon
+        self.polygon = Polygon(np.array([self.vertices.real,self.vertices.imag]).T)
+
     @property
     def eigs(self):
         return self.spectrum.eigs
+    
+    @property
+    def mults(self):
+        return self.spectrum.mults
+    
+    @property
+    def mtols(self):
+        return self.spectrum.mtols
 
     @classmethod
     def set_orders(cls,vertices,order):
@@ -206,7 +232,15 @@ class PolygonEVP:
         eigs_tmp = []
         # filter out spurious minima and minima too close to known eigenvalues
         for lam in minima:
-            if self._proximity_check(lam,eigs_tmp,xtol) and self.subspace_tans(lam,**mps_kwargs)[0]<self.mtol:
+            mybool = self._proximity_check(lam,eigs_tmp,xtol)
+            tan = self.subspace_tans(lam,**mps_kwargs)[0]
+            if not mybool and verbose > 0:
+                print(f"lam={lam:.3f} too close to previously found eigenvalue")
+            elif tan > self.mtol and verbose > 0:
+                print(f"lam={lam} above threshold, {tan:.3e}>{self.mtol:.3e}")
+            else:
+                if verbose > 0:
+                    print(f"lam={lam:.3f} accepted as eigenvalue")
                 eigs_tmp.append(lam)
 
         # Determining tolerance requires subspace angle bounds from nearby eigenvalues
@@ -224,8 +258,10 @@ class PolygonEVP:
             # get local tolerance parameter
             if idx == len(eigs_sorted)-1:
                 tol = self._local_tolerance(eigs_sorted[idx],eigs_sorted[idx-1],h=xtol,mps_kwargs=mps_kwargs)
+                fevals += 2
             else:
                 tol = self._local_tolerance(eigs_sorted[idx],eigs_sorted[idx-1],eigs_sorted[idx+1],xtol,mps_kwargs)
+                fevals += 1
                 
             # multiplicity = number of subspace tangents below tolerance
             tans = self.subspace_tans(eigs_sorted[idx],**mps_kwargs)
@@ -236,7 +272,7 @@ class PolygonEVP:
             self.spectrum.add_eig(eigs_sorted[idx],mult,tol)
         
         eigs = self.eigs
-        return eigs[(eigs>=a-xtol)&(eigs<=b+xtol)]
+        return eigs[(eigs>=a-xtol)&(eigs<=b+xtol)], fevals
 
     def solve_eigs_ordered(self,k,ppl=10,xtol=1e-8,mps_kwargs={},maxiter=10,verbose=0):
         """Find the first k eigenvalues of the domain, up to xtol. Checks for multiplicity."""
@@ -252,7 +288,7 @@ class PolygonEVP:
                 a = self.eigs[-1]
             b = self.weyl_k(k+1)
             n_pts = ppl*deficit
-            self.solve_eigs_interval(a,b,n_pts,xtol,mps_kwargs,verbose)
+            _,fevals = self.solve_eigs_interval(a,b,n_pts,xtol,mps_kwargs,verbose)
 
         # # run weyl check
         # deltas = self.weyl_check(len(self.eigs))
@@ -264,12 +300,12 @@ class PolygonEVP:
         #     i += 1
         #     deltas = self.weyl_check(len(self.eigs))
 
-        return self.eigs[:k]
+        return self.eigs[:k], fevals
 
     @cache
     def eigenbasis_coef(self,eig,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
         """Computes the coefficient vectors of the eigenbasis"""
-        if mtol is None: mtol = self.spectrum.mtols[eig]
+        if mtol is None: mtol = self.mtols[eig]
         if rtol is None: rtol = self.rtol
         if weights is None: weights=self.weights
 
@@ -319,7 +355,7 @@ class PolygonEVP:
     @cache
     def eval_eigenbasis(self,eig,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
         """Evaluate the eigenbasis on the collocation points"""
-        if mtol is None: mtol = self.spectrum.mtols[eig]
+        if mtol is None: mtol = self.mtols[eig]
         if rtol is None: rtol = self.rtol
         if weights is None: weights=self.weights
 
@@ -473,6 +509,7 @@ class PolygonEVP:
         if ax is None:
             fig = plt.figure()
             plt.plot(L,sines,**kwargs)
+            return fig
         else:
             ax.plot(L,sines,**kwargs)
 
@@ -485,8 +522,66 @@ class PolygonEVP:
         if ax is None:
             fig = plt.figure()
             plt.plot(L,tans,**kwargs)
+            return fig
         else:
             ax.plot(L,tans,**kwargs)
+
+    def _set_eigenplot(self,n=300):
+        # plotting points
+        x = np.linspace(self.vertices.real.min()+1e-16,self.vertices.real.max()-1e-16,n)
+        y = np.linspace(self.vertices.imag.min()+1e-16,self.vertices.imag.max()-1e-16,n)
+        X,Y = np.meshgrid(x,y,indexing='ij')
+        XY = np.array([X.flatten(),Y.flatten()]).T
+        self.plotmask = np.nonzero(self.polygon.contains(points(XY)))[0]
+        self.plotZ = X.flatten()[self.plotmask] + 1j*Y.flatten()[self.plotmask]
+        xe = np.linspace(x.min() - (x[1] - x[0]) / 2, x.max() + (x[1] - x[0]) / 2, n + 1)
+        ye = np.linspace(y.min() - (y[1] - y[0]) / 2, y.max() + (y[1] - y[0]) / 2, n + 1)
+        self.plotX, self.plotY = np.meshgrid(xe, ye,indexing='ij')  # Edge grid
+        self.Zshape = X.shape
+
+    def plot_eigenfunction(self,eig,axs=None):
+        if not hasattr(self,'plotZ'):
+            self._set_eigenplot()
+        mult = self.mults[eig]
+        U = np.full((np.prod(self.Zshape),mult),np.nan)
+        U[self.plotmask] = self.eigenbasis(eig)(self.plotZ)
+        if mult == 1:
+            if axs:
+                axs.pcolormesh(self.plotX,self.plotY,U[:,0].reshape(self.Zshape))
+                plot_polygon(self.vertices,ax=axs,c='k')
+                axs.set_aspect('equal')
+            else:
+                fig = plt.figure()
+                plt.pcolormesh(self.plotX,self.plotY,U[:,0].reshape(self.Zshape))
+                plot_polygon(self.vertices,ax=plt.gca(),c='k')
+                plt.gca().set_aspect('equal')
+                return fig
+        else:
+            if axs:
+                for i,ax in enumerate(axs):
+                    ax.pcolormesh(self.plotX,self.plotY,U[:,i].reshape(self.Zshape))
+            else:
+                if mult > 3:
+                    fig,axs = plt.subplots(int(np.ceil(mult/3)),3,figsize=(12,4*int(np.ceil(mult/3))))
+                else:
+                    fig,axs = plt.subplots(1,mult,figsize=(4*mult,4))
+                axs = axs.flatten()
+                for i in range(mult):
+                    axs[i].pcolormesh(self.plotX,self.plotY,U[:,i].reshape(self.Zshape))
+                    axs[i].set_aspect('equal')
+                    plot_polygon(self.vertices,ax=axs[i],c='k')
+                return fig
+            
+    def plot_eigenfunctions(self,eigs):
+        for eig in eigs:
+            fig = self.plot_eigenfunction(eig)
+            fig.suptitle(f"Eigenfunction(s) for $\\lambda = {eig:.3f}$")
+            plt.show()
+        
+
+        
+
+
 
 class Eigenvalue:
     def __init__(self,val,mult,mtol=None):
