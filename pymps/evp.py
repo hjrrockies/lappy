@@ -1,9 +1,10 @@
 import numpy as np
+import scipy.linalg as la
 from . import mps
-from .utils import (complex_form, rand_interior_points, polygon_area, polygon_perimeter, 
-                    interior_angles, singular_corner_check, invert_permutation, plot_polygon)
+from .utils import (complex_form, rand_interior_points, polygon_area, polygon_perimeter, edge_lengths,
+                    polygon_edges, interior_angles, singular_corner_check, invert_permutation, plot_polygon)
 from .bases import FourierBesselBasis
-from .quad import boundary_nodes_polygon, triangular_mesh, tri_quad
+from .quad import boundary_nodes_polygon, triangular_mesh, tri_quad, cached_leggauss
 from .opt import gridmin
 from functools import cache, lru_cache
 import matplotlib.pyplot as plt
@@ -60,7 +61,7 @@ class PolygonEVP:
             else:
                 skip = None
                 if boundary_pts == 'auto':
-                    n_pts = int(np.ceil(self.basis.orders.mean()))+1
+                    n_pts = 2*int(np.ceil(self.basis.orders.mean()))
                 else:
                     n_pts = boundary_pts
             self.boundary_pts, boundary_wts = boundary_nodes_polygon(vertices,n_pts=n_pts,skip=skip)
@@ -198,7 +199,7 @@ class PolygonEVP:
         else:
             return True
 
-    def _local_tolerance(self,lam,eig1,eig2=0,h=1e-8,mps_kwargs={}):
+    def _local_tolerance(self,lam,eig1,eig2=0,h=1e-12,mps_kwargs={}):
         """Gets the local tolerance for subspace angles based on nearby eigenvalues."""
         slope1 = np.abs((self.subspace_tans(eig1+h,**mps_kwargs)[0]-self.subspace_tans(eig1,**mps_kwargs)[0])/h)
         tol1 = self.subspace_tans(eig1,**mps_kwargs)[0] + slope1*np.abs(lam-eig1)
@@ -209,7 +210,7 @@ class PolygonEVP:
             tol2 = self.subspace_tans(eig2,**mps_kwargs)[0] + slope2*np.abs(lam-eig2)
         return min(self.mtol,tol1,tol2)
     
-    def solve_eigs_interval(self,a,b,n_pts,xtol=1e-8,mps_kwargs={},verbose=0):
+    def solve_eigs_interval(self,a,b,n_pts,xtol=1e-12,mps_kwargs={},verbose=0):
         """Finds eigenvalues in the interval [a,b]. Searches over a grid with n_pts."""
         # initial search grid 
         lamgrid_int = np.linspace(a,b,n_pts)
@@ -274,7 +275,7 @@ class PolygonEVP:
         eigs = self.eigs
         return eigs[(eigs>=a-xtol)&(eigs<=b+xtol)], fevals
 
-    def solve_eigs_ordered(self,k,ppl=10,xtol=1e-8,mps_kwargs={},maxiter=10,verbose=0):
+    def solve_eigs_ordered(self,k,ppl=10,xtol=1e-12,mps_kwargs={},maxiter=10,verbose=0):
         """Find the first k eigenvalues of the domain, up to xtol. Checks for multiplicity."""
         eig_count = len(self.eigs)
         # return first k eigs if already known
@@ -319,7 +320,6 @@ class PolygonEVP:
         elif solver == 'svd':
             return mps.nullspace_basis_svd(A,self.m_b,mtol,rtol)
         
-    @cache
     def eigenbasis(self,eig,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
         """Returns a callable function which evaluates the approximate eigenbasis
         corresponding to lam"""
@@ -335,7 +335,6 @@ class PolygonEVP:
             return (self.basis(eig,points)@C).reshape(shape)
         return func
 
-    @cache
     def eigenbasis_grad(self,eig,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
         """Returns a callable function which evaluates the approximate eigenbasis
         corresponding to lam. Returns in complex form, with the real part being the 
@@ -379,88 +378,77 @@ class PolygonEVP:
 
         return self.basis.grad(eig)@C
 
-    @lru_cache
-    def outward_normal_derivatives(self,lambda_,n=20,rtol=None,mtol=None):
-        raise NotImplementedError('Needs to be updated for complex arithmetic')
-        if rtol is None: rtol = self.rtol
-        if mtol is None: mtol = self.mtol
-        # polygon vertices
-        x_v,y_v = self.vertices.real, self.vertices.imag
-        e = polygon_edges(self.vertices)
+    # @lru_cache
+    # def outward_normal_derivatives(self,eig,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
+    #     if mtol is None: mtol = self.mtols[eig]
+    #     if rtol is None: rtol = self.rtol
+    #     if weights is None: weights=self.weights
 
-        # Gaussian quadrature nodes
-        qnodes = cached_leggauss(n)[0][np.newaxis]
+    #     # get basis gradients
+    #     du_dz = self.eval_eigenbasis_grad(eig,mtol,rtol,solver,reg_type,weights)
 
-        # transform nodes to boundary intervals
-        boundary_nodes = e[:,np.newaxis]*qnodes + self.vertices[:,np.newaxis]
-
-        # get basis gradients & reshape
-        du_dz = self.eigenbasis_grad(lambda_,boundary_nodes.flatten(),rtol,mtol)
-        mult = du_dz.shape[1]
-        du_dz = du_dz.reshape()
-
-        # compute outward normal derivatives
-        n = side_normals(self.vertices)
-
-        return n[:,:1]*du_dx + n[:,1:]*du_dy
+    #     return du_dz[:self.m_b]
 
     @lru_cache
-    def _gram_tensors(self,lambda_,n=20,rtol=None,mtol=None):
-        raise NotImplementedError('Needs to be updated for complex arithmetic')
+    def _gram_tensors(self,eig,n_pts=20,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
+        if mtol is None: mtol = self.mtols[eig]
         if rtol is None: rtol = self.rtol
-        if mtol is None: mtol = self.mtol
-        # polygon vertices
-        x_v,y_v = self.vertices.T
 
         # Gaussian quadrature nodes & weights
-        qnodes, qweights = cached_leggauss(n)
+        bdry_pts = boundary_nodes_polygon(self.vertices,n_pts)[0]
 
         # outward normal derivatives
-        du_dn = self.outward_normal_derivatives(lambda_,n,rtol,mtol)
+        du_dn = np.abs(self.eigenbasis_grad(eig,mtol,rtol,solver,reg_type,weights)(bdry_pts)).T
+        dU_dn = du_dn[np.newaxis]*du_dn[:,np.newaxis]
+        dU_dn = dU_dn.reshape((*dU_dn.shape[:2],len(self.vertices),-1))
 
         # get edge lengths & weighting arrays
-        d = calc_dists(x_v,y_v)[1][:,np.newaxis]
-        f = ((d/2)*(qnodes+1)[np.newaxis])[:,:,np.newaxis]
+        d = edge_lengths(self.vertices)
+        qnodes, qweights = cached_leggauss(n_pts)
+        f = np.repeat([qnodes],len(self.vertices),axis=0)*d[:,np.newaxis]
         g = f[:,::-1]
+        wts = np.repeat([qweights],len(self.vertices),axis=0)*d[:,np.newaxis]
 
         # compute integrals with quadrature
-        I = (du_dn.transpose((0,2,1))@(du_dn*f*qweights[:,np.newaxis]))/(2*d[:,np.newaxis])
-        J = (du_dn.transpose((0,2,1))@(du_dn*g*qweights[:,np.newaxis]))/(2*d[:,np.newaxis])
+        I = (f*dU_dn*wts).sum(axis=-1)/d**2
+        J = (g*dU_dn*wts).sum(axis=-1)/d**2
 
         # get X and Y gram tensors
-        dx = np.roll(x_v,-1)-x_v
-        dy = np.roll(y_v,-1)-y_v
-        X = -np.roll(dy,1)*np.roll(I,1,axis=0).T - dy*J.T
-        Y = np.roll(dx,1)*np.roll(I,1,axis=0).T + dx*J.T
+        dz = polygon_edges(self.vertices)
+        dx,dy = dz.real,dz.imag
+        X = -np.roll(dy,1)*np.roll(I,1,axis=-1) - dy*J
+        Y = np.roll(dx,1)*np.roll(I,1,axis=-1) + dx*J
         return X,Y
 
-    def dlambda(self,lambda_,dx=None,dy=None,n=20,rtol=None,mtol=None):
+    def eig_grad(self,eig,dx=None,dy=None,n_pts=20,mtol=None,rtol=None,solver='gsvd',reg_type='svd',weights=None):
+        if mtol is None: mtol = self.mtols[eig]
         if rtol is None: rtol = self.rtol
-        if mtol is None: mtol = self.mtol
+
         # catch direction derivative input errors
         if (dx is None) != (dy is None):
             raise ValueError('dx and dy must both be set, or left unset')
         elif dx is not None:
             dx,dy = np.asarray(dx),np.asarray(dy)
-            if (dx.shape[0] != self.n_vert) or (dy.shape[0] != self.n_vert):
-                raise ValueError(f'dx and dy must both be length {self.n_vert}')
+            n_vert = len(self.vertices)
+            if (dx.shape[0] != n_vert) or (dy.shape[0] != n_vert):
+                raise ValueError(f'dx and dy must both be length {n_vert}')
 
         # compute multiplicity
-        _,mult = self.sigma(lambda_,rtol,mtol,mult_check=True)
+        mult = self.spectrum.mults[eig]
 
         # catch repeated eigs
         if (mult > 1) and (dx is None):
             raise ValueError(f'Repeated eigenvalues only have a directional derivative (mult = {mult})')
 
         # compute gram tensors
-        X,Y = self._gram_tensors(lambda_,n,rtol,mtol)
+        X,Y = self._gram_tensors(eig,n_pts,mtol,rtol,solver,reg_type,weights)
 
         # catch multiplicity mismatch
         if X.shape[1] != mult:
             raise ValueError(f'Multiplicity mismatch: {mult} != {X.shape[1]}')
 
         if dx is None: # simple eigenvalue gradient
-            return X.flatten(), Y.flatten()
+            return X.flatten() + 1j*Y.flatten()
         else: # directional derivative
             M = (X@dx)+(Y@dy)
             if mult==1: # simple eigenvalue

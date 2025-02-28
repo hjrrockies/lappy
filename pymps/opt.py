@@ -14,7 +14,7 @@ def parabola_vertex(x,y):
     else: vertex = (x[1]+x[2]-dy1/(dx1*C))/2
     return vertex
 
-def parabolic_iter_min(f,x,y,xtol=1e-8,maxiter=10,maxresc=2,resc_param=0.1,nrecurse=0,verbose=0):
+def parabolic_iter_min(f,x,y,xtol=1e-12,maxiter=10,maxresc=2,resc_param=0.1,nrecurse=0,verbose=0):
     """Finds a local minimum of f in the interval [x[0],x[2]] by repeated parabolic interpolation."""
     tabs = min(nrecurse,10)*"\t"
     if x[1]<=x[0] or x[2]<=x[1]:
@@ -120,7 +120,7 @@ def interval_check(x,xgrid):
     elif (xgrid[0] <= x <= xgrid[-1]): return np.nonzero(x>=xgrid)[0][-1]
     else: return np.inf
 
-def gridmin(f,x,y,xtol=1e-8,shrink=2,nrecurse=0,verbose=0):
+def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
     """Finds all minima on a grid. Grid should have ghost points at the ends."""
     tabs = min(nrecurse,10)*"\t" # tab spacing for verbose mode
     if verbose > 0: 

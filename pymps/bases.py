@@ -124,7 +124,9 @@ class FourierBesselBasis(PlanarBasis):
                             'points or use FourierBesselBasis.set_default_points')
         r_rep,sin = self.r_rep,self.sin
         out = jv(self.alphak_vec,np.sqrt(lam)*r_rep)*sin
-        return la.norm(out,axis=0)
+        norms = la.norm(out,axis=0)
+        norms[norms==0] = 1
+        return norms
 
     def __call__(self,lam,points=None,y=None):
         if (points is None) and (y is not None):
@@ -206,8 +208,7 @@ class FourierBesselBasis(PlanarBasis):
         dtheta = self.alphak_vec*jv_*cos
 
         if self.normalize:
-            out = jv_*sin
-            norms = la.norm(out,axis=0)
+            norms = self.basis_norms(lam)
             dr = dr/norms
             dtheta = dtheta/norms
 

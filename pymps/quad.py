@@ -12,7 +12,7 @@ def cached_leggauss(order):
     nodes,weights = leggauss(order)
     nodes = (nodes+1)/2 #adjust nodes to interval [0,1]
     weights = weights/2 #adjust weights to interval of unit length
-    return nodes,weights
+    return nodes, weights
 
 @cache
 def cached_chebgauss(order):
@@ -21,9 +21,9 @@ def cached_chebgauss(order):
     weights = weights*np.sqrt(1-nodes**2)
     nodes = (nodes+1)/2 #adjust nodes to interval [0,1]
     weights = weights/2 #adjust weights to interval of unit length
-    return nodes,weights
+    return nodes[::-1],weights[::-1]
 
-def boundary_nodes_polygon(vertices,n_pts=20,rule='chebyshev',skip=None):
+def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
     quadrature rules. Transforms the nodes to lie along the edges of the polygon with
     the given vertices."""
@@ -114,7 +114,7 @@ def triangular_mesh(vertices,mesh_size):
 
     return mesh
 
-def tri_quad(mesh,kind='dunavant',deg=5):
+def tri_quad(mesh,kind='dunavant',deg=10):
     """"Sets up a cubature rule for a given mesh, in complex form"""
     # extract mesh vertices and triangle-to-vertex array
     mesh_vertices = mesh.points[:,:2]

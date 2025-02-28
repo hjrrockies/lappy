@@ -1,4 +1,3 @@
-from functools import cache
 import numpy as np
 import scipy.linalg as la
 import matplotlib.pyplot as plt
@@ -72,7 +71,7 @@ def edge_midpoints(vertices,y=None):
         vertices = complex_form(vertices,y)
     return 0.5*(np.roll(vertices,-1)+vertices)
 
-def boundary_pts_polygon(vertices,n_pts=20,rule='chebyshev',skip=None):
+def boundary_pts_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     from .quad import boundary_nodes_polygon
     return boundary_nodes_polygon(vertices,n_pts,rule,skip)
 
@@ -150,7 +149,6 @@ def invert_permutation(p):
     return s
 
 ### Eigenvalues of rectangles (for validation purposes)
-
 def rect_eig(m,n,L,H):
     """Computes the (m,n) Dirichlet eigenvalue of an L-by-H rectangle"""
     return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
