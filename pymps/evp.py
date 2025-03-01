@@ -280,7 +280,7 @@ class PolygonEVP:
         eig_count = len(self.eigs)
         # return first k eigs if already known
         if len(self.eigs) >= k:
-            return self.eigs[:k]
+            return self.eigs[:k],0
         else:
             deficit = k - eig_count
             if eig_count == 0:
@@ -292,15 +292,30 @@ class PolygonEVP:
             _,fevals = self.solve_eigs_interval(a,b,n_pts,xtol,mps_kwargs,verbose)
 
         # # run weyl check
-        # deltas = self.weyl_check(len(self.eigs))
-        # i = 0
-        # while np.any(deltas<0) and i < maxiter:
-        #     idx = np.nonzero(deltas<0)[0][0]
+        # deltas = self.weyl_check(len(self.eigs))[:k]
+        # i,j = 0, 0
+        # ppl_new = 2*ppl
+        # while np.any(deltas<-0.5) and i < maxiter:
+        #     idx = np.nonzero(deltas<-0.5)[0][0]
         #     warnings.warn(f"weyl check failed at lam={self.eigs[idx]}, delta={deltas[idx]}")
-        #     self.solve_eigs_interval(self.eigs[idx-1]+xtol,self.eigs[idx]-xtol,10*ppl,xtol,mps_kwargs,verbose)
+        #     if idx == idx_old:
+        #         ppl_new = (j+2)*ppl
+        #         j += 1
+        #     else:
+        #         j = 0
+        #     _,fe = self.solve_eigs_interval(self.eigs[idx-1],self.eigs[idx],ppl_new,xtol,mps_kwargs,verbose)
+        #     fevals += fe
         #     i += 1
-        #     deltas = self.weyl_check(len(self.eigs))
+        #     deltas = self.weyl_check(len(self.eigs))[:k]
+        #     idx_old = idx
+        # if verbose > 0: print("deltas =",deltas)
 
+        # # extend search
+        # i = 0
+        # while len(self.eigs) < k and i < maxiter:
+        #     warnings.warn(f"extending search for eigenvalues to [{self.weyl_k(k+1+i)},{self.weyl_k(k+2+i)}]")
+        #     _,fe = self.solve_eigs_interval(self.weyl_k(k+1+i),self.weyl_k(k+2+i),ppl,xtol,mps_kwargs,verbose)
+        #     fevals += fe
         return self.eigs[:k], fevals
 
     @cache

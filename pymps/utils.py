@@ -136,10 +136,27 @@ def polygon_perimeter(vertices,y=None,jac=False):
         vertices = complex_form(vertices,y)
     return np.sum(edge_lengths(vertices))
 
-def reg_polygon(r,n):
+def reg_polygon(n,r):
     """Generates a regular polygon with n vertices and radius r."""
     theta = np.linspace(0,2*np.pi,n+1)
     return r*np.exp(1j*theta)[:-1]
+
+def random_polygon(n,r_avg,eps,sigma):
+    """Generate the vertices of a random polygon, with vertices ordered
+    counter-clockwise."""
+    u = np.random.rand(n)
+    dtheta = (2*np.pi/n+eps)*u + (2*np.pi/n-eps)*(1-u)
+    k = dtheta.sum()/(2*np.pi)
+    theta = np.zeros(n)
+    theta[0] = dtheta[0]/k
+    for i in range(1,n):
+        theta[i] = theta[i-1] + dtheta[i]/k
+    r = sigma*np.random.randn(n)+r_avg
+    r[r<0] = 0
+    r[r>2*r_avg] = 2*r_avg
+    x = r*np.cos(theta)
+    y = r*np.sin(theta)
+    return x+1j*y
 
 ### Miscellaneous utils
 def invert_permutation(p):

@@ -4,7 +4,6 @@ name = "pymps"
 
 # modules available on package load
 from . import mps
-from . import evp
 from . import bases
 from . import quad
 from . import utils

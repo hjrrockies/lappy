@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.linalg as la
-from evp import PolygonEVP
+from .utils import polygon_area
 from .param import polygon_vertices, poly_perim
 
 def parabola_vertex(x,y):
@@ -81,7 +81,7 @@ def parabolic_iter_min(f,x,y,xtol=1e-12,maxiter=10,maxresc=2,resc_param=0.1,nrec
     return float(v+x[0]), fevals
 
 rho = (3-5**0.5)/2
-def golden_search(f,a,b,tol=1e-14,maxiter=100):
+def golden_search(f,a,b,tol=1e-15,maxiter=100):
     """Golden ratio minimization search"""
     h = b-a
     u, v = a+rho*h, b-rho*h
@@ -146,15 +146,15 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         
         # predicted zeros nearby
         else:
-            # first predicted zero within two intervals, flag relevant stretch
-            if (idx-3 <= idx1 <= idx+2):
+            # first predicted zero within three intervals, flag relevant stretch
+            if (idx-4 <= idx1 <= idx+3):
                 if verbose > 2: 
                     print(tabs+f"z1 = {z1:.3e} in interval {idx1}=[{x[idx1]:.3e},{x[idx1+1]:.3e}]")
                     print(tabs+f"flagging intervals {min(idx1,idx-1)} to {max(idx1,idx)} for recursion")
                 recurse_flag[min(idx1,idx-1):max(idx1,idx)+1] = True
 
-            # second predicted zero within two intervals, flag relevant stretch
-            if (idx-3 <= idx2 <= idx+2):
+            # second predicted zero within three intervals, flag relevant stretch
+            if (idx-4 <= idx2 <= idx+3):
                 if verbose > 2:
                     print(tabs+f"z2 = {z2:.3e} in interval {idx2}=[{x[idx2]:.3e},{x[idx2+1]:.3e}]")
                     print(tabs+f"flagging intervals {min(idx2,idx-1)} to {max(idx2,idx)} for recursion")
@@ -179,7 +179,11 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         if verbose > 1:
             print(tabs+f"intervals {idx-1}=[{x[idx-1]:.3e},{x[idx]:.3e}] and {idx}=[{x[idx]:.3e},{x[idx+1]:.3e}]")
 
-        if x[idx+1]-x[idx-1] < xtol:
+        if recurse_flag[idx-1] or recurse_flag[idx]:
+                if verbose > 0: print(tabs+"interval already flagged for recursion")
+                recurse_flag[idx-1:idx+1] = True
+
+        elif x[idx+1]-x[idx-1] < xtol:
             if verbose > 0: print(tabs+f"grid spacing at xtol, running parabolic minimzation")
             min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
                                          y[0,idx-1:idx+2]**2,xtol=xtol,
@@ -189,12 +193,12 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
                 minima.append(min_)
         
         # check to see if the interval (or others) needs to be flagged for recursion and grid refinement
-        elif not check_flag_recurse(idx):
+        elif not check_flag_recurse(idx):        
             if verbose > 0: print(tabs+"no nearby predicted zeros, running parabolic minimization")
 
             # find the local min in [x[idx-1],x[idx+1]] with parabolic fitting to f(x)**2
             min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
-                                         y[0,idx-1:idx+2]**2,xtol=xtol,
+                                         y[0,idx-1:idx+2]**2,xtol=xtol/10,
                                          nrecurse=nrecurse,verbose=verbose-1)
             fevals += fe
             if min_ is not None:
@@ -264,27 +268,32 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
     return minima,fevals
 
 def eig_obj(p,eigs_target,perim_tol=1e-15):
+    from .evp import PolygonEVP
     # check number of eigenvalues, convert targets to normalized reciprocals
     K = len(eigs_target)
     targets = normalized_reciprocals(eigs_target)
-    print("targets=",targets)
     
     # get vertices from parameter vector
     vertices = polygon_vertices(p)
-    print("vertices=",vertices)
     N = len(vertices)
 
     # get perimeter and perimeter gradient
     perim, perim_grad = poly_perim(vertices,jac=True)
-    print("perim=",perim)
     if np.abs(perim-1) > perim_tol:
-        raise ValueError('perimeter is not 1')
+        raise ValueError('perimeter is too high')
     implicit_grad = -np.concatenate((perim_grad[1:-1].real,perim_grad[1:-1].imag))/(perim_grad[0].real)
+    vertices_jac = np.zeros((2*N,len(p)))
+    vertices_jac[0] = implicit_grad
+    vertices_jac[1:N-1,:len(p)//2] = np.eye(len(p)//2)
+    vertices_jac[N+1:-1,len(p)//2:] = np.eye(len(p)//2)
+
+    # rescale vertices so the first eigenvalue is O(1)
+    A,P = polygon_area(vertices),1
+    weyl_1 = ((P+np.sqrt(P**2+16*np.pi*A))/(2*A))**2
 
     # get eigenvalues and eigenderivatives w.r.t vertices
-    evp = PolygonEVP(10*vertices)
-    eigs = evp.solve_eigs_ordered(K)[0]
-    print(eigs)
+    evp = PolygonEVP(np.sqrt(weyl_1)*vertices,order=20)
+    eigs = evp.solve_eigs_ordered(K+1,ppl=20)[0][:K]
     eigs_jac = np.zeros((K,2*N))
     for i in range(K):
         dz = evp.eig_grad(eigs[i])
@@ -298,7 +307,8 @@ def eig_obj(p,eigs_target,perim_tol=1e-15):
     loss, loss_grad = l2_loss(nus,targets,jac=True)
 
     # compose derivatives with chain rule
-    obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N-1],axis=1))
+    # obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N-1],axis=1))
+    obj_grad = ((loss_grad.reshape(1,-1)@nus_jac)@eigs_jac)@vertices_jac
 
     return loss, obj_grad
 

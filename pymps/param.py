@@ -1,7 +1,28 @@
 import numpy as np
 from .utils import edge_lengths
 
-def polygon_vertices(p,perim=1,jac=False):
+def param_vector(vertices,perim=1):
+    """Computes the canonical parameter vector for the polygon with the given vertices."""
+    # re-order to longest side is last
+    lens = edge_lengths(vertices)
+    idx = np.argmax(lens)
+    vertices = np.roll(vertices,-idx-1)
+
+    # reverse order if needed, to put the longest of the two sides adjacent to the longest side is counter-clockwise
+    lens = edge_lengths(vertices)
+    if lens[-2] > lens[0]:
+        vertices = vertices[::-1]
+
+    # shift so that the last vertex is at the origin
+    vertices -= vertices[-1]
+    # rotate so that the last side is on the x axis
+    vertices *= np.exp(-1j*np.angle(vertices[0]-vertices[-1]))
+    # rescale so that the perimeter is 1
+    vertices /= lens.sum()/perim
+    # return real and imaginary parts of second through second-to-last vertices
+    return np.concatenate((vertices[1:-1].real,vertices[1:-1].imag))
+
+def polygon_vertices(p,perim=1):
     """Builds a perimeter-1 N-gon corresponding to the parameter vector p, where p contains the x and y
     coordinates of N-2 of the vertices. Thus p must have length 2N-4, that is len(p) >= 2 and len(p) must be even."""
 
@@ -23,28 +44,29 @@ def polygon_vertices(p,perim=1,jac=False):
     # x coordinate of first vertex (assuming y coord of 0, and last vertex at origin)
     vertices[0] = 0.5*(x[0] + C + y[0]**2/(x[0]-C))
 
-    # optionally compute the jacobian of the vertices with respect to the parameter vector
-    # note: it is better in practice to use the implicit form which comes from polygon_perimeter
-    if jac:
-        l = edge_lengths(vertices)
-        alpha = y[0]/(x[0]-C)
-        jacobian = np.zeros((2*N,len(p)))
-        x,y = vertices.real, vertices.imag
+    # JACOBIAN CALCULATION BUGGED AT THE MOMENT
+    # # optionally compute the jacobian of the vertices with respect to the parameter vector
+    # # note: it is better in practice to use the implicit form which comes from polygon_perimeter
+    # if jac:
+    #     l = edge_lengths(vertices)
+    #     alpha = y[0]/(x[0]-C)
+    #     jacobian = np.zeros((2*N,len(p)))
+    #     x,y = vertices.real, vertices.imag
 
-        # partial derivatives of x_1 w.r.t. to p
-        jacobian[0,0] = 0.5*((1-alpha**2) + (1+alpha**2)*(x[2]-x[1])/l[1])
-        jacobian[0,N-2] = alpha + 0.5*(1+alpha**2)*(y[2]-y[1])/l[1]
-        jacobian[0,1:N-3] = 0.5*(1+alpha**2)*((x[3:-1]-x[2:-2])/l[2:-2]-(x[2:-2]-x[1:-3])/l[1:-3])
-        jacobian[0,N-1:-1] = 0.5*(1+alpha**2)*((y[3:-1]-y[2:-2])/l[2:-2]-(y[2:-2]-y[1:-3])/l[1:-3])
-        jacobian[0,N-3] = -0.5*(1+alpha**2)*(x[-2]/np.abs(vertices[-2]) + (x[-2]-x[-3])/l[-2])
-        jacobian[0,-1] = -0.5*(1+alpha**2)*(y[-2]/np.abs(vertices[-2]) + (y[-2]-y[-3])/l[-2])
+    #     # partial derivatives of x_1 w.r.t. to p
+    #     jacobian[0,0] = 0.5*((1-alpha**2) + (1+alpha**2)*(x[2]-x[1])/l[1])
+    #     jacobian[0,N-2] = alpha + 0.5*(1+alpha**2)*(y[2]-y[1])/l[1]
+    #     jacobian[0,1:N-3] = 0.5*(1+alpha**2)*((x[3:-1]-x[2:-2])/l[2:-2]-(x[2:-2]-x[1:-3])/l[1:-3])
+    #     jacobian[0,N-1:-1] = 0.5*(1+alpha**2)*((y[3:-1]-y[2:-2])/l[2:-2]-(y[2:-2]-y[1:-3])/l[1:-3])
+    #     jacobian[0,N-3] = -0.5*(1+alpha**2)*(x[-2]/np.abs(vertices[-2]) + (x[-2]-x[-3])/l[-2])
+    #     jacobian[0,-1] = -0.5*(1+alpha**2)*(y[-2]/np.abs(vertices[-2]) + (y[-2]-y[-3])/l[-2])
 
-        # partial derivatives of x_j w.r.t. themselves are identity
-        jacobian[1:N-1,:N-2] = np.eye(N-2)
-        # partial derivatives of y_j w.r.t. themselves are identity
-        jacobian[N+1:-1,N-2:] = np.eye(N-2)
+    #     # partial derivatives of x_j w.r.t. themselves are identity
+    #     jacobian[1:N-1,:N-2] = np.eye(N-2)
+    #     # partial derivatives of y_j w.r.t. themselves are identity
+    #     jacobian[N+1:-1,N-2:] = np.eye(N-2)
         
-        return vertices, jacobian
+    #     return vertices, jacobian
     return vertices
 
 def poly_perim(vertices,jac=False):
