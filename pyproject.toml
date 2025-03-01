@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "PyMPS"
+name = "pymps"
 version = "0.1.0"
 description = "Python implementation of the Method of Particular Solutions"
 authors = [{name = "Hayden Ringer", email = "hringer@vt.edu"}]

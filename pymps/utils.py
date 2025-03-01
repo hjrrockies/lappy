@@ -131,7 +131,7 @@ def polygon_area(vertices,y=None):
     x,y = vertices.real, vertices.imag
     return 0.5*np.sum((x-np.roll(x,-1))*(y+np.roll(y,-1)))
 
-def polygon_perimeter(vertices,y=None):
+def polygon_perimeter(vertices,y=None,jac=False):
     if y is not None:
         vertices = complex_form(vertices,y)
     return np.sum(edge_lengths(vertices))

@@ -10,8 +10,9 @@ from . import quad
 from . import utils
 from . import cubature_rules
 from . import opt
+from . import param
 
-# classes and functions available directly from tsunamibayes
+# classes and functions available directly from pymps
 from .evp import PolygonEVP, Spectrum, Eigenvalue
 from .bases import FourierBesselBasis
 from .quad import triangular_mesh,  tri_quad, boundary_nodes_polygon

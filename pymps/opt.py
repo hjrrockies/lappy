@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.linalg as la
-from .utils import edge_lengths
+from evp import PolygonEVP
+from .param import polygon_vertices, poly_perim
 
 def parabola_vertex(x,y):
     """Finds the vertex of a parabola passing through the points
@@ -145,15 +146,15 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         
         # predicted zeros nearby
         else:
-            # first predicted zero within three intervals, flag relevant stretch
-            if (idx-4 <= idx1 <= idx+3):
+            # first predicted zero within two intervals, flag relevant stretch
+            if (idx-3 <= idx1 <= idx+2):
                 if verbose > 2: 
                     print(tabs+f"z1 = {z1:.3e} in interval {idx1}=[{x[idx1]:.3e},{x[idx1+1]:.3e}]")
                     print(tabs+f"flagging intervals {min(idx1,idx-1)} to {max(idx1,idx)} for recursion")
                 recurse_flag[min(idx1,idx-1):max(idx1,idx)+1] = True
 
-            # second predicted zero within three intervals, flag relevant stretch
-            if (idx-4 <= idx2 <= idx+3):
+            # second predicted zero within two intervals, flag relevant stretch
+            if (idx-3 <= idx2 <= idx+2):
                 if verbose > 2:
                     print(tabs+f"z2 = {z2:.3e} in interval {idx2}=[{x[idx2]:.3e},{x[idx2+1]:.3e}]")
                     print(tabs+f"flagging intervals {min(idx2,idx-1)} to {max(idx2,idx)} for recursion")
@@ -262,6 +263,45 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         print(tabs+f"fevals={fevals}")
     return minima,fevals
 
+def eig_obj(p,eigs_target,perim_tol=1e-15):
+    # check number of eigenvalues, convert targets to normalized reciprocals
+    K = len(eigs_target)
+    targets = normalized_reciprocals(eigs_target)
+    print("targets=",targets)
+    
+    # get vertices from parameter vector
+    vertices = polygon_vertices(p)
+    print("vertices=",vertices)
+    N = len(vertices)
+
+    # get perimeter and perimeter gradient
+    perim, perim_grad = poly_perim(vertices,jac=True)
+    print("perim=",perim)
+    if np.abs(perim-1) > perim_tol:
+        raise ValueError('perimeter is not 1')
+    implicit_grad = -np.concatenate((perim_grad[1:-1].real,perim_grad[1:-1].imag))/(perim_grad[0].real)
+
+    # get eigenvalues and eigenderivatives w.r.t vertices
+    evp = PolygonEVP(10*vertices)
+    eigs = evp.solve_eigs_ordered(K)[0]
+    print(eigs)
+    eigs_jac = np.zeros((K,2*N))
+    for i in range(K):
+        dz = evp.eig_grad(eigs[i])
+        eigs_jac[i,:N] = dz.real
+        eigs_jac[i,N:] = dz.imag
+
+    # get normalized reciprocals
+    nus, nus_jac = normalized_reciprocals(eigs,jac=True)
+
+    # evaluate loss function
+    loss, loss_grad = l2_loss(nus,targets,jac=True)
+
+    # compose derivatives with chain rule
+    obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N-1],axis=1))
+
+    return loss, obj_grad
+
 def normalized_reciprocals(x,jac=False):
     if jac:
         col = (1/x[1:]).reshape(-1,1)
@@ -275,77 +315,3 @@ def l2_loss(x,y,jac=False):
     if jac:
         return la.norm(diff)**2, 2*diff
     return la.norm(diff)**2
-
-def polygon_vertices(p,perim=1,jac=False):
-    N = len(p)//2 + 2
-    x,y = p[:N-2],p[N-2:]
-    vertices = np.zeros(N,dtype='complex')
-    vertices[1:-1] = x + 1j*y
-    C = perim - np.abs(vertices[2:]-vertices[1:-1]).sum()
-    vertices[0] = 0.5*(x[0] + C + y[0]**2/(x[0]-C))
-    if jac:
-        l = edge_lengths(vertices)
-        alpha = y[0]/(x[0]-C)
-        jacobian = np.zeros((2*N,len(p)))
-        print(jacobian.shape)
-        x,y = vertices.real, vertices.imag
-
-        # partial derivatives of x_1 w.r.t. to p
-        jacobian[0,0] = 0.5*((1-alpha**2) + (1+alpha**2)*(x[2]-x[1])/l[1])
-        jacobian[0,N-2] = alpha + 0.5*(1+alpha**2)*(y[2]-y[1])/l[1]
-        jacobian[0,1:N-3] = 0.5*(1+alpha**2)*((x[3:-1]-x[2:-2])/l[2:-2]-(x[2:-2]-x[1:-3])/l[1:-3])
-        jacobian[0,N-1:-1] = 0.5*(1+alpha**2)*((y[3:-1]-y[2:-2])/l[2:-2]-(y[2:-2]-y[1:-3])/l[1:-3])
-        jacobian[0,N-3] = -0.5*(1+alpha**2)*(x[-2]/np.abs(vertices[-2]) + (x[-2]-x[-3])/l[-2])
-        jacobian[0,-1] = -0.5*(1+alpha**2)*(y[-2]/np.abs(vertices[-2]) + (y[-2]-y[-3])/l[-2])
-
-        # partial derivatives of x_j w.r.t. themselves are identity
-        jacobian[1:N-1,:N-2] = np.eye(N-2)
-        # partial derivatives of y_j w.r.t. themselves are identity
-        jacobian[N+1:-1,N-2:] = np.eye(N-2)
-        
-        return vertices, jacobian
-    return vertices
-
-def polygon_perimeter(vertices,jac=False):
-    """computes the perimeter, and optionally the gradient of the perimeter, of a polygon
-    with given vertices, written in complex form"""
-    dv = vertices-np.roll(vertices,1)
-    lengths = np.abs(dv)
-    perim = lengths.sum()
-    if jac:
-        grad = dv/lengths
-        grad = grad - np.roll(grad,-1)
-        return perim, grad
-    return perim
-
-def eig_obj(p,eigs_target,perim_tol=1e-15):
-    # check number of eigenvalues, convert targets to normalized reciprocals
-    K = len(eigs_target)
-    targets = normalized_reciprocals(eigs_target)
-    
-    # get vertices from parameter vector
-    vertices = polygon_vertices(p)
-    N = len(vertices)
-
-    # get perimeter and perimeter gradient
-    perim, perim_grad = polygon_perimeter(vertices,jac=True)
-    if np.abs(perim-1) > perim_tol:
-        raise ValueError('perimeter is not 1')
-    implicit_grad = -np.concatenate((perim_grad[1:-1].real,perim_grad[1:-1].imag))/(perim_grad[0].real)
-
-    # get eigenvalues and eigenderivatives w.r.t vertices
-    eigs, eigs_jac = dirichlet_eigenvalues(vertices,K,jac=True)
-
-    # get normalized reciprocals
-    nus, nus_jac = normalized_reciprocals(eigs,jac=True)
-
-    # evaluate loss function
-    loss, loss_grad = l2_loss(nus,targets,jac=True)
-
-    # compose derivatives with chain rule
-    obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N],axis=1))
-
-    return loss, obj_grad
-
-def dirichlet_eigenvalues(*args):
-    pass

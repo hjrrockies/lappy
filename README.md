@@ -1,4 +1,4 @@
-# PyMPS
+# pymps
 Method of Particular Solutions for Laplacian eigenvalues
 
 install using git & pip:
