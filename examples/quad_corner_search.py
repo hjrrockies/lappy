@@ -22,7 +22,7 @@ def run_test(n,k,L,H,dx):
     X,Y = np.meshgrid(x,y,indexing='ij')
     XY = np.vstack((X.flatten(),Y.flatten())).T
 
-    res = Parallel(n_jobs=-1,verbose=10)(delayed(quad_eig)(xy,k) for xy in XY)
+    res = Parallel(n_jobs=-1,verbose=10)(delayed(quad_eig)(xy,k,L,H) for xy in XY)
     eigs = np.array(res)
 
     np.savez(f"corner_eig_{n}_{k}_{np.rint(L)}_{np.rint(H)}.npz",X=X,Y=Y,eigs=eigs)
