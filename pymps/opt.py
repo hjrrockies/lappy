@@ -267,7 +267,7 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         print(tabs+f"fevals={fevals}")
     return minima,fevals
 
-def eig_obj(p,eigs_target,perim_tol=1e-15,mps_kwargs={},verbose=False):
+def eig_obj(p,eigs_target,perim_tol=1e-15,mps_kwargs={},log=False,verbose=False):
     from .evp import PolygonEVP
     # check number of eigenvalues, convert targets to normalized reciprocals
     K = len(eigs_target)
@@ -305,13 +305,13 @@ def eig_obj(p,eigs_target,perim_tol=1e-15,mps_kwargs={},verbose=False):
     nus, nus_jac = normalized_reciprocals(eigs,jac=True)
 
     # evaluate loss function
-    loss, loss_grad = l2_loss(nus,targets,jac=True)
+    loss, loss_grad = l2_loss(nus,targets,log,jac=True)
 
     # compose derivatives with chain rule
     # obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N-1],axis=1))
-    obj_grad = ((loss_grad.reshape(1,-1)@nus_jac)@eigs_jac)@vertices_jac
+    grad = (((loss_grad.reshape(1,-1)@nus_jac)@eigs_jac)@vertices_jac)[0]
 
-    return loss, obj_grad[0]
+    return loss, grad
 
 def normalized_reciprocals(x,jac=False):
     if jac:
@@ -321,8 +321,12 @@ def normalized_reciprocals(x,jac=False):
         return x[0]/x[1:], jacobian
     return x[0]/x[1:]
 
-def l2_loss(x,y,jac=False):
+def l2_loss(x,y,log=False,jac=False):
     diff = x-y
+    out = la.norm(diff)**2
     if jac:
-        return la.norm(diff)**2, 2*diff
-    return la.norm(diff)**2
+        grad = 2*diff
+        if log: return np.log(out),grad/out
+        else: return out, grad
+    if log: return np.log(out)
+    else: return out

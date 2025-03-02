@@ -56,13 +56,11 @@ class PolygonEVP:
                 else:
                     n_pts = boundary_pts
                 idx = np.nonzero(self.basis.orders)[0][0]
-                skip = [idx-1,idx]
                 mask = np.full(len(vertices),True)
                 mask[idx-1] = False
                 mask[idx] = False
                 
             else:
-                skip = None
                 mask = np.full(len(vertices),True)
                 if boundary_pts == 'auto':
                     n_pts = 2*int(np.ceil(self.basis.orders.mean()))
@@ -70,7 +68,8 @@ class PolygonEVP:
                     n_pts = boundary_pts
             lens = edge_lengths(vertices)
             n_pts_vec = np.rint((n_pts-5)*(lens/lens[mask].mean()))+5
-            self.boundary_pts, boundary_wts = boundary_nodes_polygon(vertices,n_pts=n_pts_vec.astype(int),skip=skip)
+            n_pts_vec[~mask] = 0
+            self.boundary_pts, boundary_wts = boundary_nodes_polygon(vertices,n_pts=n_pts_vec.astype(int))
 
             # set up interior pts and weights
             mesh_size = PolygonEVP.set_mesh_size(vertices)
@@ -101,17 +100,16 @@ class PolygonEVP:
                 if np.sum(self.basis.orders>0) == 1 and type(self.basis) is FourierBesselBasis:
                     n_pts = self.basis.orders.max()
                     idx = np.nonzero(self.basis.orders)[0][0]
-                    skip = [idx-1,idx]
                     mask = np.full(len(vertices),True)
                     mask[idx-1] = False
                     mask[idx] = False
                 else:
                     n_pts = 2*int(np.ceil(self.basis.orders.mean()))
-                    skip = None
                     mask = np.full(len(vertices),True)
                 lens = edge_lengths(vertices)
                 n_pts_vec = np.rint((n_pts-5)*(lens/lens[mask].mean()))+5
-                self.boundary_pts = boundary_nodes_polygon(vertices,n_pts=n_pts_vec.astype(int),skip=skip)[0]
+                n_pts_vec[~mask] = 0
+                self.boundary_pts = boundary_nodes_polygon(vertices,n_pts=n_pts_vec.astype(int))[0]
 
             # catch integer argument to construct interior points
             if type(interior_pts) is np.ndarray:
@@ -156,7 +154,6 @@ class PolygonEVP:
                 break
             else:
                 self.rtol *= 10
-                print(self.rtol)
 
     @property
     def eigs(self):
@@ -257,7 +254,7 @@ class PolygonEVP:
         eigs_tmp = []
         # filter out spurious minima and minima too close to known eigenvalues
         for lam in minima:
-            mybool = self._proximity_check(lam,eigs_tmp,xtol)
+            mybool = self._proximity_check(lam,eigs_tmp,10*xtol)
             tan = self.subspace_tans(lam,**mps_kwargs)[0]
             if not mybool and verbose > 0:
                 print(f"lam={lam:.3f} too close to previously found eigenvalue")
