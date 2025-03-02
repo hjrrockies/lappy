@@ -15,7 +15,9 @@ def tri_eig(p,k,tol=1e-5):
                 evp1 = PolygonEVP(v,order=20)
                 evp1.rtol = 1e-8
                 eigs = evp1.solve_eigs_ordered(k+1)[0][:k]
-                return eigs*weyl_1
+                out = np.full(k,np.nan)
+                out[:len(eigs)] = eigs
+                return weyl_1*out
             except:
                 pass
     return np.full(k,np.nan)
@@ -25,10 +27,8 @@ def run_test(n,k):
     P1,P2 = np.meshgrid(p1,p2,indexing='ij')
     P = np.vstack((P1.flatten(),P2.flatten())).T
 
-    res = Parallel(n_jobs=-1)(delayed(tri_eig)(p,k) for p in P)
-    eigs = np.full(P.shape,'np.nan')
-    for i in range(len(res)):
-        eigs[i,:len(res[i])] = res[i]
+    res = Parallel(n_jobs=-1,verbose=10)(delayed(tri_eig)(p,k) for p in P)
+    eigs = np.array(res)
 
     np.savez(f"tri_eig_{n}_{k}.npz",P=P,eigs=eigs)
 
