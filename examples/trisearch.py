@@ -13,7 +13,7 @@ def tri_eig(p,k,tol=1e-5):
         if np.ceil(alpha.max()) <= 100:
             try:
                 evp1 = PolygonEVP(v,order=20)
-                evp1.rtol = 1e-8
+                evp1.rtol = 1e-7
                 eigs = evp1.solve_eigs_ordered(k+1)[0][:k]
                 out = np.full(k,np.nan)
                 out[:len(eigs)] = eigs
@@ -23,7 +23,7 @@ def tri_eig(p,k,tol=1e-5):
     return np.full(k,np.nan)
 
 def run_test(n,k):
-    p1,p2 = np.linspace(0.1,0.35,n),np.linspace(0.1,0.35,n)
+    p1,p2 = np.linspace(0.15,0.35,n),np.linspace(0.15,0.35,n)
     P1,P2 = np.meshgrid(p1,p2,indexing='ij')
     P = np.vstack((P1.flatten(),P2.flatten())).T
 

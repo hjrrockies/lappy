@@ -267,7 +267,7 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         print(tabs+f"fevals={fevals}")
     return minima,fevals
 
-def eig_obj(p,eigs_target,perim_tol=1e-15):
+def eig_obj(p,eigs_target,perim_tol=1e-15,mps_kwargs={},verbose=False):
     from .evp import PolygonEVP
     # check number of eigenvalues, convert targets to normalized reciprocals
     K = len(eigs_target)
@@ -276,6 +276,7 @@ def eig_obj(p,eigs_target,perim_tol=1e-15):
     # get vertices from parameter vector
     vertices = polygon_vertices(p)
     N = len(vertices)
+    if verbose: print(f"Evaluating at p={np.array_str(p,precision=3)}")
 
     # get perimeter and perimeter gradient
     perim, perim_grad = poly_perim(vertices,jac=True)
@@ -293,7 +294,7 @@ def eig_obj(p,eigs_target,perim_tol=1e-15):
 
     # get eigenvalues and eigenderivatives w.r.t vertices
     evp = PolygonEVP(np.sqrt(weyl_1)*vertices,order=20)
-    eigs = evp.solve_eigs_ordered(K+1,ppl=20)[0][:K]
+    eigs = evp.solve_eigs_ordered(K+1,ppl=20,mps_kwargs=mps_kwargs)[0][:K]
     eigs_jac = np.zeros((K,2*N))
     for i in range(K):
         dz = evp.eig_grad(eigs[i])
@@ -310,7 +311,7 @@ def eig_obj(p,eigs_target,perim_tol=1e-15):
     # obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N-1],axis=1))
     obj_grad = ((loss_grad.reshape(1,-1)@nus_jac)@eigs_jac)@vertices_jac
 
-    return loss, obj_grad
+    return loss, obj_grad[0]
 
 def normalized_reciprocals(x,jac=False):
     if jac:

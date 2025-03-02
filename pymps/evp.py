@@ -57,14 +57,20 @@ class PolygonEVP:
                     n_pts = boundary_pts
                 idx = np.nonzero(self.basis.orders)[0][0]
                 skip = [idx-1,idx]
+                mask = np.full(len(vertices),True)
+                mask[idx-1] = False
+                mask[idx] = False
                 
             else:
                 skip = None
+                mask = np.full(len(vertices),True)
                 if boundary_pts == 'auto':
                     n_pts = 2*int(np.ceil(self.basis.orders.mean()))
                 else:
                     n_pts = boundary_pts
-            self.boundary_pts, boundary_wts = boundary_nodes_polygon(vertices,n_pts=n_pts,skip=skip)
+            lens = edge_lengths(vertices)
+            n_pts_vec = np.rint((n_pts-5)*(lens/lens[mask].mean()))+5
+            self.boundary_pts, boundary_wts = boundary_nodes_polygon(vertices,n_pts=n_pts_vec.astype(int),skip=skip)
 
             # set up interior pts and weights
             mesh_size = PolygonEVP.set_mesh_size(vertices)
@@ -96,10 +102,16 @@ class PolygonEVP:
                     n_pts = self.basis.orders.max()
                     idx = np.nonzero(self.basis.orders)[0][0]
                     skip = [idx-1,idx]
+                    mask = np.full(len(vertices),True)
+                    mask[idx-1] = False
+                    mask[idx] = False
                 else:
                     n_pts = 2*int(np.ceil(self.basis.orders.mean()))
                     skip = None
-                self.boundary_pts = boundary_nodes_polygon(vertices,n_pts=n_pts,skip=skip)[0]
+                    mask = np.full(len(vertices),True)
+                lens = edge_lengths(vertices)
+                n_pts_vec = np.rint((n_pts-5)*(lens/lens[mask].mean()))+5
+                self.boundary_pts = boundary_nodes_polygon(vertices,n_pts=n_pts_vec.astype(int),skip=skip)[0]
 
             # catch integer argument to construct interior points
             if type(interior_pts) is np.ndarray:
@@ -134,6 +146,18 @@ class PolygonEVP:
         # shapely polygon
         self.polygon = Polygon(np.array([self.vertices.real,self.vertices.imag]).T)
 
+        # automatically boost rtol if needed
+        ntest = 5
+        while True:
+            x = (1+np.random.rand(ntest))*self.eig1_lb
+            test_evals = [self.subspace_tans(x_)[0] for x_ in x]
+            logmean = np.log10(test_evals).mean()
+            if logmean >= -1:
+                break
+            else:
+                self.rtol *= 10
+                print(self.rtol)
+
     @property
     def eigs(self):
         return self.spectrum.eigs
@@ -155,7 +179,7 @@ class PolygonEVP:
         if not np.any(sing):
             orders[np.argmax(phis)] = order
         else:
-            orders[sing] = np.rint(order*(phis[sing]/phis[sing].mean()))
+            orders[sing] = np.rint((order-3)*(phis[sing]/phis[sing].mean()))+3
         return orders
     
     @classmethod

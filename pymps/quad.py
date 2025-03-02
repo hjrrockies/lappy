@@ -49,7 +49,7 @@ def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
             raise ValueError("skip must be 'None' if n_pts are provided for each edge")
 
     # set up arrays for nodes and weights
-    n_nodes = np.sum(n_pts)
+    n_nodes = int(np.sum(n_pts))
     nodes = np.empty(n_nodes,dtype='complex')
     weights = np.empty(n_nodes,dtype='float')
 
