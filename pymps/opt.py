@@ -131,6 +131,9 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
     # recursion flag
     recurse_flag = np.zeros(len(x)-1,dtype=bool)
 
+    # parabolic min flag
+    para_min = []
+
     def check_flag_recurse(idx):
         # estimate y2 zeros from segments
         x1,x2 = x[idx-1:idx+1],x[idx:idx+2]
@@ -180,30 +183,45 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
             print(tabs+f"intervals {idx-1}=[{x[idx-1]:.3e},{x[idx]:.3e}] and {idx}=[{x[idx]:.3e},{x[idx+1]:.3e}]")
 
         if recurse_flag[idx-1] or recurse_flag[idx]:
-                if verbose > 0: print(tabs+"interval already flagged for recursion")
-                recurse_flag[idx-1:idx+1] = True
+            if verbose > 0: print(tabs+"interval already flagged for recursion")
+            recurse_flag[idx-1:idx+1] = True
 
         elif x[idx+1]-x[idx-1] < xtol:
-            if verbose > 0: print(tabs+f"grid spacing at xtol, running parabolic minimzation")
-            min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
-                                         y[0,idx-1:idx+2]**2,xtol=xtol,
-                                         nrecurse=nrecurse,verbose=verbose-1)
-            fevals += fe
-            if min_ is not None:
-                minima.append(min_)
+            if verbose > 0: print(tabs+f"grid spacing at xtol, flagging for parabolic minimzation")
+            para_min.append(idx)
+            # min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
+            #                              y[0,idx-1:idx+2]**2,xtol=xtol,
+            #                              nrecurse=nrecurse,verbose=verbose-1)
+            # fevals += fe
+            # if min_ is not None:
+            #     minima.append(min_)
         
         # check to see if the interval (or others) needs to be flagged for recursion and grid refinement
         elif not check_flag_recurse(idx):        
-            if verbose > 0: print(tabs+"no nearby predicted zeros, running parabolic minimization")
+            if verbose > 0: print(tabs+"no nearby predicted zeros, flagging for parabolic minimization")
+            para_min.append(idx)
 
-            # find the local min in [x[idx-1],x[idx+1]] with parabolic fitting to f(x)**2
-            min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
-                                         y[0,idx-1:idx+2]**2,xtol=xtol/10,
-                                         nrecurse=nrecurse,verbose=verbose-1)
-            fevals += fe
-            if min_ is not None:
-                minima.append(min_)
+            # # find the local min in [x[idx-1],x[idx+1]] with parabolic fitting to f(x)**2
+            # min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
+            #                              y[0,idx-1:idx+2]**2,xtol=xtol/10,
+            #                              nrecurse=nrecurse,verbose=verbose-1)
+            # fevals += fe
+            # if min_ is not None:
+            #     minima.append(min_)
         if verbose: print("")
+
+    # run parabolic minimization on locmin intervals that were not flagged for recursion
+    if len(para_min) >= 1:
+        for idx in para_min:
+            if recurse_flag[idx-1] or recurse_flag[idx]:
+                recurse_flag[idx-1:idx+1] = True
+            else:
+                min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
+                                         y[0,idx-1:idx+2]**2,xtol=xtol,
+                                         nrecurse=nrecurse,verbose=verbose-1)
+                fevals += fe
+                if min_ is not None:
+                    minima.append(min_)
 
     # recurse if needed to refine the grid
     if np.any(recurse_flag):

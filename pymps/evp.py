@@ -146,7 +146,11 @@ class PolygonEVP:
 
         # automatically boost rtol if needed
         ntest = 5
+        maxtry = 10
+        i = 0
         while True:
+            if i == maxtry:
+                break
             x = (1+np.random.rand(ntest))*self.eig1_lb
             test_evals = [self.subspace_tans(x_)[0] for x_ in x]
             logmean = np.log10(test_evals).mean()
@@ -154,6 +158,7 @@ class PolygonEVP:
                 break
             else:
                 self.rtol *= 10
+                i += 1
 
     @property
     def eigs(self):
