@@ -1,5 +1,5 @@
 import numpy as np
-from .utils import edge_lengths
+from .utils import edge_lengths, polygon_area
 
 def param_vector(vertices,perim=1):
     """Computes the canonical parameter vector for the polygon with the given vertices."""
@@ -155,4 +155,49 @@ def valid_polygon(vertices):
             k += 1
     return out
 
+def eigs(p,K,perim_tol=1e-15,evp_kwargs={'order':20},mps_kwargs={},jac=False,verbose=False):
+    from .evp import PolygonEVP
+    # check number of eigenvalues, convert targets to normalized reciprocals
+    
+    # get vertices from parameter vector
+    vertices = polygon_vertices(p)
+    N = len(vertices)
+    if verbose: print(f"Evaluating at p={np.array_str(p,precision=3)}")
+
+    # get perimeter and perimeter gradient
+    perim, perim_grad = poly_perim(vertices,jac=True)
+    if np.abs(perim-1) > perim_tol:
+        raise ValueError('perimeter is too high')
+    
+    if jac:
+        implicit_grad = -np.concatenate((perim_grad[1:-1].real,perim_grad[1:-1].imag))/(perim_grad[0].real)
+        vertices_jac = np.zeros((2*N,len(p)))
+        vertices_jac[0] = implicit_grad
+        vertices_jac[1:N-1,:len(p)//2] = np.eye(len(p)//2)
+        vertices_jac[N+1:-1,len(p)//2:] = np.eye(len(p)//2)
+
+    # rescale vertices so the first eigenvalue is O(1)
+    A,P = polygon_area(vertices),1
+    weyl_1 = ((P+np.sqrt(P**2+16*np.pi*A))/(2*A))**2
+
+    # get eigenvalues and eigenderivatives w.r.t vertices
+    evp = PolygonEVP(np.sqrt(weyl_1)*vertices,**evp_kwargs)
+    eigs = evp.solve_eigs_ordered(K+2,ppl=20,mps_kwargs=mps_kwargs)[0][:K]
+    if jac:
+        eigs_jac = np.zeros((K,2*N))
+        for i in range(K):
+            dz = evp.eig_grad(eigs[i])
+            eigs_jac[i,:N] = dz.real
+            eigs_jac[i,N:] = dz.imag
+            eigs_jac *= weyl_1
+    eigs *= weyl_1
+
+    # return eigs and derivatives w.r.t. p
+    if jac:
+          return eigs, eigs_jac@vertices_jac
+    else: 
+        return eigs
+
+    
+  
 

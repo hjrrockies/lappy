@@ -285,7 +285,7 @@ def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
         print(tabs+f"fevals={fevals}")
     return minima,fevals
 
-def eig_obj(p,eigs_target,perim_tol=1e-15,mps_kwargs={},log=False,verbose=False):
+def eig_obj(p,eigs_target,perim_tol=1e-15,evp_kwargs={'order':20},mps_kwargs={},eig_list=None,log=False,verbose=False):
     from .evp import PolygonEVP
     # check number of eigenvalues, convert targets to normalized reciprocals
     K = len(eigs_target)
@@ -311,8 +311,10 @@ def eig_obj(p,eigs_target,perim_tol=1e-15,mps_kwargs={},log=False,verbose=False)
     weyl_1 = ((P+np.sqrt(P**2+16*np.pi*A))/(2*A))**2
 
     # get eigenvalues and eigenderivatives w.r.t vertices
-    evp = PolygonEVP(np.sqrt(weyl_1)*vertices,order=20)
+    evp = PolygonEVP(np.sqrt(weyl_1)*vertices,**evp_kwargs)
     eigs = evp.solve_eigs_ordered(K+1,ppl=20,mps_kwargs=mps_kwargs)[0][:K]
+    if eig_list is not None:
+        eig_list.append(weyl_1*eigs)
     eigs_jac = np.zeros((K,2*N))
     for i in range(K):
         dz = evp.eig_grad(eigs[i])
