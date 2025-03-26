@@ -1,5 +1,5 @@
 import numpy as np
-from pymps import *
+from lappy import *
 from joblib import Parallel, delayed
 
 def quad_eig(v1,k,tol=1e-5):

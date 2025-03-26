@@ -1,5 +1,5 @@
 import numpy as np
-from pymps import *
+from lappy import *
 from joblib import Parallel, delayed
 
 def tri_eig(p,k,tol=1e-5):

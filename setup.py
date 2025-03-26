@@ -12,9 +12,9 @@ setup(
                  of Particular Solutions (MPS)",
     long_description=readme + '\n\n',# + history,
     include_package_data=True,
-    name='pymps',
+    name='lappy',
     packages=find_packages(),
     #test_suite='tests',
-    url='https://github.com/hjrrockies/pymps',
+    url='https://github.com/hjrrockies/lappy',
     version='0.1.0',
 )

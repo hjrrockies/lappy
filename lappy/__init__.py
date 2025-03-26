@@ -1,6 +1,6 @@
-# Do not delete this file. It tells python that pymps is a module you can import from.
+# Do not delete this file. It tells python that lappy is a module you can import from.
 # public facing functions should be imported here so they can be used directly
-name = "pymps"
+name = "lappy"
 
 # modules available on package load
 from . import mps
@@ -11,7 +11,7 @@ from . import cubature_rules
 from . import opt
 from . import param
 
-# classes and functions available directly from pymps
+# classes and functions available directly from lappy
 from .evp import PolygonEVP, Spectrum, Eigenvalue
 from .bases import FourierBesselBasis
 from .quad import triangular_mesh,  tri_quad, boundary_nodes_polygon
