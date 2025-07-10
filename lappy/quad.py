@@ -38,7 +38,7 @@ def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     else: raise(NotImplementedError(f"quadrature rule {rule} is not implemented"))
 
     # build array of n_pts (number of nodes/weights) for each edge
-    if type(n_pts) in [int,np.int64]:
+    if isinstance(n_pts,(int,np.integer)):
         n_pts = n_pts*np.ones(len(vertices),dtype='int')
         if skip is not None:
             n_pts[skip] = 0
@@ -122,12 +122,12 @@ def tri_quad(mesh,kind='dunavant',deg=10):
 
     # get triangle vertices in complex form
     tri_vertices = mesh_vertices[triangles]
-    tri_vertices_complex = tri_vertices[:,:,0] + 1j*tri_vertices[:,:,1]
+    # tri_vertices_complex = tri_vertices[:,:,0] + 1j*tri_vertices[:,:,1]
 
     # get cubature nodes and weights in barycentric form
     # convert to array of nodes in complex form
     bary_coords, bary_weights = get_cubature_rule(kind,deg)
-    nodes = (tri_vertices_complex@(bary_coords.T)).flatten()
+    nodes = (tri_vertices[:,:,0]@(bary_coords.T) + 1j*(tri_vertices[:,:,1]@(bary_coords.T))).flatten()
 
     # get areas of triangles, scale weights appropriately
     areas = triangle_areas(mesh_vertices,triangles)
