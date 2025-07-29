@@ -2,21 +2,25 @@ import numpy as np
 from scipy.special import jv, jvp
 import scipy.linalg as la
 from .utils import complex_form, interior_angles, edge_angles
-from functools import cache, lru_cache
+from functools import cache
+from abc import ABC, abstractmethod
 
-class PlanarBasis:
+class Basis(ABC):
     """Base class for function bases on the plane. Can be parametric, as with FourierBesselBasis,
     which depends on the spectral parameter lambda"""
+    @abstractmethod
     def __init__(self):
         pass
+    @abstractmethod
     def __call__(self,x,y):
         """Evaluate the basis on a given set of points in the plane"""
         pass
+    @abstractmethod
     def grad(self,x,y):
         """Evaluate the gradients of the basis functions on a given set of points in the plane"""
         pass
 
-class FourierBesselBasis(PlanarBasis):
+class FourierBesselBasis(Basis):
     """A class for Fourier-Bessel bases on polygons. Allows the user to fix an evaluation
     set to reduce computation when evaluating on the same grid for several lambdas.
     Also allows the user to evaluate the basis on an arbitrary set."""

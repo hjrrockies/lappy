@@ -19,6 +19,7 @@ class Domain2D(ABC):
         - self.area
         - self.perimeter
         - self.diameter
+        - self.normals
 
         and methods:
         - self.integrate(f) (integrates f on the domain)
@@ -31,6 +32,7 @@ class Domain2D(ABC):
         - self._compute_area()
         - self._compute_perimeter()
         - self._compute_diameter()
+        - self._compute_normals()
         - self.contains()
         - self.bdry_contains()
     """
@@ -63,6 +65,12 @@ class Domain2D(ABC):
             self._diameter = self._compute_diameter()
         return self._diameter
     
+    @property
+    def normals(self):
+        if self._normals is None:
+            self._normals = self._compute_normals()
+        return self._normals
+    
     @abstractmethod
     def _compute_area(self):
         pass
@@ -81,6 +89,10 @@ class Domain2D(ABC):
 
     @abstractmethod
     def bdry_contains(self,pts):
+        pass
+
+    @abstractmethod
+    def _compute_normals(self):
         pass
 
     def plot(self,ax=None,**kwargs):
@@ -175,6 +187,9 @@ class Polygon(Domain2D):
     def _compute_diameter(self):
         return polygon_diameter(self.vertices)
     
+    def _compute_normals(self):
+        return side_normals(self.vertices)[self.bdry_pts_edge_idx]
+    
     def contains(self,pts,y=None):
         """returns a boolean array which is True for pts inside the domain"""
         pts = real_form(complex_form(pts,y))
@@ -255,7 +270,7 @@ class Polygon(Domain2D):
         derivatives at the boundary points"""
         edge_idx = self.bdry_pts_edge_idx
         edges = self.edges[edge_idx]
-        normals = self.edge_normals[edge_idx]
+        normals = self.normals
         disp = self.bdry_pts-self.vertices[edge_idx]
 
         # equals zero at v_i, equals 1 at v_{i+1}
@@ -271,7 +286,7 @@ class Polygon(Domain2D):
     def plot(self,ax=None,**plotkwargs):
         return plot_polygon(self.vertices,ax,**plotkwargs)
 
-    
+
 
 
 

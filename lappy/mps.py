@@ -3,6 +3,7 @@ import scipy.linalg as la
 from pygsvd import gsvd
 from .utils import invert_permutation
 
+### Matrix factorizations
 def qr_preprocess(A,tol=0):
     """TO-DO"""
     if tol > 0:

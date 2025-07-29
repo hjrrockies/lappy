@@ -3,14 +3,14 @@ import scipy.linalg as la
 from . import mps
 from .utils import (complex_form, rand_interior_points, polygon_area, polygon_perimeter, edge_lengths,
                     polygon_edges, interior_angles, singular_corner_check, invert_permutation, plot_polygon)
-from .bases import FourierBesselBasis
+from .bases import Basis2D, FourierBesselBasis
 from .quad import boundary_nodes_polygon, triangular_mesh, tri_quad, cached_leggauss
 from .opt import gridmin
+from .domain import Domain2D
 from functools import cache, lru_cache
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon
 from shapely import points
-import warnings
 
 class PolygonEVP:
     """Class for polygonal Dirichlet Laplacian eigenproblems
@@ -607,7 +607,21 @@ class PolygonEVP:
             fig.suptitle(f"Eigenfunction(s) for $\\lambda = {eig:.3f}$")
             plt.show()
         
+class Eigenproblem:
+    """Class for planar eigenproblems"""
+    def __init__(self,domain,basis,rtol=1e-14,mtol=1e-4):
+        if not isinstance(domain,Domain2D):
+            raise ValueError("domain must be an instance of Domain2D")
+        if not isinstance(basis,Basis2D):
+            raise ValueError("basis must be an instance of PlanarBasis")
+        
+        self.domain = domain
+        self.basis = basis
+        self.rtol = rtol
+        self.mtol = mtol
 
+        self.eig_lbound = 5.76*np.pi/self.domain.area
+        
         
 
 
@@ -648,7 +662,6 @@ class Eigenvalue:
 
     def __repr__(self):
         return f"Eigenvalue({self.val},mult={self.mult},mtol={self.mtol})"
-
 
 class Spectrum:
     """Class for tracking the Laplacian spectrum of a domain"""
