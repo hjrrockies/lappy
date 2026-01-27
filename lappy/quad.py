@@ -19,9 +19,9 @@ def cached_chebgauss(order):
     nodes,weights = chebgauss(order)
     # adjust the weights to cancel-out the Gauss-Cheb weighting function
     weights = weights*np.sqrt(1-nodes**2)
-    nodes = (nodes+1)/2 #adjust nodes to interval [0,1]
-    weights = weights/2 #adjust weights to interval of unit length
-    return nodes[::-1],weights[::-1]
+    nodes = (nodes+1)/2 # adjust nodes to interval [0,1]
+    weights = weights/2 # adjust weights to interval of unit length
+    return nodes[::-1], weights[::-1]
 
 def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre

@@ -7,16 +7,11 @@ from . import mps
 from . import bases
 from . import quad
 from . import utils
-from . import cubature_rules
-from . import opt
-from . import param
-from . import domain
+from . import geometry
 
 # classes and functions available directly from lappy
-from .evp import PolygonEVP, Spectrum, Eigenvalue
-from .bases import Basis, FourierBesselBasis
+from .mps import MPSProblem, solve_eigs_interval
+from .evp import Eigenproblem
+from .bases import PointSet, ParticularBasis, MultiBasis, FourierBesselBasis, NormalizedBasis
 from .quad import triangular_mesh,  tri_quad, boundary_nodes_polygon
-from .utils import *
-from .param import polygon_vertices, poly_perim, perim_constraint, perim_constraint_grad, eigs, valid_polygon
-from .opt import eig_obj
-from .domain import Polygon, Domain2D
+from .geometry import PointSet, Domain, Polygon, Segment, LineSegment, MultiSegment, make_boundary_pts, make_interior_pts
