@@ -711,9 +711,9 @@ class MultiSegment:
         corner_angle1[corner_angle1 < 0] += 2*np.pi
         return corners, corner_idx, corner_angle0, corner_angle1
     
-    def dist(self, pt):
+    def dist(self, pt, nsamp=100):
         """Returns the (minimum) distance from a given point to the MultiSegment"""
-        tau = np.linspace(0, 1, n)[:-1]
+        tau = np.linspace(0, 1, nsamp)[:-1]
         pts = np.array([seg.p(tau) for seg in self.segments])
         dist = np.abs(pts-pt)
         seg_idx = dist.max(axis=1).argmax()
