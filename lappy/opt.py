@@ -1,9 +1,5 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import scipy.linalg as la
-from scipy.optimize import brentq
-from .utils import polygon_area
-from .param import polygon_vertices, poly_perim
+from scipy.optimize import brentq, minimize_scalar
 
 def parabola_vertex(x,y):
     """Finds the vertex of a parabola passing through the points
@@ -22,7 +18,7 @@ def parabolic_iter_min(f, x, y, xtol=1e-12, maxiter=10, maxresc=2, resc_param=0.
     if x[1]<=x[0] or x[2]<=x[1]:
         raise ValueError('x not increasing!')
 
-    # shift left endpoint to zero for maximum precisioon
+    # shift left endpoint to zero for maximum precision
     z = x-x[0]
 
     # shifted interval bounds
@@ -39,13 +35,10 @@ def parabolic_iter_min(f, x, y, xtol=1e-12, maxiter=10, maxresc=2, resc_param=0.
     # iterative parabolic interpolation
     for i in range(maxiter):
         v = parabola_vertex(z,y)
-
-        # if the vertex hasn't changed much, conclude iteration
-        if np.abs(v-vold)<xtol:
-            break
+        if verbose > 1: print(tabs+f"v={v:.3e}")
 
         # vertex falls off left, rescue if possible
-        elif v<zlo-2*xtol:
+        if v<zlo-xtol:
             if verbose > 1: print(tabs+'fell off left')
             if rescues < maxresc:
                 rescues += 1
@@ -54,7 +47,7 @@ def parabolic_iter_min(f, x, y, xtol=1e-12, maxiter=10, maxresc=2, resc_param=0.
                 if verbose > 1: print(tabs+'too many rescues')
                 return None, fevals
         # vertex falls off right, rescue if possible
-        elif v>zhi+2*xtol:
+        elif v>zhi+xtol:
             if verbose > 1: print(tabs+'fell off right')
             if rescues < maxresc:
                 rescues += 1
@@ -62,6 +55,9 @@ def parabolic_iter_min(f, x, y, xtol=1e-12, maxiter=10, maxresc=2, resc_param=0.
             else:
                 if verbose > 1: print(tabs+'too many rescues')
                 return None, fevals
+        # if the vertex hasn't changed much, conclude iteration
+        elif np.abs(v-vold)<xtol:
+            break
         # if vertex too close to old points, wiggle it
         if np.abs(z-v).min() < xtol/2: v += xtol
 
@@ -81,19 +77,47 @@ def parabolic_iter_min(f, x, y, xtol=1e-12, maxiter=10, maxresc=2, resc_param=0.
     if verbose > 0: print(tabs+f'parabolic_iter_min concluded, x_min={v+x[0]}')
     return float(v+x[0]), fevals
 
-def get_refinement_intervals(recurse_flag):
-    padded_flags = np.zeros(len(recurse_flag)+2,dtype=int)
-    padded_flags[1:-1] = recurse_flag.astype(int)
+def discrete_locmin_idx(y):
+    """Computes the indicies of y that are discrete local minima. Ignores endpoints (assumes use of ghost points)."""
+    return np.nonzero((y[1:-1] < y[:-2])&(y[1:-1] < y[2:])&((y[1:-1] != y[:-2])|(y[1:-1] != y[2:])))[0]+1
+
+def flag_refinement_intervals(n_intervals, y0_min_idx, y1_min_idx):
+    """Flags intervals for refinement based on concidence/adjacency of discrete local minima for y0 & y1"""
+    refine_flag = np.zeros(n_intervals, dtype=bool)
+
+    # local mins of y1 relative to local mins of y0
+    min_idx_rel = y1_min_idx - y0_min_idx[:,np.newaxis]
+
+    # flag coincident minima
+    coincident = np.any(min_idx_rel == 0, axis=1)
+    refine_flag[y0_min_idx] = coincident
+
+    # flag if minima to the left (mark both subintervals)
+    on_left = np.any(min_idx_rel == -1, axis=1)
+    has_left = (y0_min_idx > 0) # leftmost interval has no subinterval to the left
+    refine_flag[y0_min_idx[has_left]] += on_left[has_left]
+    refine_flag[y0_min_idx[has_left]-1] += on_left[has_left]
+
+    # flag if minima to the right (mark both subintervals)
+    on_right = np.any(min_idx_rel == 1, axis=1)
+    has_right = (y0_min_idx < len(refine_flag)-1) # rightmost interval has no subinterval to the right
+    refine_flag[y0_min_idx[has_right]] += on_right[has_right]
+    refine_flag[y0_min_idx[has_right]+1] += on_right[has_right]
+    
+    return refine_flag
+
+def merge_refinement_intervals(refine_flag):
+    """Gets indices of intervals marked for refinement, merging adjacent marked intervals."""
+    padded_flags = np.zeros(len(refine_flag)+2,dtype=int)
+    padded_flags[1:-1] = refine_flag.astype(int)
     diffs = np.diff(padded_flags)
     starts = np.nonzero(diffs==1)[0]-1
     ends = np.nonzero(diffs==-1)[0]
     return np.array([starts,ends]).T
 
-def discrete_loc_min_idx(y):
-    """Computes the indicies of y that are discrete local minima. Ignores endpoints (assumes use of ghost points)."""
-    return np.nonzero((y[1:-1] < y[:-2])&(y[1:-1] < y[2:]))[0]+1
-
 def fill_refinement(f, x, y, start, end, shrink):
+    """Refine the search grid by evaluating f at new points in the interval (x[start], x[end]), filling in
+    new arrays of input-output pairs."""
     length = end-start # number of intervals in this run
     # x and y grids for recursive call
     x_tmp = np.concatenate(([x[start]],
@@ -117,7 +141,7 @@ def fill_refinement(f, x, y, start, end, shrink):
         y_tmp2 = np.empty((2,len(x_tmp)+1))
         y_tmp2[:,1:] = y_tmp
         y_tmp2[:,0] = y[:,start-1]
-        x_tmp,y_tmp = x_tmp2,y_tmp2
+        x_tmp, y_tmp = x_tmp2, y_tmp2
     if end < len(x)-1:
         # runs that don't have the trailing ghost point
         # append x,y from following interval endpoint
@@ -125,65 +149,118 @@ def fill_refinement(f, x, y, start, end, shrink):
         y_tmp2 = np.empty((2,len(x_tmp)+1))
         y_tmp2[:,:-1] = y_tmp
         y_tmp2[:,-1] = y[:,end+1]
-        x_tmp,y_tmp = x_tmp2,y_tmp2
+        x_tmp, y_tmp = x_tmp2, y_tmp2
     return x_tmp, y_tmp, fevals
 
-def parabolic_gridmin(f, x, y, xtol=1e-12, shrink=2, nrecurse=0, para_kwargs={}, verbose=0):
-    """Minimizes the first component of the length 2 vector-valued function f using a gridsearch and parabolic fitting.
+def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
+    """Bracket the minima of f(x)[0] using a gridsearch. Returns a list of brackets which (hopefully!) each 
+    contain a single local minimum of the first component of f. Uses the local minima of f(x)[1] to guide refinement."""
+
+    # print(x.shape, y.shape, xtol)
+    # get discrete local min indices for y1 and y2
+    y0_min_idx = discrete_locmin_idx(y[0])
+    y1_min_idx = discrete_locmin_idx(y[1])
+
+    # get refinement flags
+    refine_flag = flag_refinement_intervals(len(x)-1, y0_min_idx, y1_min_idx)
+
+    # brackets that don't need refinement
+    brackets = []
+    for idx in y0_min_idx:
+        if not refine_flag[idx]:
+            brackets.append((x[idx-1:idx+2],y[0,idx-1:idx+2]))
+            # print('no refine',brackets[-1])
+
+    fevals = 0
+    # recurse if needed to refine the grid
+    if np.any(refine_flag):
+        refine_interval_idx = merge_refinement_intervals(refine_flag)
+        # loop over runs of flagged intervals
+        for start, end in refine_interval_idx:
+            tol = xtol*x[start] # relative tolerance
+            # don't refine if run has length below tolerance
+            if x[end]-x[start] < tol:
+                min_idx = y[0,start:end+1].argmin() + start
+                brackets.append((x[[start, min_idx, end]], y[0,[start, min_idx, end]]))
+                # print(f'below tol={tol}',brackets[-1],)
+            else:
+                x_tmp, y_tmp, fe = fill_refinement(f, x, y, start, end, shrink)
+                fevals += fe
+                # check for flat objective at this scale
+                band = y_tmp[0].max()-y_tmp[0].min()
+                if band == 0:
+                    half_idx = int((end+start)/2)
+                    brackets.append((x[[start,half_idx,end]],y[0,[start,half_idx,end]]))
+                    # print('flat',brackets[-1])
+
+                # recurse, extending the list of brackets and incrementing the function evaluations
+                else:
+                    bracks, fe = bracket_mins(f, x_tmp, y_tmp, xtol, shrink, nrecurse+1, verbose)
+                    brackets += bracks
+                    fevals += fe
+    return brackets, fevals
+
+def minimize_on_bracket(f, bracket, xtol, minsolver='parabolic', verbose=0):
+    x, y = bracket # unpack bracket
+    tol = xtol*x[0] # get absolute tolerance from relative
+
+    # only minimize further if bracket is at least width tol
+    if x[2]-x[0] > tol:
+        if minsolver == 'parabolic':
+            minimizer, fevals = parabolic_iter_min(lambda x: f(x)**2, x, y, tol, verbose=verbose)
+        elif minsolver == 'brent':
+            res = minimize_scalar(f, x, tol)
+            minimizer, fevals = res.x, res.nfev
+        elif minsolver == 'golden':
+            minimizer, fevals = golden_search(f, x[0], x[2], tol)
+        # use golden search as backup if 'parabolic' or 'brent' fails to converge properly
+        if minimizer is None or minimizer <= x[0] or minimizer >= x[2]:
+            minimizer, fe = golden_search(f, x[0], x[2], tol)
+            fevals += fe
+    else:
+        minimizer = x[1]
+    return minimizer, fevals
+
+def gridmin(f, x, y, xtol=1e-12, shrink=2, nrecurse=0, para_kwargs={}, verbose=0):
+    """Minimizes the first component of the length 2 vector-valued function f using a gridsearch and parabolic iteration.
     Refines the grid based on proximity of local minima of the second component of f"""
-    
     tabs = min(nrecurse,10)*"\t" # tab spacing for verbose mode
     if verbose > 0: 
         print(tabs+f"searching on [{x[0]:.3e},{x[-1]:.3e}] (len={x[-1]-x[0]:.2e})")
         print(tabs+f"with {len(x)-1} subintervals")
         print(tabs+f"recursive level = {nrecurse}")
-    
-    # recursion flag
-    recurse_flag = np.zeros(len(x)-1, dtype=bool)
 
     # get discrete local min indices for y1 and y2
-    y0_min_idx = discrete_loc_min_idx(y[0])
-    y1_min_idx = discrete_loc_min_idx(y[1])
+    y0_min_idx = discrete_locmin_idx(y[0])
+    y1_min_idx = discrete_locmin_idx(y[1])
 
-    # local mins of y2 relative to mins of y1
-    y1_min_idx_rel = y1_min_idx - y0_min_idx[:,np.newaxis]
-
-    # flag for refinement & recursion
-    same = np.any(y1_min_idx_rel == 0, axis=1)
-    right = np.any(y1_min_idx_rel == 1, axis=1)
-    left = np.any(y1_min_idx_rel == -1, axis=1)
-    recurse_flag[y0_min_idx] = same
-    if np.any(right):
-        recurse_flag[y0_min_idx] += right
-        idx = y0_min_idx[y0_min_idx < len(recurse_flag)-1]+1
-        recurse_flag[idx] += right
-    if np.any(left):
-        recurse_flag[y0_min_idx] += left
-        idx = y0_min_idx[y0_min_idx > 0]-1
-        recurse_flag[idx] += left
-
+    # get refinement flags
+    refine_flag = flag_refinement_intervals(len(x)-1, y0_min_idx, y1_min_idx)
+    if verbose > 1:
+        print(x)
+        print(y)
     minima = []
     fevals = 0
     # f^2 for iterative parabolic minimzation
     f2 = lambda x: f(x)[0]**2
     for idx in y0_min_idx:
-        if not recurse_flag[idx]:
-            min_, fe = parabolic_iter_min(f2, x[idx-1:idx+2], y[0,idx-1:idx+2]**2, xtol=xtol, 
+        if not refine_flag[idx]:
+            # use relative tolerance
+            tol = xtol
+            min_, fe = parabolic_iter_min(f2, x[idx-1:idx+2], y[0,idx-1:idx+2]**2, xtol=tol, 
                                           nrecurse=nrecurse, verbose=verbose-1, **para_kwargs)
             fevals += fe
             if min_ is not None: minima.append(min_)
 
     # recurse if needed to refine the grid
-    if np.any(recurse_flag):
-        if verbose > 1: 
-            print(tabs+"setting up recursion...")
-        
-        recurse_interval_idx = get_refinement_intervals(recurse_flag)
-
+    if np.any(refine_flag):
+        if verbose > 1: print(tabs+"setting up recursion...")
+        refine_interval_idx = merge_refinement_intervals(refine_flag)
         # loop over runs of flagged intervals
-        for start, end in recurse_interval_idx:
-            if x[end]-x[start] < xtol:
-                if verbose: print(tabs+f"grid spacing below xtol, using discrete local min")
+        for start, end in refine_interval_idx:
+            tol = xtol*x[end] # relative tolerance
+            if x[end]-x[start] < tol:
+                if verbose > 0: print(tabs+f"grid spacing below xtol, using discrete local min")
                 min_idx = np.argmin(y[0,start:end+1])
                 minima.append(x[start:end+1][min_idx])
             else:
@@ -191,23 +268,21 @@ def parabolic_gridmin(f, x, y, xtol=1e-12, shrink=2, nrecurse=0, para_kwargs={},
                 fevals += fe
                 # check for flat objective at this scale
                 band = y_tmp[0].max()-y_tmp[0].min()
-                if band < 2*xtol:
-                    if verbose > 0: 
-                        print(tabs+f"f is flat at this scale, using discrete local min")
-                        print(tabs+f"band = {band:.3e}")
+                if band == 0:
+                    if verbose > 0: print(tabs+f"f is flat at this scale, using discrete local min")
                     idx = y_tmp[0].argmin()
                     minima.append(x_tmp[idx])
 
                 # recurse, extending the list of minima and incrementing the function evaluations
                 else:
                     if verbose > 0: print(tabs+f"recursing on [{x[start]:.3e},{x[end]:.3e}]\n")
-                    mins, fe = parabolic_gridmin(f, x_tmp, y_tmp, xtol=xtol, shrink=shrink, 
-                                                 nrecurse=nrecurse+1, para_kwargs=para_kwargs, verbose=verbose)
+                    mins, fe = gridmin(f, x_tmp, y_tmp, xtol=xtol, shrink=shrink, 
+                                       nrecurse=nrecurse+1, verbose=verbose)
                     minima += mins
                     fevals += fe
                     
     # only keep minima that are inside the "non-ghost" interval, with some extra tolerance on each end
-    minima = [min_ for min_ in minima if (x[1]-xtol <= min_ <= x[-2]+xtol)]
+    minima = [min_ for min_ in minima if (x[1]*(1-xtol) <= min_ <= x[-2]*(1+xtol))]
     if verbose > 1: 
         print(tabs+f"found minima: {np.array_str(np.array(minima),precision=3)}")
         print(tabs+f"fevals={fevals}")
@@ -215,3 +290,391 @@ def parabolic_gridmin(f, x, y, xtol=1e-12, shrink=2, nrecurse=0, para_kwargs={},
         return np.array(minima), fevals
     else:
         return minima, fevals
+
+rho = (3-5**0.5)/2
+def golden_search(f, a, b, tol=1e-15, maxiter=100):
+    """Golden ratio minimization search"""
+    h = b-a
+    u, v = a+rho*h, b-rho*h
+    fu, fv = f(u), f(v)
+    fevals = 2
+    i = 0
+    while (b-a>=tol)&(i<=maxiter):
+        i += 1
+        if fu < fv:
+            b = v
+            h = b-a
+            v = u
+            u = a+rho*h
+            fv = fu
+            fu = f(u)
+        else:
+            a = u
+            h = b-a
+            u = v
+            v = b-rho*h
+            fu = fv
+            fv = f(v)
+        fevals += 1
+    if f(a)<f(b): return a,fevals
+    else: return b,fevals
+
+def find_all_roots(f, a, b, n):
+    x = np.linspace(a, b, n)
+    y = f(x)
+
+    roots = []
+    for i in range(n-1):
+        if y[i]*y[i+1] < 0:
+            roots.append(brentq(f, x[i], x[i+1]))
+    return roots
+
+# def secant_root(x1,y1,x2,y2):
+#     """Returns the root of the secant line passing through (x1,y1) and (x2,y2).
+#     Automatically handles array broadcasting for multiple sets of lines."""
+#     return x1-(y1*(x2-x1))/(y2-y1)
+
+# def interval_check(x,xgrid):
+#     """Identifies which subinterval a value x lies within, compared to xgrid. Points 'near' the ends of the grid
+#     are flagged as being in the first or last subinterval."""
+#     if (2*xgrid[0]-xgrid[1] <= x < xgrid[0]): return 0
+#     elif (xgrid[-1] <= x <= 2*xgrid[-1]-xgrid[-2]): return len(xgrid)-2
+#     elif (xgrid[0] <= x <= xgrid[-1]): return np.nonzero(x>=xgrid)[0][-1]
+#     else: return np.inf
+
+# def check_flag_recurse(idx, x, y, recurse_flag, verbose, tabs):
+#     # estimate y2 zeros from segments
+#     x1,x2 = x[idx-1:idx+1],x[idx:idx+2]
+#     y1,y2 = y[1,idx-1:idx+1],y[1,idx:idx+2]
+#     z1,z2 = secant_root(x1,y1,x2,y2)
+
+#     # find intervals where estimated zeros live
+#     idx1,idx2 = interval_check(z1,x),interval_check(z2,x)
+
+#     # no nearby predicted zeros, don't recurse
+#     if ((idx1 < idx-3) or (idx1 > idx+2)) and ((idx2 < idx-3) or (idx2 > idx+2)):
+#         return False
+    
+#     # predicted zeros nearby
+#     else:
+#         # first predicted zero within three intervals, flag relevant stretch
+#         if (idx-4 <= idx1 <= idx+3):
+#             if verbose > 2: 
+#                 print(tabs+f"z1 = {z1:.3e} in interval {idx1}=[{x[idx1]:.3e},{x[idx1+1]:.3e}]")
+#                 print(tabs+f"flagging intervals {min(idx1,idx-1)} to {max(idx1,idx)} for recursion")
+#             recurse_flag[min(idx1,idx-1):max(idx1,idx)+1] = True
+
+#         # second predicted zero within three intervals, flag relevant stretch
+#         if (idx-4 <= idx2 <= idx+3):
+#             if verbose > 2:
+#                 print(tabs+f"z2 = {z2:.3e} in interval {idx2}=[{x[idx2]:.3e},{x[idx2+1]:.3e}]")
+#                 print(tabs+f"flagging intervals {min(idx2,idx-1)} to {max(idx2,idx)} for recursion")
+#             recurse_flag[min(idx2,idx-1):max(idx2,idx)+1] = True
+#         return True
+
+# def gridmin(f,x,y,xtol=1e-12,shrink=2,nrecurse=0,verbose=0):
+#     """Finds all minima on a grid. Grid should have ghost points at the ends."""
+#     tabs = min(nrecurse,10)*"\t" # tab spacing for verbose mode
+#     if verbose > 0: 
+#         print(tabs+f"searching on [{x[0]:.3e},{x[-1]:.3e}] (len={x[-1]-x[0]}) with {len(x)-1} subintervals")
+#         print(tabs+f"recursive level = {nrecurse}")
+    
+#     # recursion flag
+#     recurse_flag = np.zeros(len(x)-1,dtype=bool)
+
+#     # parabolic min flag
+#     para_min = []
+
+#     # mark intervals as increasing/decreasing/constant
+#     delta = np.sign(np.diff(y[0]))
+
+#     # get discrete local min indices
+#     locmin = np.nonzero((delta[:-1]==-1)*(delta[1:]==1))[0]+1
+#     if verbose > 0: print(tabs+f"num. local min = {len(locmin)}\n")
+
+#     # list for minima, and counter for function evaluation
+#     minima = []
+#     fevals = 0
+
+#     # loop over discrete local mins
+#     for idx in locmin:
+#         if verbose > 0:
+#             print(tabs+f"locmin at x={x[idx]:.3e}")
+#         if verbose > 1:
+#             print(tabs+f"intervals {idx-1}=[{x[idx-1]:.3e},{x[idx]:.3e}] and {idx}=[{x[idx]:.3e},{x[idx+1]:.3e}]")
+
+#         if recurse_flag[idx-1] or recurse_flag[idx]:
+#             if verbose > 0: print(tabs+"interval already flagged for recursion")
+#             recurse_flag[idx-1:idx+1] = True
+
+#         # check to see if subinterval is too finely spaced for recursion
+#         elif x[idx+1]-x[idx-1] < xtol:
+#             if verbose > 0: print(tabs+f"grid spacing at xtol, flagging for parabolic minimzation")
+#             para_min.append(idx)
+        
+#         # check to see if the interval (or others) needs to be flagged for recursion and grid refinement
+#         elif not check_flag_recurse(idx, x, y, recurse_flag, verbose, tabs):
+#             if verbose > 0: print(tabs+"no nearby predicted zeros, flagging for parabolic minimization")
+#             para_min.append(idx)
+#         if verbose: print("")
+
+#     # run parabolic minimization on locmin intervals that were not flagged for recursion
+#     if len(para_min) >= 1:
+#         for idx in para_min:
+#             if recurse_flag[idx-1] or recurse_flag[idx]:
+#                 recurse_flag[idx-1:idx+1] = True
+#             else:
+#                 min_,fe = parabolic_iter_min(lambda x: f(x)[0]**2,x[idx-1:idx+2],
+#                                          y[0,idx-1:idx+2]**2,xtol=xtol,
+#                                          nrecurse=nrecurse,verbose=verbose-1)
+#                 fevals += fe
+#                 if min_ is not None:
+#                     minima.append(min_)
+
+#     # recurse if needed to refine the grid
+#     if np.any(recurse_flag):
+#         if verbose > 1: 
+#             print(tabs+"setting up recursion...")
+#             print(tabs+f"pre-recursion found minima: {np.array_str(np.array(minima),precision=3)}")
+#             print(tabs+f"pre-recursion fevals={fevals}")
+        
+#         # recurse on flagged intervals
+#         # flags are padded to easily identify consecutive runs of flagged intervals
+#         padded_flags = np.zeros(len(recurse_flag)+2,dtype=int)
+#         padded_flags[1:-1] = recurse_flag.astype(int)
+#         diffs = np.diff(padded_flags)
+#         starts = np.nonzero(diffs==1)[0]
+#         ends = np.nonzero(diffs==-1)[0]
+
+#         # loop over runs of flagged intervals
+#         for start,end in zip(starts,ends):
+#             length = end-start # number of intervals in this run
+#             # x and y grids for recursive call
+#             x_tmp = np.concatenate(([x[start]],
+#                                     *np.linspace(x[np.arange(start,end)],x[np.arange(start,end)+1],shrink+1)[1:].T))
+#             y_tmp = np.empty((2,len(x_tmp)))
+
+#             # fill in known values of y=f(x)
+#             y_tmp[:,::shrink] = y[:,start:end+1]
+
+#             # evaluate f(x) on new grid points
+#             for i in range(length):
+#                 y_tmp[:,1+i*shrink:(i+1)*shrink] = np.array([f(x_) for x_ in x_tmp[1+i*shrink:(i+1)*shrink]]).T
+#                 fevals += shrink-1
+            
+
+#             # add ghost points to runs that don't already have them
+#             if start > 0:
+#                 # runs that don't have the leading ghost point
+#                 # prepend x,y from previous interval endpoint
+#                 x_tmp2 = np.concatenate(([x[start-1]],x_tmp))
+#                 y_tmp2 = np.empty((2,len(x_tmp)+1))
+#                 y_tmp2[:,1:] = y_tmp
+#                 y_tmp2[:,0] = y[:,start-1]
+#                 x_tmp,y_tmp = x_tmp2,y_tmp2
+#             if end < len(x)-1:
+#                 # runs that don't have the trailing ghost point
+#                 # append x,y from following interval endpoint
+#                 x_tmp2 = np.concatenate((x_tmp,[x[end+1]]))
+#                 y_tmp2 = np.empty((2,len(x_tmp)+1))
+#                 y_tmp2[:,:-1] = y_tmp
+#                 y_tmp2[:,-1] = y[:,end+1]
+#                 x_tmp,y_tmp = x_tmp2,y_tmp2
+
+#             # check for flat objective at this scale
+#             band = y_tmp[0].max()-y_tmp[0].min()
+#             if band < 2*xtol:
+#                 if verbose > 0: print(tabs+f"f is flat at this scale, using midpoint")
+#                 minima += [(x[end]+x[start])/2]
+
+#             # recurse, extending the list of minima and incrementing the function evaluations
+#             else:
+#                 if verbose > 0: print(tabs+f"recursing on [{x[start]:.3e},{x[end]:.3e}]\n")
+#                 mins,fe = gridmin(f,x_tmp,y_tmp,xtol=xtol,shrink=shrink,nrecurse=nrecurse+1,verbose=verbose)
+#                 minima += mins
+#                 fevals += fe
+
+#     # only keep minima that are inside the "non-ghost" interval, with some extra tolerance on each end
+#     minima = [min_ for min_ in minima if (x[1]-xtol <= min_ <= x[-2]+xtol)]
+#     if verbose > 1: 
+#         print(tabs+f"found minima: {np.array_str(np.array(minima),precision=3)}")
+#         print(tabs+f"fevals={fevals}")
+#     return minima,fevals
+
+# def discrete_loc_min_idx(y):
+#     """Computes the indicies of y that are discrete local minima. Ignores endpoints (assumes use of ghost points)."""
+#     return np.nonzero((y[1:-1] < y[:-2])&(y[1:-1] < y[2:]))[0]+1
+
+# def get_refinement_brackets(recurse_flag):
+#     padded_flags = np.zeros(len(recurse_flag)+2,dtype=int)
+#     padded_flags[1:-1] = recurse_flag.astype(int)
+#     diffs = np.diff(padded_flags)
+#     starts = np.nonzero(diffs==1)[0]
+#     ends = np.nonzero(diffs==-1)[0]
+#     return np.array([starts,ends]).T
+
+# def fill_refinement(f, x, y, start, end, shrink):
+#     length = end-start # number of intervals in this run
+#     # x and y grids for recursive call
+#     x_tmp = np.concatenate(([x[start]],
+#                             *np.linspace(x[np.arange(start,end)],x[np.arange(start,end)+1],shrink+1)[1:].T))
+#     y_tmp = np.empty((2,len(x_tmp)))
+
+#     # fill in known values of y=f(x)
+#     y_tmp[:,::shrink] = y[:,start:end+1]
+
+#     # evaluate f(x) on new grid points
+#     fevals = 0
+#     for i in range(length):
+#         y_tmp[:,1+i*shrink:(i+1)*shrink] = np.array([f(x_) for x_ in x_tmp[1+i*shrink:(i+1)*shrink]]).T
+#         fevals += shrink-1
+    
+#     # add ghost points to runs that don't already have them
+#     if start > 0:
+#         # runs that don't have the leading ghost point
+#         # prepend x,y from previous interval endpoint
+#         x_tmp2 = np.concatenate(([x[start-1]],x_tmp))
+#         y_tmp2 = np.empty((2,len(x_tmp)+1))
+#         y_tmp2[:,1:] = y_tmp
+#         y_tmp2[:,0] = y[:,start-1]
+#         x_tmp,y_tmp = x_tmp2,y_tmp2
+#     if end < len(x)-1:
+#         # runs that don't have the trailing ghost point
+#         # append x,y from following interval endpoint
+#         x_tmp2 = np.concatenate((x_tmp,[x[end+1]]))
+#         y_tmp2 = np.empty((2,len(x_tmp)+1))
+#         y_tmp2[:,:-1] = y_tmp
+#         y_tmp2[:,-1] = y[:,end+1]
+#         x_tmp,y_tmp = x_tmp2,y_tmp2
+#     return x_tmp, y_tmp, fevals
+
+# def bracket_mins(f, x, y, xtol=1e-12, shrink=2, nrecurse=0, verbose=0):
+#     """Finds all minima on a grid. Grid should have ghost points at the ends."""
+#     tabs = min(nrecurse,10)*"\t" # tab spacing for verbose mode
+#     if verbose > 0: 
+#         print(tabs+f"searching on [{x[0]:.3e},{x[-1]:.3e}] (len={x[-1]-x[0]}) with {len(x)-1} subintervals")
+#         print(tabs+f"recursive level = {nrecurse}")
+    
+#     # recursion flag
+#     recurse_flag = np.zeros(len(x)-1, dtype=bool)
+
+#     # get discrete local min indices for y1 and y2
+#     idx1 = discrete_loc_min_idx(y[0])
+#     idx2 = discrete_loc_min_idx(y[1])
+
+#     # local mins of y2 relative to mins of y1
+#     idx1_2 = idx2 - idx1[:,np.newaxis]
+
+#     # flag for refinement & recursion
+#     same = np.any(idx1_2 == 0, axis=1)
+#     right = np.any(idx1_2 == 1, axis=1)
+#     left = np.any(idx1_2 == -1, axis=1)
+#     recurse_flag[idx1] = same
+#     recurse_flag[idx1] += right
+#     recurse_flag[idx1] += left
+#     recurse_flag[idx1+1] += right
+#     recurse_flag[idx1-1] += left
+
+#     brackets = []
+#     for idx in idx1:
+#         if not recurse_flag[idx]:
+#             brackets.append((x[idx-1], x[idx+1]))
+
+#     # recurse if needed to refine the grid
+#     fevals = 0
+#     if np.any(recurse_flag):
+#         if verbose > 1: 
+#             print(tabs+"setting up recursion...")
+        
+#         recurse_bracket_idx = get_refinement_brackets(recurse_flag)
+
+#         # loop over runs of flagged intervals
+#         for start, end in recurse_bracket_idx:
+#             if x[end]-x[start] < xtol:
+#                 if verbose: print(tabs+f"grid spacing below xtol, using bracket")
+#                 brackets.append((x[start], x[end]))
+
+#             else:
+#                 x_tmp, y_tmp, fe = fill_refinement(f, x, y, start, end, shrink)
+#                 fevals += fe
+#                 # check for flat objective at this scale
+#                 band = y_tmp[0].max()-y_tmp[0].min()
+#                 if band < 2*xtol:
+#                     if verbose > 0: print(tabs+f"f is flat at this scale, using smallest for bracket")
+#                     idx = y_tmp[0].argmin()
+#                     brackets.append((x_tmp[idx-1], x_tmp[idx+1]))
+
+#                 # recurse, extending the list of minima and incrementing the function evaluations
+#                 else:
+#                     if verbose > 0: print(tabs+f"recursing on [{x[start]:.3e},{x[end]:.3e}]\n")
+#                     bra, fe = gridmin(f, x_tmp, y_tmp, xtol=xtol, shrink=shrink, nrecurse=nrecurse+1, verbose=verbose)
+#                     brackets += bra
+#                     fevals += fe
+
+#     return brackets
+
+# def eig_obj(p,eigs_target,perim_tol=1e-15,evp_kwargs={'order':20},mps_kwargs={},eig_list=None,log=False,verbose=False):
+#     from .evp import PolygonEVP
+#     # check number of eigenvalues, convert targets to normalized reciprocals
+#     K = len(eigs_target)
+#     targets = normalized_reciprocals(eigs_target)
+    
+#     # get vertices from parameter vector
+#     vertices = polygon_vertices(p)
+#     N = len(vertices)
+#     if verbose: print(f"Evaluating at p={np.array_str(p,precision=3)}")
+
+#     # get perimeter and perimeter gradient
+#     perim, perim_grad = poly_perim(vertices,jac=True)
+#     if np.abs(perim-1) > perim_tol:
+#         raise ValueError('perimeter is too high')
+#     implicit_grad = -np.concatenate((perim_grad[1:-1].real,perim_grad[1:-1].imag))/(perim_grad[0].real)
+#     vertices_jac = np.zeros((2*N,len(p)))
+#     vertices_jac[0] = implicit_grad
+#     vertices_jac[1:N-1,:len(p)//2] = np.eye(len(p)//2)
+#     vertices_jac[N+1:-1,len(p)//2:] = np.eye(len(p)//2)
+
+#     # rescale vertices so the first eigenvalue is O(1)
+#     A,P = polygon_area(vertices),1
+#     weyl_1 = ((P+np.sqrt(P**2+16*np.pi*A))/(2*A))**2
+
+#     # get eigenvalues and eigenderivatives w.r.t vertices
+#     evp = PolygonEVP(np.sqrt(weyl_1)*vertices,**evp_kwargs)
+#     eigs = evp.solve_eigs_ordered(K+1,ppl=20,mps_kwargs=mps_kwargs)[0][:K]
+#     if eig_list is not None:
+#         eig_list.append(weyl_1*eigs)
+#     eigs_jac = np.zeros((K,2*N))
+#     for i in range(K):
+#         dz = evp.eig_grad(eigs[i])
+#         eigs_jac[i,:N] = dz.real
+#         eigs_jac[i,N:] = dz.imag
+
+#     # get normalized reciprocals
+#     nus, nus_jac = normalized_reciprocals(eigs,jac=True)
+
+#     # evaluate loss function
+#     loss, loss_grad = l2_loss(nus,targets,log,jac=True)
+
+#     # compose derivatives with chain rule
+#     # obj_grad = (loss_grad.reshape(1,-1)@nus_jac)@(np.outer(eigs_jac[:,0],implicit_grad) + np.delete(eigs_jac,[0,N,N+1,2*N-1],axis=1))
+#     grad = (((loss_grad.reshape(1,-1)@nus_jac)@eigs_jac)@vertices_jac)[0]
+
+#     return loss, grad
+
+# def normalized_reciprocals(x,jac=False):
+#     if jac:
+#         col = (1/x[1:]).reshape(-1,1)
+#         diag = -x[0]/(x[1:]**2)
+#         jacobian = np.hstack((col,np.diag(diag)))
+#         return x[0]/x[1:], jacobian
+#     return x[0]/x[1:]
+
+# def l2_loss(x,y,log=False,jac=False):
+#     diff = x-y
+#     out = la.norm(diff)**2
+#     if jac:
+#         grad = 2*diff
+#         if log: return np.log(out),grad/out
+#         else: return out, grad
+#     if log: return np.log(out)
+#     else: return out

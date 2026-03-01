@@ -10,8 +10,8 @@ from . import utils
 from . import geometry
 
 # classes and functions available directly from lappy
-from .mps import MPSProblem, solve_eigs_interval
+from .mps import MPSEigensolver
+
 from .evp import Eigenproblem
-from .bases import PointSet, ParticularBasis, MultiBasis, FourierBesselBasis, NormalizedBasis
-from .quad import triangular_mesh,  tri_quad, boundary_nodes_polygon
-from .geometry import PointSet, Domain, Polygon, Segment, LineSegment, MultiSegment, make_boundary_pts, make_interior_pts
+from .bases import ParticularBasis, MultiBasis, FourierBesselBasis, NormalizedBasis, FundamentalBasis
+from .geometry import PointSet, Domain, Polygon, ParametricSegment, LineSegment, MultiSegment

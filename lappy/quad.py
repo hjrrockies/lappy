@@ -1,8 +1,10 @@
 import numpy as np
 from .utils import complex_form, real_form, polygon_edges, edge_lengths
+import gmsh
 from pygmsh.geo import Geometry
 from numpy.polynomial.chebyshev import chebgauss
 from numpy.polynomial.legendre import leggauss
+from scipy.interpolate import BSpline
 from functools import cache
 
 
@@ -97,24 +99,7 @@ def triangle_areas(mesh_vertices,triangles):
     v = mesh_vertices[triangles]
     return 0.5*np.abs((v[:,0,0]-v[:,2,0])*(v[:,1,1]-v[:,0,1])-(v[:,0,0]-v[:,1,0])*(v[:,2,1]-v[:,0,1]))
 
-def triangular_mesh(vertices,mesh_size):
-    """Builds a triangular mesh with pygmsh"""
-    vertices = np.asarray(vertices)
-    if vertices.dtype == 'complex128':
-        vertices = real_form(vertices)
-    if vertices.shape[0] == 2:
-        vertices = vertices.T
-    if vertices.shape[1] != 2 or vertices.ndim != 2:
-        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
-
-    # build triangular mesh with pygmsh
-    with Geometry() as geom:
-        geom.add_polygon(vertices,mesh_size)
-        mesh = geom.generate_mesh()
-
-    return mesh
-
-def tri_quad(mesh,kind='dunavant',deg=10):
+def tri_quad(mesh, kind='dunavant', deg=4):
     """"Sets up a cubature rule for a given mesh, in complex form"""
     # extract mesh vertices and triangle-to-vertex array
     mesh_vertices = mesh.points[:,:2]
@@ -133,6 +118,157 @@ def tri_quad(mesh,kind='dunavant',deg=10):
     areas = triangle_areas(mesh_vertices,triangles)
     weights = np.outer(areas,bary_weights).flatten()
     return nodes, weights
+
+# mesh building
+def polygon_triangular_mesh(vertices, mesh_size, mesh_size_min=0.05, mesh_size_max=0.5):
+    """Builds a triangular mesh on a polygon with pygmsh"""
+    vertices = np.asarray(vertices)
+    if vertices.dtype == 'complex128':
+        vertices = real_form(vertices)
+    if vertices.shape[0] == 2:
+        vertices = vertices.T
+    if vertices.shape[1] != 2 or vertices.ndim != 2:
+        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
+
+    # build triangular mesh with pygmsh
+    with Geometry() as geom:
+        geom.add_polygon(vertices, mesh_size)
+
+        # Set meshing options
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 1)  # Use point sizes
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)  # Extend to interior
+        gmsh.option.setNumber("Mesh.MeshSizeMin", mesh_size_min)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size_max)
+        gmsh.option.setNumber("Mesh.Algorithm", 6)  # Frontal-Delaunay
+        mesh = geom.generate_mesh()
+    return mesh
+
+def curvature_sampling(spline, t0, tf, pts_per_2pi=20):
+    """Gets samples from a SciPy BSpline with density based on curvature."""
+    if not isinstance(spline, BSpline):
+        raise TypeError("'spline' must be a SciPy BSpline.")
+    
+    t_fine = np.linspace(t0, tf, 1000)
+    dr = spline.derivative(nu=1)(t_fine)
+    ddr = spline.derivative(nu=2)(t_fine)
+    
+    speed = np.sqrt(dr[:, 0]**2 + dr[:, 1]**2)
+    cross = dr[:, 0] * ddr[:, 1] - dr[:, 1] * ddr[:, 0]
+    curvature = np.abs(cross) / (speed**3 + 1e-10)
+    
+    # Point density: higher curvature = more points
+    # Scale by arc length element (speed * dt) to account for parameterization
+    dt = np.diff(t_fine, prepend=t_fine[0])
+    arc_element = speed * dt
+    
+    # Points needed per segment based on curvature
+    points_per_segment = (curvature / (2 * np.pi)) * pts_per_2pi * arc_element
+    
+    # Add minimum to handle straight sections
+    points_per_segment = np.maximum(points_per_segment, 0.02)
+    
+    cumulative_points = np.cumsum(points_per_segment)
+    total_points = max(2, int(np.ceil(cumulative_points[-1])))
+    
+    target_positions = np.linspace(0, cumulative_points[-1], total_points)
+    t_samples = np.interp(target_positions, cumulative_points, t_fine)
+    
+    return t_samples
+
+def spline_mesh_with_curvature(segments, pts_per_2pi=20, mesh_size_min=0.05, mesh_size_max=0.5):
+    """
+    Creates a mesh from a list of SciPy BSpline objects with curvature-adaptive sampling.
+    
+    Parameters
+    ----------
+    splines : list of BSpline
+        Closed loop of splines defining the boundary
+    pts_per_2pi : float
+        Points per 2π radians of curvature for boundary sampling
+    mesh_size_min : float
+        Minimum mesh size (at high-curvature regions)
+    mesh_size_max : float
+        Maximum mesh size (in interior/low-curvature regions)
+    
+    Returns
+    -------
+    mesh : meshio.Mesh
+        Generated mesh
+    """
+    # Sample each spline with curvature-adaptive spacing
+    boundary_points = []
+    boundary_curvatures = []
+    
+    for seg in segments:
+        # Get curvature-sampled points
+        t_samples = curvature_sampling(seg.spline, seg.t0, seg.tf, pts_per_2pi)
+        pts = seg.spline(t_samples)
+        
+        # Also get curvature at these points for mesh sizing
+        dr = seg.spline.derivative(nu=1)(t_samples)
+        ddr = seg.spline.derivative(nu=2)(t_samples)
+        speed = np.sqrt(dr[:, 0]**2 + dr[:, 1]**2)
+        cross = dr[:, 0] * ddr[:, 1] - dr[:, 1] * ddr[:, 0]
+        curvature = np.abs(cross) / (speed**3 + 1e-10)
+        
+        boundary_points.append(pts)
+        boundary_curvatures.append(curvature)
+
+    # Concatenate all boundary points (remove duplicate endpoints between splines)
+    all_points = []
+    all_curvatures = []
+    for i, (pts, curv) in enumerate(zip(boundary_points, boundary_curvatures)):
+        if i == 0:
+            all_points.append(pts)
+            all_curvatures.append(curv)
+        else:
+            # Skip first point (duplicate of previous spline's last point)
+            all_points.append(pts[1:])
+            all_curvatures.append(curv[1:])
+            
+    all_points = np.vstack(all_points)[:-1]
+    all_curvatures = np.concatenate(all_curvatures)[:-1]
+    
+    # Remove last point if it duplicates the first (closing the loop)
+    if np.allclose(all_points[-1], all_points[0]):
+        all_points = all_points[:-1]
+        all_curvatures = all_curvatures[:-1]
+    
+    # Compute mesh sizes based on curvature
+    # Higher curvature -> smaller mesh size
+    max_curv = np.percentile(all_curvatures, 95)  # Use 95th percentile to avoid outliers
+    normalized_curv = np.clip(all_curvatures / (max_curv + 1e-10), 0, 1)
+    
+    # Interpolate between min and max size (inverse relationship with curvature)
+    mesh_sizes = mesh_size_max - normalized_curv * (mesh_size_max - mesh_size_min)
+    
+    with Geometry() as geom: 
+        # Create gmsh points with prescribed mesh sizes
+        gmsh_points = []
+        for pt, size in zip(all_points, mesh_sizes):
+            gmsh_points.append(geom.add_point([pt[0], pt[1], 0], mesh_size=size))
+        
+        # Create line segments connecting consecutive points
+        lines = []
+        n_pts = len(gmsh_points)
+        for i in range(n_pts):
+            lines.append(geom.add_line(gmsh_points[i], gmsh_points[(i + 1) % n_pts]))
+        
+        # Create curve loop and surface
+        curve_loop = geom.add_curve_loop(lines)
+        surface = geom.add_plane_surface(curve_loop)
+        
+        # Set meshing options
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 1)  # Use point sizes
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)  # Extend to interior
+        gmsh.option.setNumber("Mesh.MeshSizeMin", mesh_size_min)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size_max)
+        gmsh.option.setNumber("Mesh.Algorithm", 6)  # Frontal-Delaunay
+        
+        # Generate mesh
+        mesh = geom.generate_mesh(dim=2)
+    
+    return mesh
 
 ### Quadrilateral meshes and quadrature rules
 def quadrilateral_mesh(vertices,mesh_size):

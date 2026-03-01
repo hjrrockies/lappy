@@ -5,32 +5,34 @@ from matplotlib import patches, colors
 from shapely.geometry import Polygon
 from shapely import points
 
+# convert between real and complex representations of points in the plane
 def complex_form(pts, y=None):
     """Converts points in the plane to complex form"""
     pts = np.asarray(pts)
-    if y is not None and pts.dtype == 'float64':
+    if y is not None and np.isrealobj(pts):
         y = np.asarray(y)
         if y.dtype != 'float64':
             raise ValueError('y must be a real-valued array')
         return pts + 1j*y
-    elif pts.dtype == "complex128":
+    elif np.iscomplexobj(pts):
         return pts
     elif pts.ndim <= 1:
         return pts.astype('complex128')
-    elif pts.shape[-1] == 2 and pts.dtype == 'float64':
+    elif pts.shape[-1] == 2 and np.isrealobj(pts):
         return np.transpose(pts.T[0] + 1j*pts.T[1])
     else:
         raise ValueError('pts must be a real array of shape (...,2)')
 
 def real_form(pts):
     pts = np.asarray(pts)
-    if pts.dtype == "complex128":
+    if np.iscomplexobj(pts):
         return np.array([pts.real,pts.imag]).T
     elif pts.shape[-1] == 2:
         return pts
     else:
         raise ValueError('pts must be a complex array, or already in real form with shape (...,2)')
 
+# polygon common functions
 def polygon_edges(vertices):
     """Computes the edges of a polygon with vertices, ordered counter-clockwise"""
     vertices = complex_form(vertices)
@@ -187,6 +189,20 @@ def random_polygon(n,r_avg,eps,sigma):
     x = r*np.cos(theta)
     y = r*np.sin(theta)
     return x+1j*y
+
+### Eigenvalue Asymptotics
+def dir_weyl_N(lam, area, perim):
+    """Two-term Weyl asymptotics for the Dirichlet eigenvalue counting function"""
+    return (area*lam - perim*np.sqrt(lam))/(4*np.pi)
+
+def dir_weyl_k(k, area, perim):
+    """Weyl asymptotic estimate for the kth Dirichlet eigenvalue"""
+    return ((perim+np.sqrt(perim**2+16*np.pi*area*k))/(2*area))**2
+
+### Eigenvalue Bounds
+def dir_lbound(area):
+    """Lower bound on Dirichlet spectrum"""
+    return 5.76*np.pi/area
 
 ### Miscellaneous utils
 def invert_permutation(p):
