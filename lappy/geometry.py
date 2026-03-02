@@ -353,7 +353,7 @@ class ParametricSegment(BaseSegment):
         tau = np.linspace(0, 1, self.nsamp)
         pts = self.p(tau)
         dists = np.abs(pts-pt)
-        idx = dists.argmax()
+        idx = dists.argmin()
 
         if idx == 0:
             tau0 = tau[idx]
@@ -367,6 +367,7 @@ class ParametricSegment(BaseSegment):
 
         def f(tau):
             out = np.abs(self.p(tau)-pt)
+            return out
 
         res = minimize_scalar(f, bounds=(tau0, tau1), options={'xatol':1e-14})
         return res.fun

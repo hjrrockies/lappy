@@ -16,12 +16,7 @@ dependencies = [
     "matplotlib >= 3.9",
     "pygmsh >= 7.1",
     "shapely >= 2.0",
-    "joblib >= 1.4",
-    "pygsvd>=0.0.2",
+    "gsvd4py>=0.1.1",
     "jupyter>=1.1.1",
     "pytest>=8.4.1",
-    "mpmath>=1.3",
 ]
-
-[tool.uv.sources]
-pygsvd = { path = "../pygsvd", editable = true }

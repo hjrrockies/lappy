@@ -125,7 +125,7 @@ class Eigenproblem(BaseEigenproblem):
         
     def eigenfunction_eval_extras(self, eig, mult=1, extra_pts=None, solver=None, **solver_kwargs):
         solver = self._get_evec_solver(solver)
-        return solver.eigenfunction_eval(eig, mult, extra_pts, **solver_kwargs)
+        return solver.eigenfunction_eval_extras(eig, mult, extra_pts, **solver_kwargs)
         
     def eigenfunction_eval_normals(self, eig, mult=1, solver=None, **solver_kwargs):
         solver = self._get_evec_solver(solver)

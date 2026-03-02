@@ -387,7 +387,7 @@ class MPSEigensolver(BaseEigensolver):
         tensions = np.array([self.tensions(lam, reg_type)[0] for lam in lamgrid])
         locmin_idx = discrete_locmin_idx(tensions)
         while len(locmin_idx) > 1 and rtol < rtol_max:
-            rtol = np.min(rtol_max, 2*rtol) # double rtol
+            rtol = min(rtol_max, 2*rtol) # double rtol
             tensions = np.array([self.tensions(lam, reg_type)[0] for lam in lamgrid])
             locmin_idx = discrete_locmin_idx(tensions)
         return rtol
