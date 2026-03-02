@@ -9,7 +9,7 @@ from functools import cache, lru_cache
 import numpy as np
 import scipy.linalg as la
 import warnings
-from pygsvd import gsvd
+from gsvd4py import gsvd
 import matplotlib.pyplot as plt
 from scipy.optimize import bracket, minimize_scalar
 
@@ -57,8 +57,9 @@ def tensions(A1, A2, reg_type='svd', rtol=rtol_default):
         A1, A2 = regularize_pencil(A1, A2, reg_type, rtol)[:2]
 
     # compute GSVD    
-    C,S,_ = gsvd(A1, A2, extras='')
-    return np.divide(C, S, out=np.full(C.shape, np.inf), where=(S!=0))[::-1]
+    C, S = gsvd(A1, A2, compute_u=False, compute_v=False, compute_right=False)
+    c, s = np.diag(C), np.diag(S)
+    return np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))[::-1]
 
 def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_default):
     # regularize
@@ -68,8 +69,9 @@ def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_
         elif reg_type == 'qrp': R11, Pinv = M, invert_permutation(v)
 
     # compute GSVD
-    C,S,X = gsvd(A1, A2, extras='')
-    sigmas = np.divide(C, S, out=np.full(C.shape, np.inf), where=(S!=0))
+    C, S, X = gsvd(A1, A2, compute_u=False, compute_v=False)
+    c, s = np.diag(C), np.diag(S)
+    sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
         
     # warn if multiplicity is deficient
     if sigmas[-mult] > ttol:
@@ -97,15 +99,16 @@ def nullspace_eval(A1, A2, mult=1, A_extra=None, reg_type='svd', rtol=rtol_defau
         A1, A2, _, _ = regularize_pencil(A1, A2, reg_type, rtol)
 
     # compute GSVD
-    C,S,_,U,V = gsvd(A1, A2)
-    sigmas = np.divide(C, S, out=np.full(C.shape, np.inf), where=(S!=0))
+    U,V,C,S,_ = gsvd(A1, A2, mode='econ', compute_right=False)
+    c, s = np.diag(C), np.diag(S)
+    sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
 
     # warn if multiplicity is deficient
     if sigmas[-mult] > ttol:
         warnings.warn(f"Eigenvalue may have deficient multiplicity ({sigmas[-mult]:.3e}>{ttol:.3e})")
 
     # compute (weighted) nullspace evaluation
-    U1, U2 = (U[:,-mult:]*C[-mult:])[:,::-1], (V[:,-mult:]*S[-mult:])[:,::-1]
+    U1, U2 = (U[:,-mult:]*c[-mult:])[:,::-1], (V[:,-mult:]*s[-mult:])[:,::-1]
     if A_extra is not None:
         U2, U_extra = U2[:m2], U2[m2:]
     else:
