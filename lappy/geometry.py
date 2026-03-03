@@ -10,7 +10,7 @@ from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh,
 import numpy as np
 from scipy.integrate import cumulative_simpson, quad
 from scipy.interpolate import make_interp_spline, BSpline
-from scipy.optimize import minimize, minimize_scalar
+from scipy.optimize import minimize, minimize_scalar, linprog
 import matplotlib.pyplot as plt
 from pygmsh.geo import Geometry
 
@@ -816,6 +816,7 @@ class Domain(BaseDomain):
         self.bdry = bdry
         self._area = None
         self._diameter = None
+        self._inradius = None
         super().__init__()
 
     @property
@@ -854,6 +855,42 @@ class Domain(BaseDomain):
             self._diameter = self._compute_diameter()
         return self._diameter
     
+    @property
+    def inradius(self):
+        if self._inradius is None:
+            self._inradius = self._compute_inradius()
+        return self._inradius
+
+    def _compute_inradius(self, ngrid=25):
+        """Numerically computes the inradius (largest inscribed circle radius)."""
+        # Build bounding box from coarse boundary samples
+        tau = np.linspace(0, 1, 50)[:-1]
+        bdry_pts = np.array([seg.p(tau) for seg in self.bdry.segments]).flatten()
+        xmin, xmax = bdry_pts.real.min(), bdry_pts.real.max()
+        ymin, ymax = bdry_pts.imag.min(), bdry_pts.imag.max()
+
+        # Deterministic interior grid
+        xs = np.linspace(xmin, xmax, ngrid)
+        ys = np.linspace(ymin, ymax, ngrid)
+        XX, YY = np.meshgrid(xs, ys)
+        candidates = (XX + 1j * YY).flatten()
+        interior = candidates[self.contains(candidates)]
+
+        # Coarse best: maximum boundary distance over grid
+        dists = np.array([self.bdry.dist(pt) for pt in interior])
+        best_pt = interior[dists.argmax()]
+
+        # Nelder-Mead refinement
+        def neg_dist(xy):
+            pt = complex(xy[0], xy[1])
+            if not self.contains(np.array([pt]))[0]:
+                return 0.0
+            return -self.bdry.dist(pt)
+
+        res = minimize(neg_dist, [best_pt.real, best_pt.imag], method='Nelder-Mead',
+                       options={'xatol': 1e-10, 'fatol': 1e-10, 'maxiter': 10000})
+        return float(-res.fun)
+
     def max_dist(self, pt, n=100):
         """compute the maximum distance from a given point to another point in the domain"""
         tau = np.linspace(0, 1, n)[:-1]
@@ -1025,7 +1062,25 @@ class Polygon(Domain):
     def _compute_diameter(self):
         return polygon_diameter(self.vertices)
 
-    @property 
+    def _compute_inradius(self):
+        """Computes inradius exactly for convex polygons via LP; falls back to parent for non-convex."""
+        if not np.all(self.int_angles <= np.pi + 1e-10):
+            return super()._compute_inradius()
+
+        # LP: maximize r  s.t.  dist(center, edge_k) >= r  for all k
+        # Outward unit normals for CCW polygon: n_k = -i * (v_{k+1} - v_k) / |...|
+        v = self.vertices
+        edges = np.roll(v, -1) - v
+        normals = -1j * edges / np.abs(edges)
+
+        # Per-edge constraint: n_k.real*x + n_k.imag*y + r <= Re[v_k * conj(n_k)]
+        A = np.column_stack([normals.real, normals.imag, np.ones(len(v))])
+        b = (v * normals.conjugate()).real
+
+        res = linprog([0.0, 0.0, -1.0], A_ub=A, b_ub=b, bounds=[(None, None), (None, None), (0, None)])
+        return float(-res.fun)
+
+    @property
     def n_vertices(self):
         return len(self.vertices)
     

@@ -415,6 +415,14 @@ class TestDomain:
     def test_bc_type(self, unit_square_domain):
         assert unit_square_domain.bc_type == 'dir'
 
+    def test_inradius_unit_square(self, unit_square_domain):
+        assert np.isclose(unit_square_domain.inradius, 0.5, rtol=1e-4)
+
+    def test_inradius_cached(self, unit_square_domain):
+        r1 = unit_square_domain.inradius
+        r2 = unit_square_domain.inradius
+        assert r1 is r2
+
 
 # ---------------------------------------------------------------------------
 # TestPolygon
@@ -484,3 +492,14 @@ class TestPolygon:
         assert unit_square_domain.n_vertices == 4
         assert unit_square_domain.n_sides == 4
         assert unit_square_domain.n_vertices == len(unit_square_domain.vertices)
+
+    def test_inradius_unit_square(self, unit_square_domain):
+        assert np.isclose(unit_square_domain.inradius, 0.5, rtol=1e-8)
+
+    def test_inradius_rectangle(self, rect_domain):
+        # 2×1 rectangle: inradius = 0.5
+        assert np.isclose(rect_domain.inradius, 0.5, rtol=1e-8)
+
+    def test_inradius_right_triangle(self, right_triangle):
+        # 3-4-5 triangle: r = Area / semi_perimeter = 6 / 6 = 1.0
+        assert np.isclose(right_triangle.inradius, 1.0, rtol=1e-8)
