@@ -1,4 +1,5 @@
-from .utils import complex_form, dir_weyl_k
+from .utils import complex_form
+from .asymp import weyl_est as _weyl_est
 from .geometry import PointSet
 from .core import BaseDomain
 
@@ -14,7 +15,7 @@ def make_default_basis(domain, fs_orders=1, n_eig=10, ltol=1e-12, fs_mult=1, fb_
     """Make the default basis for a domain"""
     raise NotImplementedError("functionality under development")
     # approximate max spectral parameter
-    lam_max = dir_weyl_k(n_eig+1, domain.area, domain.perimeter)
+    lam_max = _weyl_est(n_eig+1, area=domain.area, perim=domain.perimeter, bc_type='dir')
 
     # get fundamental solution basis
     lens = np.array([seg.len for seg in domain.bdry.segments])

@@ -190,20 +190,6 @@ def random_polygon(n,r_avg,eps,sigma):
     y = r*np.sin(theta)
     return x+1j*y
 
-### Eigenvalue Asymptotics
-def dir_weyl_N(lam, area, perim):
-    """Two-term Weyl asymptotics for the Dirichlet eigenvalue counting function"""
-    return (area*lam - perim*np.sqrt(lam))/(4*np.pi)
-
-def dir_weyl_k(k, area, perim):
-    """Weyl asymptotic estimate for the kth Dirichlet eigenvalue"""
-    return ((perim+np.sqrt(perim**2+16*np.pi*area*k))/(2*area))**2
-
-### Eigenvalue Bounds
-def dir_lbound(area):
-    """Lower bound on Dirichlet spectrum"""
-    return 5.76*np.pi/area
-
 ### Miscellaneous utils
 def invert_permutation(p):
     """Invert a pertmutation vector. For use with column-pivoted QR solves"""
@@ -211,75 +197,7 @@ def invert_permutation(p):
     s[p] = np.arange(p.size)
     return s
 
-### Eigenvalues of rectangles (for validation purposes)
-def rect_eig(m,n,L,H):
-    """Computes the (m,n) Dirichlet eigenvalue of an L-by-H rectangle"""
-    return m**2*np.pi**2/L**2 + n**2*np.pi**2/H**2
-
-def rect_eigs_k(k,L,H,ret_mn=False):
-    """Gets first k Dirichlet eigenvalues for an LxH rectangle.
-    Vectorized to handle arrays for L and H of various shapes, returning
-    an array such that rect_eigs_k(L,H,k).flatten()[idx] is the first
-    k eigenvalues of an L.flatten()[idx]xH.flatten()[idx] rectangle.
-
-    Optionally returns the indices of the corresponding eigenvalues."""
-    L,H = np.asarray(L), np.asarray(H)
-    mn = np.arange(1,k+1)
-    M,N = np.meshgrid(mn,mn,indexing='ij')
-    eigs = rect_eig(M.flatten()[np.newaxis],
-                    N.flatten()[np.newaxis],
-                    L.flatten()[:,np.newaxis],
-                    H.flatten()[:,np.newaxis])
-
-    idx = np.argsort(eigs,axis=-1)
-    eigs = np.take_along_axis(eigs,idx,axis=-1)[:,:k]
-    eigs = eigs.reshape((*L.shape,k))
-    if ret_mn:
-        m = np.take_along_axis(M.flatten()[np.newaxis],idx,axis=-1)[:,:k]
-        n = np.take_along_axis(N.flatten()[np.newaxis],idx,axis=-1)[:,:k]
-        return eigs,m.reshape((*L.shape,k)),n.reshape((*L.shape,k))
-    else:
-        return eigs
-
-def rect_eig_grad(m,n,L,H):
-    """Derivatives of rectangular eigenvalues wrt length and width"""
-    m,n = np.asarray(m), np.asarray(n)
-    L,H = np.asarray(L), np.asarray(H)
-    return (-2*(np.pi*m.T)**2/L**3).T, (-2*(np.pi*n.T)**2/H**3).T
-
-def rect_eig_bound_idx(bound,L,H):
-    """Identifies the indices of Dirichlet eigenvalues foran L-by-H rectangles
-    which less than a given upper bound"""
-    m_max = 1
-    while True:
-        eig = rect_eig(m_max,1,L,H)
-        if eig > bound: break
-        m_max += 1
-
-    n_max = 1
-    while True:
-        eig = rect_eig(1,n_max,L,H)
-        if eig > bound: break
-        n_max += 1
-
-    M = np.arange(1,m_max+1)[:,np.newaxis]
-    N = np.arange(1,n_max+1)[np.newaxis]
-    Lambda = rect_eig(M,N,L,H)
-    return np.argwhere(Lambda <= bound)+1
-
-def rect_eig_mult(lambda_,L,H,maxind=1000):
-    """Compute the indices of rectangle Dirichlet eigenvalues which are
-    duplicates of lambda_. For use in testing multiplicity."""
-    Lam = rect_eig(np.arange(1,maxind)[np.newaxis],np.arange(1,maxind)[:,np.newaxis],L,H)
-    diff = np.abs(lambda_-Lam)
-    tot = (diff<1e-12).sum()
-    ind = np.unravel_index(np.argsort(diff, axis=None), diff.shape)
-    return (ind[0]+1)[:tot],(ind[1]+1)[:tot]
-
-def rect_eig_mult_mn(m,n,L,H):
-    """Compute the indices of rectangle Dirichlet eigenvalues which are
-    duplicates of the (m,n) eigenvalue. For use in testing multiplicity."""
-    return rect_eig_mult(rect_eig(m,n,L,H),L,H,maxind=10*max(m,n))
+from .exact import rect_eig, rect_eigs_k, rect_eig_grad
 
 def loss_plot(L,H,loss,log=True,ax=None):
     n_levels = 50
@@ -311,7 +229,7 @@ def rect_loss_std(L,H,eigs_true,weights=1,jac=False):
     target eigenvalues. Can use weights."""
     weights = np.asarray(weights).flatten()
     k = len(eigs_true)
-    eigs,m,n = rect_eigs_k(L,H,k,ret_mn=True)
+    eigs,m,n = rect_eigs_k(k,L,H,ret_mn=True)
     pweights = weights**(0.5)
     out = la.norm(pweights*(eigs-eigs_true),axis=-1)**2
     if jac:
@@ -327,7 +245,7 @@ def rect_loss_reciprocal(L,H,eigs_true,weights=1):
     target eigenvalues in reciprocal form. Can use weights."""
     weights = np.asarray(weights).flatten()
     k = len(eigs_true)
-    eigs,m,n = rect_eigs_k(L,H,k,ret_mn=True)
+    eigs,m,n = rect_eigs_k(k,L,H,ret_mn=True)
     pweights = weights**(0.5)
     out = la.norm(pweights*(1/eigs-1/eigs_true),axis=-1)**2
     jac = False
@@ -346,7 +264,7 @@ def rect_loss_outerlog(L,H,eigs_true,weights=1,eps=1e-200,jac=False):
     k = len(eigs_true)
     if len(weights) == 1:
         weights = weights*np.ones(k)
-    eigs,m,n = rect_eigs_k(L,H,k,ret_mn=True)
+    eigs,m,n = rect_eigs_k(k,L,H,ret_mn=True)
     eigsT = eigs.T
     eigs_trueT = eigs_true.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
     weightsT = weights.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))

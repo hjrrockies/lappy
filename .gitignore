@@ -166,3 +166,12 @@ uv.lock
 # .npz,.npy files
 *.npz
 *.npy
+
+# Claude code stuff
+Claude.md
+
+# VS code stuff
+.vscode/
+
+# zip archives
+*.zip

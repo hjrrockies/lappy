@@ -1050,6 +1050,7 @@ class Polygon(Domain):
             elif val_simple:
                 if not bdry.is_simple:
                     raise ValueError("'bdry' must be simple")
+                self.vertices = np.array([seg.p0 for seg in bdry.segments])
             elif not bdry.is_closed:
                 raise ValueError("'bdry' must be closed")
             else:

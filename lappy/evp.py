@@ -2,7 +2,9 @@ import numpy as np
 import scipy.linalg as la
 from .core import BaseEigenproblem, BaseEigensolver
 from .mps import MPSEigensolver
-from .utils import complex_form, dir_lbound, dir_weyl_N, dir_weyl_k
+from .utils import complex_form
+from .bounds import faber_krahn as _faber_krahn
+from .asymp import weyl_est as _weyl_est
 from .bases import ParticularBasis
 from .geometry import PointSet, Domain
 from functools import cache, lru_cache
@@ -84,12 +86,12 @@ class Eigenproblem(BaseEigenproblem):
         ppl = 10
         # first pass using weyl bound for n_eigs+1
         k = n_eigs+1
-        a = dir_lbound(self.domain.area)
-        b = dir_weyl_k(k, self.domain.area, self.domain.perimeter)
+        a = _faber_krahn(area=self.domain.area)
+        b = _weyl_est(k, area=self.domain.area, perim=self.domain.perimeter, bc_type='dir')
         eigs, mults, fevals = self.solve_interval(a, b, ppl*k, solver, **solver_kwargs)
         while mults.sum() < n_eigs:
-            a = dir_weyl_k(k, self.domain.area, self.domain.perimeter)
-            b = dir_weyl_k(k+1, self.domain.area, self.domain.perimeter)
+            a = _weyl_est(k, area=self.domain.area, perim=self.domain.perimeter, bc_type='dir')
+            b = _weyl_est(k+1, area=self.domain.area, perim=self.domain.perimeter, bc_type='dir')
             eigs_, mults_, fe = self.solve_interval(a, b, ppl, solver, **solver_kwargs)
             eigs = np.concatenate((eigs, eigs_))
             mults = np.concatenate((mults, mults_))

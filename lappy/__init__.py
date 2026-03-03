@@ -8,6 +8,9 @@ from . import bases
 from . import quad
 from . import utils
 from . import geometry
+from . import exact
+from . import asymp
+from . import bounds
 
 # classes and functions available directly from lappy
 from .mps import MPSEigensolver
