@@ -1,6 +1,8 @@
 from .core import BaseSegment, BaseDomain
 from .utils import (polygon_area, polygon_diameter, complex_form, real_form, rand_interior_points,
                     interior_angles, edge_lengths, segment_intersection)
+from shapely.geometry import Polygon as ShapelyPolygon
+from shapely import points as shapely_points
 from .opt import find_all_roots
 from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh, 
                    tri_quad, cached_leggauss, cached_chebgauss)
@@ -506,7 +508,13 @@ class LineSegment(BaseSegment):
             return PointSet(normals, wts)
         else:
             return PointSet(normals)
-        
+
+    def dist(self, pt):
+        """Computes the distance from pt to this line segment."""
+        d = self._pf - self._p0
+        t = float(np.clip(((pt - self._p0) * d.conjugate()).real / (self._len ** 2), 0.0, 1.0))
+        return float(np.abs(pt - (self._p0 + t * d)))
+
 class SplineSegment(ParametricSegment):
     """Segments with spline boundary"""
     def __init__(self, spline, t0=None, tf=None, bc='dir', nsamp=100, val_simple=False, val_closed=False):
@@ -898,22 +906,29 @@ class Domain(BaseDomain):
         res = minimize(f, np.array([tau1,tau2]), jac=True, bounds=[(0,1),(0,1)], tol=1e-14)
         return float(-res.fun)
     
-    def _winding_number(self, pts, n=100):
-        tau, wts = cached_leggauss(n)
-        P = np.array([seg.p(tau) for seg in self.bdry.segments])
-        dP = np.array([seg.dp(tau) for seg in self.bdry.segments])
-        dx = np.subtract.outer(pts.real, P.real)
-        dy = np.subtract.outer(pts.imag, P.imag)
-        num = -dx*dP.imag + dy*dP.real
-        denom = dx**2 + dy**2
-        I = (np.divide(num, denom, out=np.full(num.shape, np.inf), where=(denom!=0))*wts).sum(axis=(1,2))/(2*np.pi)
-        return I
-    
-    def contains(self, pts, n=100):
-        """Checks if the domain contains the given points."""
+    def contains(self, pts):
+        """Checks if the domain contains the given points using ray casting."""
         pts = complex_form(pts)
-        w = np.abs(self._winding_number(pts, n))
-        return (0.9 < w)&(w < 1.1)
+        pt_y = pts.imag
+        pt_x = pts.real
+        inside = np.zeros(len(pts), dtype=bool)
+
+        for seg in self.bdry.segments:
+            if isinstance(seg, LineSegment):
+                vertices = np.array([seg.p0, seg.pf])
+            else:
+                vertices = seg.p(np.linspace(0, 1, seg.nsamp + 1))
+
+            for k in range(len(vertices) - 1):
+                x0, y0 = vertices[k].real, vertices[k].imag
+                x1, y1 = vertices[k+1].real, vertices[k+1].imag
+                crosses = ((y0 <= pt_y) & (pt_y < y1)) | ((y1 <= pt_y) & (pt_y < y0))
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    t = np.where(crosses, (pt_y - y0) / (y1 - y0), 0.0)
+                x_cross = x0 + t * (x1 - x0)
+                inside ^= crosses & (x_cross > pt_x)
+
+        return inside
     
     def bdry_pts(self, n_per_seg, kind='legendre', weights=False):
         return self.bdry.pts(n_per_seg, kind=kind, weights=weights)
@@ -949,7 +964,7 @@ class Domain(BaseDomain):
                 x = (xmax-xmin)*np.random.rand(npts)+xmin
                 y = (ymax-ymin)*np.random.rand(npts)+ymin
                 z = x + 1j*y
-                pts_new = z[self.contains(z, n_bdry)]
+                pts_new = z[self.contains(z)]
                 pts = np.concatenate((pts, pts_new))
                 oversamp = 2*oversamp
             else:
@@ -1043,3 +1058,10 @@ class Polygon(Domain):
             else: int_pts = PointSet(int_pts)
 
         return int_pts
+
+    def contains(self, pts):
+        """Checks containment using Shapely (exact, no approximation)."""
+        pts = complex_form(pts)
+        xy = real_form(pts)
+        poly = ShapelyPolygon(real_form(self.vertices))
+        return np.array(poly.contains(shapely_points(xy)))

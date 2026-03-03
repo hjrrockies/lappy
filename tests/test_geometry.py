@@ -156,12 +156,11 @@ class TestLineSegment:
         assert LineSegment(0, 1).is_closed == False
 
     def test_dist_to_midpoint(self):
-        # LineSegment has no dist(); use to_splineseg() which inherits from ParametricSegment
-        seg = LineSegment(0, 1).to_splineseg()
+        seg = LineSegment(0, 1)
         assert np.isclose(seg.dist(0.5+0j), 0.0, atol=1e-6)
 
     def test_dist_to_perpendicular(self):
-        seg = LineSegment(0, 1).to_splineseg()
+        seg = LineSegment(0, 1)
         assert np.isclose(seg.dist(0.5+2j), 2.0, rtol=1e-4)
 
     def test_to_splineseg(self):
@@ -314,20 +313,11 @@ class TestMultiSegment:
         ps = unit_square_domain.bdry.pts(5, weights=True)
         assert hasattr(ps, 'wts')
 
-    def test_dist_from_interior_point(self):
-        # Build boundary with SplineSegments so that dist() works
-        verts = [0+0j, 1+0j, 1+1j, 0+1j]
-        segs = [LineSegment(verts[i], verts[(i+1) % 4]).to_splineseg()
-                for i in range(4)]
-        ms = MultiSegment(segs)
-        assert np.isclose(ms.dist(0.5+0.5j), 0.5, rtol=1e-3)
+    def test_dist_from_interior_point(self, unit_square_domain):
+        assert np.isclose(unit_square_domain.bdry.dist(0.5+0.5j), 0.5, rtol=1e-3)
 
-    def test_dist_from_corner(self):
-        verts = [0+0j, 1+0j, 1+1j, 0+1j]
-        segs = [LineSegment(verts[i], verts[(i+1) % 4]).to_splineseg()
-                for i in range(4)]
-        ms = MultiSegment(segs)
-        assert np.isclose(ms.dist(0+0j), 0.0, atol=1e-5)
+    def test_dist_from_corner(self, unit_square_domain):
+        assert np.isclose(unit_square_domain.bdry.dist(0+0j), 0.0, atol=1e-5)
 
     def test_validate_closed_raises(self):
         seg1 = LineSegment(0, 1)
@@ -396,8 +386,7 @@ class TestDomain:
 
     def test_int_pts_random_interior(self, unit_square_domain):
         pts = unit_square_domain.int_pts(method='random', npts_rand=10)
-        # Use higher n for accurate winding number near boundary
-        assert np.all(unit_square_domain.contains(pts.pts, n=500))
+        assert np.all(unit_square_domain.contains(pts.pts))
 
     def test_int_pts_random_weights(self, unit_square_domain):
         pts = unit_square_domain.int_pts(method='random', weights=True, npts_rand=20)
