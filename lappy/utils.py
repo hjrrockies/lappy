@@ -1,9 +1,5 @@
 import numpy as np
 import scipy.linalg as la
-import matplotlib.pyplot as plt
-from matplotlib import patches, colors
-from shapely.geometry import Polygon
-from shapely import points
 
 # convert between real and complex representations of points in the plane
 def complex_form(pts, y=None):
@@ -107,6 +103,8 @@ def boundary_pts_polygon(vertices,n_pts=20,rule='legendre',skip=None):
 def rand_interior_points(vertices, m, oversamp=2):
     """Computes random interior points for a polygon with vertices in complex form,
     ordered counter-clockwise."""
+    from shapely.geometry import Polygon
+    from shapely import points
     vertices = complex_form(vertices)
     poly_area = polygon_area(vertices)
     x_min, x_max = np.min(vertices.real), np.max(vertices.real)
@@ -126,6 +124,7 @@ def rand_interior_points(vertices, m, oversamp=2):
 def plot_polygon(vertices,ax=None,**plotkwargs):
     """Plot a polygon with vertices in complex form, which are assumed to be in
     counter-clockwise order."""
+    import matplotlib.pyplot as plt
     if ax is None: makeax = True
     else: makeax = False
     vertices = complex_form(vertices)
@@ -141,6 +140,8 @@ def plot_polygon(vertices,ax=None,**plotkwargs):
 def plot_angles(vertices,ax=None):
     """Plots the angle arcs to confirm accurate calculation of angles. Also looks
     nice."""
+    import matplotlib.pyplot as plt
+    from matplotlib import patches
     vertices = complex_form(vertices)
     phis = np.rad2deg(interior_angles(vertices))
     l = edge_lengths(vertices)
@@ -200,6 +201,8 @@ def invert_permutation(p):
 from .exact import rect_eig, rect_eigs_k, rect_eig_grad
 
 def loss_plot(L,H,loss,log=True,ax=None):
+    import matplotlib.pyplot as plt
+    from matplotlib import colors
     n_levels = 50
     if ax is None:
         fig = plt.figure()
@@ -297,266 +300,3 @@ def logify(obj):
             return np.log(obj(*args,**kwargs)+1e-200)
     return log_obj
 
-### interval arithmetic
-from abc import ABC, abstractmethod
-class RealSubset(ABC):
-    @abstractmethod
-    def __init__(self):
-        pass
-    
-    @abstractmethod
-    def union(self, other):
-        pass
-
-    @abstractmethod
-    def intersection(self, other):
-        pass
-
-    @abstractmethod
-    def complement(self):
-        pass
-
-    @property
-    @abstractmethod
-    def lb(self):
-        pass
-
-    @property
-    @abstractmethod
-    def ub(self):
-        pass
-
-    def __lt__(self, other):
-        return self.ub < other.lb
-
-    def intersects(self, other):
-        return (self.intersection(other) is not None)
-
-    def contains(self, other):
-        return self.union(other) == self
-
-    def __add__(self, other):
-        return self.union(other)
-
-    def __mul__(self, other):
-        return self.intersection(other)
-
-    def difference(self, other):
-        return other.complement().intersection(self)
-
-    def symm_difference(self, other):
-        return (self.union(other)).difference(self.intersection(other))
-
-    def __sub__(self, other):
-        return self.difference(other)
-    
-class Interval(RealSubset):
-    """(open) Interval class. Implements basic set logic for real (open) intervals."""
-    def __init__(self, a, b):
-        if b <= a:
-            raise ValueError("a must be less than b")
-        self.a = np.float64(a)
-        self.b = np.float64(b)
-
-    def __repr__(self):
-        return f"Interval({repr(self.a)},{repr(self.b)})"
-
-    def __str__(self):
-        return f"Interval({str(self.a)},{str(self.b)})"
-        
-    def union(self, other):
-        if isinstance(other, Interval):
-            # no overlap, union is MultiInterval
-            if self < other:
-                return MultiInterval([self,other], checkvalid=False)
-            elif other < self:
-                return MultiInterval([other,self], checkvalid=False)
-            # overlap, get new endpoints
-            else:
-                new_a = min(self.a, other.a)
-                new_b = max(self.b, other.b)
-                return Interval(new_a, new_b)
-        elif isinstance(other, MultiInterval):
-            return other.union(self)
-        else:
-            raise TypeError("'other' must be an instance of Interval or MultiInterval")
-
-    def intersection(self, other):
-        if isinstance(other, Interval):
-            # no overlap, intersection is empty
-            if self < other or other < self:
-                return None
-            # overlap, get new endpoints
-            else:
-                new_a = max(self.a, other.a)
-                new_b = min(self.b, other.b)
-                if new_b <= new_a:
-                    return None
-                else:
-                    return Interval(new_a, new_b)
-        elif isinstance(other, MultiInterval):
-            return other.intersection(self)
-        else:
-            raise TypeError("'other' must be an instance of Interval or MultiInterval")
-
-    def complement(self):
-        return MultiInterval([Interval(float('-inf'),self.a),Interval(self.b,float('inf'))], checkvalid=False)
-
-    @property
-    def lb(self):
-        return self.a
-
-    @property
-    def ub(self):
-        return self.b
-
-    def __eq__(self, other):
-        if isinstance(other, Interval):
-            return (self.a == other.a) and (self.b == other.b)
-        else:
-            return super.__eq__(other)
-
-    def contains(self, other):
-        if isinstance(other, Interval):
-            return (self.a <= other.a) and (other.b <= self.b)
-        else:
-            return super.__eq__(other)
-        
-class MultiInterval(RealSubset):
-    """Class for tracking (disjoint) unions of intervals"""
-    def __init__(self, intervals, checkvalid=True):
-        if checkvalid:
-            if not all(isinstance(interval, Interval) for interval in intervals):
-                raise ValueError("Each element of 'intervals' must be an instance of Interval")
-
-        # process list/tuple inputs
-        if isinstance(intervals, (list, tuple)):
-            if checkvalid:
-                if MultiInterval.is_valid(intervals):
-                    self.intervals = intervals
-                else:
-                    raise ValueError("Intervals must be pairwise disjoint and in increasing order")
-            else:
-                self.intervals = intervals
-        # process set inputs
-        elif isinstance(intervals, set):
-            intervals = list(intervals)
-            pass
-        else:
-            raise TypeError("'intervals' must be a list/tuple of pairwise disjoint increasing intervals or a set of intervals")
-
-    def __getitem__(self, key):
-        if isinstance(key, slice):
-            if key.step <= 0:
-                return MultiInterval(set(self.intervals[key]))
-            else:
-                return MultiInterval(self.intervals[key], checkvalid=False)
-        else:
-            return self.intervals[key]
-
-    def __len__(self):
-        return len(self.intervals)
-            
-    @property
-    def lb(self):
-        return self.intervals[0].a
-    
-    @property
-    def ub(self):
-        return self.intervals[-1].b
-
-    @staticmethod
-    def is_valid(intervals):
-        """checks if a list of intervals is pairwise disjoint and in increasing order"""
-        if not all(isinstance(interval, Interval) for interval in intervals):
-            raise TypeError("each element of 'intervals' must be an instance of Interval")
-        n = len(intervals)
-        for i in range(n-1):
-            for j in range(i+1,n):
-                if not (intervals[i] < intervals[j]):
-                    return False
-        return True
-
-    @staticmethod
-    def _extend(intervals, new_interval):
-        if new_interval > intervals[-1]:
-            return intervals + [new_interval]
-        for i in range(len(intervals)):
-            # assume other does not intersect any of intervals before intervals[i] (handled in loop)
-            # new_interval is left of ith interval
-            if new_interval < intervals[i]:
-                return intervals[:i] + [new_interval] + intervals[i:]
-            # other intersects ith interval
-            elif new_interval.intersects(intervals[i]):
-                return MultiInterval._extend(intervals[:i] + intervals[i+1:], new_interval.union(intervals[i]))
-            # new_interval is right of ith interval, pass to next iteration of loop
-            else:
-                pass
-        
-    def union(self, other):
-        if not isinstance(other, (Interval, MultiInterval)):
-            raise TypeError("'other' must be an instance of Interval or MultiInterval")
-            
-        if isinstance(other, Interval):
-            intervals = MultiInterval._extend(self.intervals, other)
-        elif isinstance(other, MultiInterval):
-            intervals = self.intervals
-            for interval in other.intervals:
-                intervals = MultiInterval._extend(intervals, interval)
-
-        if len(intervals) == 1:
-            return intervals[0]
-        else:
-            return MultiInterval(intervals)
-        
-    def intersection(self, other):
-        if not isinstance(other, (Interval, MultiInterval)):
-            raise TypeError("'other' must be an instance of Interval or MultiInterval")
-        
-        # build intervals for intersection
-        if isinstance(other, Interval):
-            intervals = []
-            for interval in self.intervals:
-                if other.intersects(interval):
-                    intervals.append(other.intersection(interval))
-        elif isinstance(other, MultiInterval):
-            intervals = []
-            for interval1 in self.intervals:
-                for interval2 in other.intervals:
-                    if interval1.intersects(interval2):
-                        intervals.append(interval1.intersection(interval2))
-        if len(intervals) == 0:
-            return None
-        elif len(intervals) == 1:
-            return intervals[0]
-        else:
-            return MultiInterval(intervals)
-
-    def contains(self, other):
-        if isinstance(other, Interval):
-            return any(interval.contains(other) for interval in self.intervals)
-        elif isinstance(other, MultiInterval):
-            return all(self.contains(interval) for interval in other.intervals)
-        else:
-            return super().contains(other)
-
-    def __eq__(self, other):
-        if isinstance(other, MultiInterval):
-            if len(self) != len(other):
-                return False
-            else:
-                return all([int1 == int2 for int1,int2 in zip(self.intervals, other.intervals)])
-        else:
-            return super().__eq__(other)
-
-    def complement(self):
-        out = self.intervals[0].complement()
-        for interval in self.intervals[1:]:
-            out = out.intersection(interval.complement())
-        return out
-
-    def __repr__(self):
-        return str(self)
-        
-    def __str__(self):
-        return f"MultiInterval([{','.join([str(interval)[8:] for interval in self.intervals])}])"

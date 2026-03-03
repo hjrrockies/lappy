@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 import numpy as np
-import matplotlib.pyplot as plt
 
 # --- base classes ---
 # eigenproblem base class
@@ -29,7 +28,7 @@ class BaseEigenproblem(ABC):
         self.domain = domain
 
     @abstractmethod
-    def solve(self, a, b, solver=None, **solver_kwargs):
+    def solve(self, n_eigs, solver=None, **solver_kwargs):
         pass
 
     @property
@@ -110,6 +109,7 @@ class BaseSegment(ABC):
         pass
 
     def plot(self, nsamp=None, ax=None, showbc=False, **plot_kwargs):
+        import matplotlib.pyplot as plt
         if nsamp is None:
             nsamp = self.nsamp
         pts = self.p(np.linspace(0,1,nsamp))
@@ -123,6 +123,7 @@ class BaseSegment(ABC):
         return ax.plot(pts.real, pts.imag, **plot_kwargs)
 
     def plot_tangents(self, nsamp=None, ax=None, **plot_kwargs):
+        import matplotlib.pyplot as plt
         if nsamp is None:
             nsamp = int(np.ceil(self.nsamp/10))
         pts = self.pts(nsamp, kind='even', weights=False)
@@ -133,6 +134,7 @@ class BaseSegment(ABC):
         return ax.quiver(pts.real, pts.imag, tangents.real, tangents.imag, angles='xy', **plot_kwargs)
 
     def plot_normals(self, nsamp=None, ax=None, **plot_kwargs):
+        import matplotlib.pyplot as plt
         if nsamp is None:
             nsamp = int(np.ceil(self.nsamp/10))
         pts = self.pts(nsamp, kind='even', weights=False)
@@ -151,12 +153,6 @@ class BaseDomain(ABC):
     boundary data extraction and manipulation. Subclasses must implement the
     boundary data retrieval method to support various discretization schemes.
     """
-    def init(self):
-        if not hasattr(self, 'bdry'):
-            raise AttributeError(f"{self.__class__.__name__} must set self.bdry")
-        if not hasattr(self.bdry, 'bcs'):
-            raise AttributeError("boundary must have boundary conditions")
-
     @property
     @abstractmethod
     def area(self):

@@ -10,7 +10,6 @@ import numpy as np
 import scipy.linalg as la
 import warnings
 from gsvd4py import gsvd, gsvdvals
-import matplotlib.pyplot as plt
 from scipy.optimize import bracket, minimize_scalar
 
 ### tolerance defaults
@@ -215,10 +214,6 @@ class MPSEigensolver(BaseEigensolver):
     def __init__(self, basis, bdry_pts, int_pts, bdry_normals=None, bc_param=0, 
                  reg_type='svd', rtol=rtol_default, ttol=ttol_default, ltol=ltol_default):
 
-        self.A_B = make_bdry_vander(basis, bdry_pts, bdry_normals, bc_param)
-        self.A_I = make_vander(basis, int_pts)
-        self.A_N = make_ddiff_vander(basis, bdry_pts, bdry_normals)
-
         self.basis = basis
         self.bdry_pts = bdry_pts
         self.bdry_normals = bdry_normals
@@ -387,6 +382,7 @@ class MPSEigensolver(BaseEigensolver):
                               ltol, ttol, minsolver, verbose)
     
     def plot_tensions(self, low, high, nlam, n_angle=1, ax=None, mps_kwargs={}, **plot_kwargs):
+        import matplotlib.pyplot as plt
         L = np.linspace(low, high, nlam+1)
         tans = np.array([self.tensions(lam, **mps_kwargs)[:n_angle] for lam in L])
         if ax is None:

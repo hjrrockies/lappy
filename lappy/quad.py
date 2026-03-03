@@ -1,7 +1,5 @@
 import numpy as np
 from .utils import complex_form, real_form, polygon_edges, edge_lengths
-import gmsh
-from pygmsh.geo import Geometry
 from numpy.polynomial.chebyshev import chebgauss
 from numpy.polynomial.legendre import leggauss
 from scipy.interpolate import BSpline
@@ -85,9 +83,17 @@ def load_cubature_rules(path='cubature_rules/'):
             rules[kind] = {int(deg):arr for deg,arr in arrs.items()}
     return rules
 
-rules = load_cubature_rules()
+_rules = None
+
+def _get_rules():
+    global _rules
+    if _rules is None:
+        _rules = load_cubature_rules()
+    return _rules
+
 def get_cubature_rule(kind,deg):
     """Returns a cubature rule of a specified kind and degree in barycentric form"""
+    rules = _get_rules()
     try: arr = rules[kind][deg]
     except: raise ValueError(f"rule of kind '{kind}' and degree {deg} is not defined")
     bary_coords = arr[:,:3]
@@ -122,6 +128,8 @@ def tri_quad(mesh, kind='dunavant', deg=4):
 # mesh building
 def polygon_triangular_mesh(vertices, mesh_size, mesh_size_min=0.05, mesh_size_max=0.5):
     """Builds a triangular mesh on a polygon with pygmsh"""
+    import gmsh
+    from pygmsh.geo import Geometry
     vertices = np.asarray(vertices)
     if vertices.dtype == 'complex128':
         vertices = real_form(vertices)
@@ -178,7 +186,7 @@ def curvature_sampling(spline, t0, tf, pts_per_2pi=20):
 def spline_mesh_with_curvature(segments, pts_per_2pi=20, mesh_size_min=0.05, mesh_size_max=0.5):
     """
     Creates a mesh from a list of SciPy BSpline objects with curvature-adaptive sampling.
-    
+
     Parameters
     ----------
     splines : list of BSpline
@@ -189,12 +197,14 @@ def spline_mesh_with_curvature(segments, pts_per_2pi=20, mesh_size_min=0.05, mes
         Minimum mesh size (at high-curvature regions)
     mesh_size_max : float
         Maximum mesh size (in interior/low-curvature regions)
-    
+
     Returns
     -------
     mesh : meshio.Mesh
         Generated mesh
     """
+    import gmsh
+    from pygmsh.geo import Geometry
     # Sample each spline with curvature-adaptive spacing
     boundary_points = []
     boundary_curvatures = []
@@ -275,6 +285,8 @@ def quadrilateral_mesh(vertices,mesh_size):
     """Builds a quadrilateral mesh using pygmsh. NOTE: This function does not always
     give purely quadrilateral meshes. It is retained only for convenience, and should
     not be relied on in general."""
+    import gmsh
+    from pygmsh.geo import Geometry
     vertices = np.array(vertices)
     if vertices.shape[0] == 2:
         vertices = vertices.T
