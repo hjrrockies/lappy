@@ -9,7 +9,7 @@ from functools import cache, lru_cache
 import numpy as np
 import scipy.linalg as la
 import warnings
-from gsvd4py import gsvd
+from gsvd4py import gsvd, gsvdvals
 import matplotlib.pyplot as plt
 from scipy.optimize import bracket, minimize_scalar
 
@@ -56,9 +56,8 @@ def tensions(A1, A2, reg_type='svd', rtol=rtol_default):
     if reg_type:
         A1, A2 = regularize_pencil(A1, A2, reg_type, rtol)[:2]
 
-    # compute GSVD    
-    C, S = gsvd(A1, A2, compute_u=False, compute_v=False, compute_right=False)
-    c, s = np.diag(C), np.diag(S)
+    # compute generalized cosines and sines
+    c, s = gsvdvals(A1, A2)
     return np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))[::-1]
 
 def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_default):
@@ -68,17 +67,32 @@ def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_
         if reg_type == 'svd': Y1, s1 = M, v
         elif reg_type == 'qrp': R11, Pinv = M, invert_permutation(v)
 
-    # compute GSVD
-    C, S, X = gsvd(A1, A2, compute_u=False, compute_v=False)
-    c, s = np.diag(C), np.diag(S)
-    sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
-        
+    # compute GSVD (LAPACK-style)
+    D1, D2, R, Q = gsvd(A1, A2, mode='separate', compute_u=False, compute_v=False)[:-2]
+    c, s = np.max(D1, axis=0), np.max(D2, axis=0)
+    idx = np.lexsort((s,-c))[-mult:][::-1]
+
     # warn if multiplicity is deficient
-    if sigmas[-mult] > ttol:
-        warnings.warn(f"Eigenvalue may have deficient multiplicity ({sigmas[-mult]:.3e}>{ttol:.3e})")
+    if c[idx[-1]]/s[idx[-1]] > ttol:
+        warnings.warn(f"Eigenvalue may have deficient multiplicity ({c[idx[-1]]/s[idx[-1]]:.3e}>{ttol:.3e})")
 
     # solve for coefficient vectors
-    Xr = la.lstsq(X.T, np.eye(X.shape[1])[:,-mult:])[0][:,::-1]
+    Er = np.eye(R.shape[0])[:,idx]
+    Xr = Q[:,-R.shape[1]:]@la.solve_triangular(R, Er)
+
+    # old way using matlab-style gsvd
+    # # compute GSVD
+    # C, S, X = gsvd(A1, A2, mode='econ', compute_u=False, compute_v=False)
+    # c, s = np.max(C, axis=0), np.max(S, axis=0)
+    # q = len(c) # numerical rank of pencil
+    # sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
+        
+    # # warn if multiplicity is deficient
+    # if sigmas[q-mult] > ttol:
+    #     warnings.warn(f"Eigenvalue may have deficient multiplicity ({sigmas[q-mult]:.3e}>{ttol:.3e})")
+
+    # solve for coefficient vectors
+    # Xr = la.lstsq(X.T, np.eye(X.shape[1])[:,-mult:])[0][:,::-1]
     if not reg_type: coef = Xr
     else:
         if reg_type == 'svd': 
@@ -99,8 +113,8 @@ def nullspace_eval(A1, A2, mult=1, A_extra=None, reg_type='svd', rtol=rtol_defau
         A1, A2, _, _ = regularize_pencil(A1, A2, reg_type, rtol)
 
     # compute GSVD
-    U,V,C,S,_ = gsvd(A1, A2, mode='econ', compute_right=False)
-    c, s = np.diag(C), np.diag(S)
+    U, V, C, S = gsvd(A1, A2, mode='econ', compute_right=False)
+    c, s = np.sqrt(np.diag(C.T@C)), np.sqrt(np.diag(S.T@S))
     sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
 
     # warn if multiplicity is deficient

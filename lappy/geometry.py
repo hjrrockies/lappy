@@ -248,7 +248,7 @@ class ParametricSegment(BaseSegment):
         return self._dp_of_s(self.len*tau)*self.len
     
     def _T(self, t):
-        """Unit tanget vector in terms of t"""
+        """Unit tangent vector in terms of t"""
         t = np.asarray(t)
         num = self._dp(t)
         denom = self._speed(t)
@@ -268,8 +268,8 @@ class ParametricSegment(BaseSegment):
         return self._T_of_s(self.len*tau)
     
     def _N(self, t):
-        t = np.asarray(t)
         """Unit outward normal vector in terms of t"""
+        t = np.asarray(t)
         T = self._T(t)
         return T.imag - 1j*T.real
     
@@ -524,9 +524,9 @@ class SplineSegment(ParametricSegment):
         super().__init__(p, dp, t0, tf, bc, nsamp, val_simple, val_closed)
     
     @classmethod
-    def interp_from_pts(cls, pts, bc='dir', alpha=None, beta=None, spline_bc_type='natural', 
+    def interp_from_pts(cls, pts, bc='dir', spline_bc_type='natural',
                         nsamp=100, val_simple=False, val_closed=False):
-        """builds a Bspline segment to interpolate the given points"""
+        """Builds a BSpline segment interpolating the given points."""
         t = np.linspace(0, 1, len(pts))
         pts = real_form(pts)
         spline = make_interp_spline(t, pts, bc_type=spline_bc_type)
@@ -547,7 +547,22 @@ class SplineSegment(ParametricSegment):
         return self
 
 class MultiSegment:
-    """Class for simple planar curves composed of segments. Simplicity may be enforced, as well as closure"""
+    """An ordered collection of boundary segments forming a planar curve.
+
+    Segments are joined end-to-end and may optionally be validated as closed
+    (last endpoint matches first) or simple (no self-intersections).  The
+    class exposes aggregated geometry: arc length, corner detection, boundary
+    point placement, and minimum distance queries.
+
+    Parameters
+    ----------
+    segments : list of BaseSegment
+        Ordered list of curve segments.
+    val_closed : bool, optional
+        If True, raise ValueError unless the segments form a closed curve.
+    val_simple : bool, optional
+        If True, raise ValueError unless the segments form a simple curve.
+    """
     def __init__(self, segments, val_closed=False, val_simple=False):
         if not all(isinstance(seg, BaseSegment) for seg in segments):
             raise TypeError("segments must be an iterable of Segment objects")
@@ -717,7 +732,7 @@ class MultiSegment:
         tau = np.linspace(0, 1, nsamp)[:-1]
         pts = np.array([seg.p(tau) for seg in self.segments])
         dist = np.abs(pts-pt)
-        seg_idx = dist.max(axis=1).argmax()
+        seg_idx = dist.min(axis=1).argmin()
 
         return self.segments[seg_idx].dist(pt)
     
@@ -771,6 +786,18 @@ class MultiSegment:
 
 # domain class
 class Domain(BaseDomain):
+    """A planar domain whose boundary is a closed, simple MultiSegment.
+
+    Provides geometric properties (area, diameter, perimeter), interior/boundary
+    point placement, winding-number containment tests, and plotting utilities.
+    Subclasses (e.g. Polygon) may override ``_compute_area`` and
+    ``_compute_diameter`` with more efficient closed-form implementations.
+
+    Parameters
+    ----------
+    bdry : MultiSegment
+        Closed, simple boundary curve of the domain.
+    """
     def __init__(self, bdry):
         if not isinstance(bdry, MultiSegment):
             raise TypeError("'bdry' must be an instance of MultiSegment")
@@ -811,8 +838,7 @@ class Domain(BaseDomain):
         dP = np.array([seg.dp(tau) for seg in self.bdry.segments])
         # Green's formula
         I = ((P.real*dP.imag - P.imag*dP.real)@wts).sum()
-        self._area = np.abs(I)/2
-        return self._area
+        return np.abs(I)/2
     
     @property
     def diameter(self):
@@ -831,7 +857,7 @@ class Domain(BaseDomain):
         if tau_idx == 0:
             tau0 = tau[tau_idx]
             tau1 = tau[tau_idx+1]
-        elif tau_idx == n-1:
+        elif tau_idx == n-2:
             tau0 = tau[tau_idx-1]
             tau1 = tau[tau_idx]
         else:
@@ -870,8 +896,7 @@ class Domain(BaseDomain):
             return out, grad
 
         res = minimize(f, np.array([tau1,tau2]), jac=True, bounds=[(0,1),(0,1)], tol=1e-14)
-        self._diameter = float(-res.fun)
-        return self._diameter
+        return float(-res.fun)
     
     def _winding_number(self, pts, n=100):
         tau, wts = cached_leggauss(n)
@@ -916,7 +941,10 @@ class Domain(BaseDomain):
             ymin, ymax = pt.imag - self.diameter, pt.imag + self.diameter
             box_area = (xmax-xmin)*(ymax-ymin)
             pts = []
-            while len(pts) < npts_rand:
+            max_iters = 20
+            for _ in range(max_iters):
+                if len(pts) >= npts_rand:
+                    break
                 npts = int(np.ceil(npts_rand*oversamp*box_area/self.area))
                 x = (xmax-xmin)*np.random.rand(npts)+xmin
                 y = (ymax-ymin)*np.random.rand(npts)+ymin
@@ -924,8 +952,10 @@ class Domain(BaseDomain):
                 pts_new = z[self.contains(z, n_bdry)]
                 pts = np.concatenate((pts, pts_new))
                 oversamp = 2*oversamp
+            else:
+                raise RuntimeError("int_pts: rejection sampling failed to collect enough interior points")
             int_pts = pts[:npts_rand]
-            if weights: wts = self.area/npts_rand
+            wts = np.full(npts_rand, self.area / npts_rand)
 
         elif method == 'mesh':
             splinesegs = [seg.to_splineseg() for seg in self.bdry.segments]
@@ -975,12 +1005,10 @@ class Polygon(Domain):
         super().__init__(bdry)
 
     def _compute_area(self):
-        self._area = polygon_area(self.vertices)
-        return self._area
+        return polygon_area(self.vertices)
 
     def _compute_diameter(self):
-        self._diameter = polygon_diameter(self.vertices)
-        return self._diameter
+        return polygon_diameter(self.vertices)
 
     @property 
     def n_vertices(self):
@@ -1005,7 +1033,7 @@ class Polygon(Domain):
     def int_pts(self, method='random', weights=False, kind='dunavant', deg=4, mesh_size=1, npts_rand=50, oversamp=2):
         if method == 'random':
             pts = rand_interior_points(self.vertices, npts_rand, oversamp)
-            if weights: int_pts = PointSet(pts, self.area/npts_rand)
+            if weights: int_pts = PointSet(pts, np.full(npts_rand, self.area / npts_rand))
             else: int_pts = PointSet(pts)
 
         elif method == 'mesh':
