@@ -178,3 +178,45 @@ def weyl_est_poly(k, domain=None, *, area=None, perim=None, angles=None, bc_type
     k_flat = np.atleast_1d(k).ravel()
     result = np.array([_solve_one(ki) for ki in k_flat])
     return float(result[0]) if scalar else result.reshape(k.shape)
+
+
+def weyl_count_check(eigs, domain=None, *, area=None, perim=None, bc_type='dir'):
+    """
+    Pointwise deviation of eigenvalue count from the two-term Weyl asymptotic.
+
+    Given `eigs` assumed to be the first ``len(eigs)`` eigenvalues of the domain
+    in non-decreasing order, returns
+
+        result[i] = (i + 1) - weyl_count(eigs[i])
+
+    where ``i + 1`` is the exact cumulative count N(eigs[i]) implied by the
+    sorted ordering, and ``weyl_count(eigs[i])`` is the two-term Weyl estimate.
+
+    A positive value means the actual count exceeds the Weyl prediction
+    (eigenvalues sit below the asymptotic curve); a negative value means the
+    count lags the prediction.  The deviation is O(√λ) and oscillates around
+    zero for typical domains.
+
+    Parameters
+    ----------
+    eigs : array-like of float
+        Eigenvalues, assumed to be the first ``len(eigs)`` eigenvalues of the
+        domain in non-decreasing order.  Repeated values (multiplicities) are
+        handled naturally.
+    domain : Domain, optional
+        Domain object; area, perimeter, and bc_type are extracted automatically.
+    area : float, keyword-only
+        Area of the domain.  Used when ``domain`` is ``None``.
+    perim : float, keyword-only
+        Perimeter of the domain.  Used when ``domain`` is ``None``.
+    bc_type : {'dir', 'neu'}, keyword-only
+        Boundary condition type (default ``'dir'``).  Ignored when ``domain``
+        is supplied.
+
+    Returns
+    -------
+    numpy.ndarray, shape (len(eigs),)
+    """
+    eigs = np.asarray(eigs, dtype=float)
+    k = np.arange(1, len(eigs) + 1, dtype=float)
+    return k - weyl_count(eigs, domain, area=area, perim=perim, bc_type=bc_type)

@@ -155,3 +155,39 @@ def test_weyl_est_poly_roundtrip():
         lam_est = asymp.weyl_est_poly(k, dom)
         k_back = asymp.weyl_count_poly(lam_est, dom)
         assert np.isclose(k_back, k, rtol=1e-6)
+
+
+# ── weyl_count_check ──────────────────────────────────────────────────────────
+
+class TestWeylCountCheck:
+    def test_shape(self):
+        eigs = np.array([10.0, 20.0, 30.0])
+        result = asymp.weyl_count_check(eigs, area=1.0, perim=4.0)
+        assert result.shape == (3,)
+
+    def test_formula_direct(self):
+        eigs = np.array([10.0, 20.0, 40.0, 80.0])
+        A, P = 1.0, 4.0
+        result = asymp.weyl_count_check(eigs, area=A, perim=P)
+        expected = np.arange(1, 5) - asymp.weyl_count(eigs, area=A, perim=P)
+        assert np.allclose(result, expected)
+
+    def test_domain_vs_scalar(self, unit_square_domain):
+        eigs = np.array([10.0, 20.0, 30.0, 40.0])
+        r1 = asymp.weyl_count_check(eigs, unit_square_domain)
+        r2 = asymp.weyl_count_check(eigs, area=1.0, perim=4.0, bc_type='dir')
+        assert np.allclose(r1, r2)
+
+    def test_neumann(self):
+        eigs = np.array([5.0, 10.0, 15.0])
+        r_dir = asymp.weyl_count_check(eigs, area=1.0, perim=4.0, bc_type='dir')
+        r_neu = asymp.weyl_count_check(eigs, area=1.0, perim=4.0, bc_type='neu')
+        assert np.all(r_neu < r_dir)
+
+    def test_integer_eigs(self):
+        result = asymp.weyl_count_check([10, 20, 30], area=1.0, perim=4.0)
+        assert result.dtype == float
+
+    def test_missing_args_raises(self):
+        with pytest.raises((TypeError, ValueError)):
+            asymp.weyl_count_check([10.0, 20.0])

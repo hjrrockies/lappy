@@ -198,7 +198,7 @@ def invert_permutation(p):
     s[p] = np.arange(p.size)
     return s
 
-from .exact import rect_eig, rect_eigs_k, rect_eig_grad
+from .exact import rect_eig, rect_eigs, rect_eig_grad
 
 def loss_plot(L,H,loss,log=True,ax=None):
     import matplotlib.pyplot as plt
@@ -232,7 +232,7 @@ def rect_loss_std(L,H,eigs_true,weights=1,jac=False):
     target eigenvalues. Can use weights."""
     weights = np.asarray(weights).flatten()
     k = len(eigs_true)
-    eigs,m,n = rect_eigs_k(k,L,H,ret_mn=True)
+    eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
     pweights = weights**(0.5)
     out = la.norm(pweights*(eigs-eigs_true),axis=-1)**2
     if jac:
@@ -248,7 +248,7 @@ def rect_loss_reciprocal(L,H,eigs_true,weights=1):
     target eigenvalues in reciprocal form. Can use weights."""
     weights = np.asarray(weights).flatten()
     k = len(eigs_true)
-    eigs,m,n = rect_eigs_k(k,L,H,ret_mn=True)
+    eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
     pweights = weights**(0.5)
     out = la.norm(pweights*(1/eigs-1/eigs_true),axis=-1)**2
     jac = False
@@ -267,7 +267,7 @@ def rect_loss_outerlog(L,H,eigs_true,weights=1,eps=1e-200,jac=False):
     k = len(eigs_true)
     if len(weights) == 1:
         weights = weights*np.ones(k)
-    eigs,m,n = rect_eigs_k(k,L,H,ret_mn=True)
+    eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
     eigsT = eigs.T
     eigs_trueT = eigs_true.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
     weightsT = weights.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))

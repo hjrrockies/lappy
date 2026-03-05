@@ -378,8 +378,8 @@ class MPSEigensolver(BaseEigensolver):
                        ltol=None, minsolver='parabolic', verbose=0):
         """solves for all eigenvalues in [a,b] using MPS"""
         reg_type, rtol, ttol, ltol = self._get_params(reg_type, rtol, ttol, ltol)
-        return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts, 
-                              ltol, ttol, minsolver, verbose)
+        return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
+                              ltol, ttol, minsolver, verbose=verbose)
     
     def plot_tensions(self, low, high, nlam, n_angle=1, ax=None, mps_kwargs={}, **plot_kwargs):
         import matplotlib.pyplot as plt

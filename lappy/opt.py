@@ -219,6 +219,7 @@ def minimize_on_bracket(f, bracket, xtol, minsolver='parabolic', verbose=0):
             fevals += fe
     else:
         minimizer = x[1]
+        fevals = 0
     return minimizer, fevals
 
 def gridmin(f, x, y, xtol=1e-12, shrink=2, nrecurse=0, para_kwargs={}, verbose=0):

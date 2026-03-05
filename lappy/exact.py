@@ -1,6 +1,8 @@
 """lappy.exact — closed-form Laplacian eigenvalue formulas for special geometries."""
 
 import numpy as np
+from scipy.special import jv
+from scipy.optimize import brentq
 
 
 def rect_eig(m, n, L, H):
@@ -12,7 +14,7 @@ def rect_eig(m, n, L, H):
     return m**2 * np.pi**2 / L**2 + n**2 * np.pi**2 / H**2
 
 
-def rect_eigs_k(k, L, H, bc_type='dir', ret_mn=False):
+def rect_eigs(k, L, H, bc_type='dir', ret_mn=False):
     """First k eigenvalues of an L×H rectangle, sorted ascending.
 
     Parameters
@@ -143,3 +145,101 @@ def rect_eig_mult_mn(m, n, L, H, bc_type='dir'):
     return rect_eig_mult(
         rect_eig(m, n, L, H), L, H, bc_type=bc_type, maxind=10 * max(m, n)
     )
+
+
+# ── Shared infrastructure ─────────────────────────────────────────────────────
+
+def _take_k_from_grid(eig_fn, m_vals, n_vals, k):
+    """Sort eigenvalues from an (m, n) index grid, filter Nones, return first k."""
+    raw = [eig_fn(int(m), int(n)) for m in m_vals for n in n_vals]
+    vals = np.array([v for v in raw if v is not None], dtype=float)
+    if len(vals) < k:
+        raise ValueError(
+            f"Grid produced only {len(vals)} eigenvalues; need {k}. "
+            "Increase index range."
+        )
+    return np.sort(vals)[:k]
+
+
+def _bessel_zero(nu, n):
+    """n-th positive zero of J_nu, located by scanning for sign changes.
+
+    Scans J_nu on a coarse grid (step π/4) to find the n-th sign change,
+    then refines with brentq. Correct for all nu ≥ 0, n ≥ 1.
+    """
+    x_max = (n + nu / 2 + 3) * np.pi
+    step = np.pi / 4
+    xs = np.arange(0.5, x_max + step, step)
+    ys = jv(nu, xs)
+    crossings = np.where(ys[:-1] * ys[1:] < 0)[0]
+    if len(crossings) < n:
+        raise ValueError(f"Could not find {n}-th zero of J_{nu}")
+    idx = crossings[n - 1]
+    return brentq(lambda x: jv(nu, x), xs[idx], xs[idx + 1])
+
+
+# ── Isosceles right triangle (legs a, Dirichlet) ──────────────────────────────
+
+def tri_isosc_eig(m, n, a):
+    """Exact eigenvalue for an isosceles right triangle with legs a.
+
+    Valid only for m > n ≥ 1 (strict inequality avoids the trivially zero
+    antisymmetric combination). Returns None for invalid indices.
+
+    Formula: λ_{m,n} = π²(m² + n²) / a²
+    """
+    if n < 1 or m <= n:
+        return None
+    return np.pi**2 * (m**2 + n**2) / a**2
+
+
+def tri_isosc_eigs(k, a):
+    """First k Dirichlet eigenvalues of an isosceles right triangle with legs a.
+
+    Parameters
+    ----------
+    k : int
+        Number of eigenvalues to return.
+    a : float
+        Leg length.
+    """
+    # Area = a²/2 → Weyl: λ_k ≈ 4πk/a²  → m²+n² ≲ 4k/π
+    max_idx = int(np.ceil(np.sqrt(6 * k / np.pi))) + 4
+    m_vals = range(2, max_idx + 1)   # m ≥ 2 so that m > n ≥ 1 is possible
+    n_vals = range(1, max_idx)
+    return _take_k_from_grid(lambda m, n: tri_isosc_eig(m, n, a), m_vals, n_vals, k)
+
+
+# ── Circular sector (radius R, opening angle alpha, Dirichlet) ────────────────
+
+def sector_eig(m, n, R, alpha):
+    """Exact eigenvalue for a circular sector of radius R and opening angle alpha.
+
+    Indices: m ≥ 1 (angular mode), n ≥ 1 (radial mode). All modes have
+    multiplicity 1 (angular factor is sin(mπθ/alpha)).
+
+    Formula: λ_{m,n} = (j_{mπ/alpha, n} / R)²
+    where j_{nu, n} is the n-th positive zero of J_nu.
+    """
+    nu = m * np.pi / alpha
+    return _bessel_zero(nu, n) ** 2 / R**2
+
+
+def sector_eigs(k, R, alpha):
+    """First k Dirichlet eigenvalues of a circular sector.
+
+    Parameters
+    ----------
+    k : int
+        Number of eigenvalues to return.
+    R : float
+        Radius.
+    alpha : float
+        Opening angle in radians (0 < alpha ≤ 2π).
+    """
+    # Area = alpha*R²/2 → Weyl: λ_k ≈ 4πk/(alpha*R²)
+    # j_{nu,n} ≈ (n + nu/2)*π → rough bound: n + m*π/(2*alpha) ≲ sqrt(λ_k)*R/π
+    max_idx = int(np.ceil(2 * np.sqrt(k) + 4))
+    m_vals = range(1, max_idx + 1)
+    n_vals = range(1, max_idx + 1)
+    return _take_k_from_grid(lambda m, n: sector_eig(m, n, R, alpha), m_vals, n_vals, k)
