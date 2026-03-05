@@ -3,6 +3,10 @@ import pytest
 import numpy as np
 from lappy import PointSet, Domain, Polygon, ParametricSegment, LineSegment, MultiSegment
 from lappy.geometry import SplineSegment
+from lappy.geometry import (
+    rect, circle, L_shape, GWW1, GWW2, H_shape, reg_ngon,
+    circle_sector, iso_right_tri, iso_tri, mushroom, cut_square, chevron,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +174,10 @@ class TestLineSegment:
         assert np.isclose(ss.p0, 0+0j, atol=1e-10)
         assert np.isclose(ss.pf, 1+0j, atol=1e-10)
 
+    def test_add_lineseg(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        assert isinstance(seg1 + seg2, MultiSegment)
 
 # ---------------------------------------------------------------------------
 # TestParametricSegment
@@ -319,16 +327,16 @@ class TestMultiSegment:
     def test_dist_from_corner(self, unit_square_domain):
         assert np.isclose(unit_square_domain.bdry.dist(0+0j), 0.0, atol=1e-5)
 
+    def test_bcs(self, unit_square_domain):
+        bcs = unit_square_domain.bdry.bcs
+        assert len(bcs) == 4
+        assert all(bc == 0.0 for bc in bcs)  # 'dir' → 0.0
+
     def test_validate_closed_raises(self):
         seg1 = LineSegment(0, 1)
         seg2 = LineSegment(1, 1+1j)
         with pytest.raises(ValueError):
             MultiSegment([seg1, seg2], val_closed=True)
-
-    def test_bcs(self, unit_square_domain):
-        bcs = unit_square_domain.bdry.bcs
-        assert len(bcs) == 4
-        assert all(bc == 0.0 for bc in bcs)  # 'dir' → 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -503,3 +511,371 @@ class TestPolygon:
     def test_inradius_right_triangle(self, right_triangle):
         # 3-4-5 triangle: r = Area / semi_perimeter = 6 / 6 = 1.0
         assert np.isclose(right_triangle.inradius, 1.0, rtol=1e-8)
+
+    def test_translate_polygon(self):
+        p = Polygon([0, 1, 1+1j, 1j])
+        shifted = p + (3+4j)
+        assert isinstance(shifted, Polygon)
+        assert np.isclose(shifted.area, p.area)
+
+    def test_scale_polygon(self):
+        p = Polygon([0, 1, 1+1j, 1j])
+        scaled = p * 2
+        assert isinstance(scaled, Polygon)
+        assert np.isclose(scaled.area, 4 * p.area)
+
+    def test_radd_polygon(self):
+        p = Polygon([0, 1, 1+1j, 1j])
+        shifted1 = p + (3+4j)
+        shifted2 = (3+4j) + p
+        assert np.isclose(shifted1.area, shifted2.area)
+        assert np.allclose(shifted1.vertices, shifted2.vertices)
+
+    def test_rmul_polygon(self):
+        p = Polygon([0, 1, 1+1j, 1j])
+        scaled1 = p * 2
+        scaled2 = 2 * p
+        assert isinstance(scaled2, Polygon)
+        assert np.allclose(scaled1.vertices, scaled2.vertices)
+
+
+# ---------------------------------------------------------------------------
+# New TestMultiSegment tests
+# ---------------------------------------------------------------------------
+
+class TestMultiSegmentNew:
+    # --- contiguity validation ---
+
+    def test_contiguous_segments_ok(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])  # should not raise
+        assert len(ms.segments) == 2
+
+    def test_non_contiguous_raises(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(2, 2+1j)  # gap: seg1 ends at 1, seg2 starts at 2
+        with pytest.raises(ValueError):
+            MultiSegment([seg1, seg2])
+
+    def test_single_segment_is_contiguous(self):
+        seg = LineSegment(0, 1)
+        ms = MultiSegment([seg])  # single segment always ok
+        assert len(ms.segments) == 1
+
+    def test_val_contiguous_false_skips_check(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(2, 2+1j)  # gap
+        ms = MultiSegment([seg1, seg2], val_contiguous=False)  # should not raise
+        assert len(ms.segments) == 2
+
+    # --- flattening ---
+
+    def test_flatten_multisegment_input(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        seg3 = LineSegment(1+1j, 1j)
+        inner = MultiSegment([seg2, seg3])
+        ms = MultiSegment([seg1, inner])
+        assert len(ms.segments) == 3
+
+    def test_flatten_preserves_order(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        seg3 = LineSegment(1+1j, 1j)
+        inner = MultiSegment([seg2, seg3])
+        ms = MultiSegment([seg1, inner])
+        assert np.isclose(ms.segments[0].p0, 0)
+        assert np.isclose(ms.segments[1].p0, 1)
+        assert np.isclose(ms.segments[2].p0, 1+1j)
+
+    def test_nested_multisegment_flattening(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        seg3 = LineSegment(1+1j, 1j)
+        seg4 = LineSegment(1j, 0)
+        inner = MultiSegment([seg2, seg3])
+        outer = MultiSegment([seg1, inner])
+        ms = MultiSegment([outer, seg4])
+        assert len(ms.segments) == 4
+
+    # --- __add__ join with BaseSegment ---
+
+    def test_add_lineseg_to_multiseg(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1])
+        result = ms + seg2
+        assert isinstance(result, MultiSegment)
+        assert len(result.segments) == 2
+
+    def test_add_non_contiguous_raises(self):
+        seg1 = LineSegment(0, 1)
+        ms = MultiSegment([seg1])
+        seg2 = LineSegment(5, 5+1j)  # gap
+        with pytest.raises(ValueError):
+            ms + seg2
+
+    # --- __add__ / __radd__ translation with scalar ---
+
+    def test_translate_multiseg(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])
+        shift = 1+2j
+        result = ms + shift
+        assert np.isclose(result.segments[0].p0, ms.segments[0].p0 + shift)
+        assert np.isclose(result.segments[0].pf, ms.segments[0].pf + shift)
+
+    def test_translate_preserves_contiguity(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])
+        result = ms + (3+4j)
+        # result is contiguous if pf of seg[0] == p0 of seg[1]
+        assert np.isclose(result.segments[0].pf, result.segments[1].p0)
+
+    def test_radd_scalar_multiseg(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])
+        shift = 1+2j
+        result1 = ms + shift
+        result2 = shift + ms
+        assert np.isclose(result1.segments[0].p0, result2.segments[0].p0)
+
+    # --- __mul__ / __rmul__ scaling with scalar ---
+
+    def test_scale_multiseg(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])
+        result = ms * 2
+        assert np.isclose(result.len, 2 * ms.len)
+
+    def test_rmul_scalar_multiseg(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])
+        result1 = ms * 2
+        result2 = 2 * ms
+        assert np.isclose(result1.segments[0].p0, result2.segments[0].p0)
+        assert np.isclose(result1.segments[0].pf, result2.segments[0].pf)
+
+    def test_scale_preserves_contiguity(self):
+        seg1 = LineSegment(0, 1)
+        seg2 = LineSegment(1, 1+1j)
+        ms = MultiSegment([seg1, seg2])
+        result = ms * 3
+        assert np.isclose(result.segments[0].pf, result.segments[1].p0)
+
+    # --- error cases ---
+
+    def test_add_invalid_type_raises(self):
+        seg = LineSegment(0, 1)
+        ms = MultiSegment([seg])
+        with pytest.raises(TypeError):
+            ms + "string"
+
+    def test_mul_non_scalar_raises(self):
+        seg = LineSegment(0, 1)
+        ms = MultiSegment([seg])
+        with pytest.raises(ValueError):
+            ms * np.array([1, 2])
+
+
+# ---------------------------------------------------------------------------
+# New TestLineSegment tests
+# ---------------------------------------------------------------------------
+
+class TestLineSegmentNew:
+    def test_mul_scalar(self):
+        seg = LineSegment(0, 1+1j)
+        s = seg * 2
+        assert np.isclose(s.p0, 0)
+        assert np.isclose(s.pf, 2+2j)
+
+    def test_rmul_scalar(self):
+        seg = LineSegment(0, 1+1j)
+        s1 = seg * 2
+        s2 = 2 * seg
+        assert np.isclose(s1.p0, s2.p0)
+        assert np.isclose(s1.pf, s2.pf)
+
+    def test_translate_scalar(self):
+        seg = LineSegment(0, 1)
+        s = seg + (1+2j)
+        assert np.isclose(s.p0, 1+2j)
+        assert np.isclose(s.pf, 2+2j)
+
+    def test_mul_non_scalar_raises(self):
+        seg = LineSegment(0, 1)
+        with pytest.raises(ValueError):
+            seg * np.array([1, 2])
+
+
+# ---------------------------------------------------------------------------
+# New TestParametricSegment tests
+# ---------------------------------------------------------------------------
+
+class TestParametricSegmentNew:
+    def test_mul_scalar_scales_length(self, unit_circle_seg):
+        scaled = unit_circle_seg * 3
+        assert np.isclose(scaled.len, 3 * unit_circle_seg.len, rtol=1e-4)
+
+    def test_rmul_scalar(self, unit_circle_seg):
+        scaled1 = unit_circle_seg * 3
+        scaled2 = 3 * unit_circle_seg
+        assert np.isclose(scaled1.len, scaled2.len, rtol=1e-4)
+
+    def test_translate_scalar(self, unit_circle_seg):
+        shift = 1+2j
+        shifted = unit_circle_seg + shift
+        assert np.isclose(shifted.p0, unit_circle_seg.p0 + shift, atol=1e-6)
+
+    def test_translate_preserves_derivative(self, unit_circle_seg):
+        shift = 1+2j
+        shifted = unit_circle_seg + shift
+        tau = np.linspace(0.1, 0.9, 5)
+        assert np.allclose(shifted.dp(tau), unit_circle_seg.dp(tau), rtol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# New TestDomain tests
+# ---------------------------------------------------------------------------
+
+class TestDomainNew:
+    def test_translate_domain(self, rect_domain):
+        shifted = rect_domain + (1+2j)
+        assert np.isclose(shifted.area, rect_domain.area, rtol=1e-5)
+
+    def test_scale_domain(self, rect_domain):
+        scaled = rect_domain * 3
+        assert np.isclose(scaled.area, 9 * rect_domain.area, rtol=1e-5)
+
+    def test_radd_domain(self, rect_domain):
+        shift = 1+2j
+        r1 = rect_domain + shift
+        r2 = shift + rect_domain
+        assert np.isclose(r1.area, r2.area, rtol=1e-5)
+
+    def test_rmul_domain(self, rect_domain):
+        r1 = rect_domain * 3
+        r2 = 3 * rect_domain
+        assert np.isclose(r1.area, r2.area, rtol=1e-5)
+
+    def test_translate_non_scalar_raises(self, rect_domain):
+        with pytest.raises(TypeError):
+            rect_domain + np.array([1, 2])
+
+
+# ---------------------------------------------------------------------------
+# TestFactoryFunctions
+# ---------------------------------------------------------------------------
+
+class TestFactoryFunctions:
+    # --- basic construction ---
+
+    def test_rect_is_polygon(self):
+        assert isinstance(rect(2, 1), Polygon)
+
+    def test_circle_is_domain(self):
+        assert isinstance(circle(), Domain)
+
+    def test_L_shape_is_domain(self):
+        assert isinstance(L_shape(), Polygon)
+
+    def test_GWW1_is_domain(self):
+        assert isinstance(GWW1(), Polygon)
+
+    def test_GWW2_is_domain(self):
+        assert isinstance(GWW2(), Polygon)
+
+    def test_H_shape_is_domain(self):
+        assert isinstance(H_shape(), Polygon)
+
+    def test_reg_ngon_is_domain(self):
+        assert isinstance(reg_ngon(6), Polygon)
+
+    def test_circle_sector_is_domain(self):
+        assert isinstance(circle_sector(), Domain)
+
+    def test_iso_right_tri_is_domain(self):
+        assert isinstance(iso_right_tri(), Polygon)
+
+    def test_iso_tri_is_domain(self):
+        assert isinstance(iso_tri(), Polygon)
+
+    def test_mushroom_is_domain(self):
+        assert isinstance(mushroom(), Domain)
+
+    def test_cut_square_is_domain(self):
+        assert isinstance(cut_square(), Domain)
+
+    def test_chevron_is_domain(self):
+        assert isinstance(chevron(), Polygon)
+
+    # --- area spot-checks ---
+
+    def test_rect_area(self):
+        assert np.isclose(rect(2, 1).area, 2.0)
+
+    def test_circle_area(self):
+        assert np.isclose(circle(1).area, np.pi, rtol=1e-4)
+
+    def test_reg_ngon_hexagon_area(self):
+        # Regular hexagon with circumradius 1: area = 3*sqrt(3)/2
+        assert np.isclose(reg_ngon(6).area, 3*np.sqrt(3)/2, rtol=1e-6)
+
+    # --- boundary contiguity ---
+
+    def test_cut_square_contiguous(self):
+        ms = cut_square().bdry
+        for i in range(len(ms.segments) - 1):
+            assert np.isclose(ms.segments[i].pf, ms.segments[i+1].p0, atol=1e-12)
+
+    def test_mushroom_contiguous(self):
+        ms = mushroom().bdry
+        for i in range(len(ms.segments) - 1):
+            assert np.isclose(ms.segments[i].pf, ms.segments[i+1].p0, atol=1e-12)
+
+    def test_circle_sector_contiguous(self):
+        ms = circle_sector().bdry
+        for i in range(len(ms.segments) - 1):
+            assert np.isclose(ms.segments[i].pf, ms.segments[i+1].p0, atol=1e-12)
+
+    # --- parameter validation ---
+
+    def test_chevron_h1_ge_h2_raises(self):
+        with pytest.raises(ValueError):
+            chevron(2, 1)
+
+    def test_chevron_negative_raises(self):
+        with pytest.raises(ValueError):
+            chevron(-1, 1)
+
+    def test_cut_square_r_out_of_range_raises(self):
+        with pytest.raises(ValueError):
+            cut_square(0)
+        with pytest.raises(ValueError):
+            cut_square(1)
+
+    def test_mushroom_b_ge_r_raises(self):
+        with pytest.raises(ValueError):
+            mushroom(r=0.5, b=1)
+
+    def test_circle_sector_theta_out_of_range_raises(self):
+        with pytest.raises(ValueError):
+            circle_sector(theta=0)
+        with pytest.raises(ValueError):
+            circle_sector(theta=2*np.pi)
+
+    # --- BC propagation ---
+
+    def test_rect_neumann_bc(self):
+        r = rect(2, 1, bc='neu')
+        assert all(seg.bc == 1.0 for seg in r.bdry.segments)
+
+    def test_circle_neumann_bc(self):
+        c = circle(bc='neu')
+        assert all(seg.bc == 1.0 for seg in c.bdry.segments)

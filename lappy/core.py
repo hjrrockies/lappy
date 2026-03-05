@@ -45,11 +45,19 @@ class BaseEigensolver(ABC):
 # segment base class
 class BaseSegment(ABC):
     def __init__(self, bc='dir'):
-        if bc == 'dir': bc = 0.0
-        elif bc == 'neu': bc = 1.0
-        if not (np.isreal(bc) and np.isscalar(bc)):
-            raise ValueError("boundary condition must be 'dir', 'neu', or a real scalar")
         self.bc = bc
+
+    @property
+    def bc(self):
+        return self._bc
+    
+    @bc.setter
+    def bc(self, val):
+        if val == 'dir': val = 0.0
+        elif val == 'neu': val = 1.0
+        if not (np.isreal(val) and np.isscalar(val)):
+            raise ValueError("boundary condition must be 'dir', 'neu', or a real scalar")
+        self._bc = val
 
     @property
     def bc_type(self):

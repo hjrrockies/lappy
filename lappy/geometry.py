@@ -7,6 +7,7 @@ from .opt import find_all_roots
 from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh, 
                    tri_quad, cached_leggauss, cached_chebgauss)
 
+from typing import Callable
 import numpy as np
 from scipy.integrate import cumulative_simpson, quad
 from scipy.interpolate import make_interp_spline, BSpline
@@ -103,7 +104,7 @@ class ParametricSegment(BaseSegment):
     """Class for boundary segments (lines, curves) given in terms of a differentiable function p(t). 
     Handles boundary point placement, boundary tangents and normals.
     All segments are automatically re-parameterized by tau in [0,1]"""
-    def __init__(self, p, dp, t0, tf, bc='dir', nsamp=100, val_simple=True, val_closed=False):
+    def __init__(self, p, dp, t0, tf, bc='dir', nsamp=100, val_simple=False, val_closed=False):
         super().__init__(bc)
         if tf <= t0:
             raise ValueError(f"tf ({tf}) must be greater than t0 ({t0})")
@@ -116,9 +117,10 @@ class ParametricSegment(BaseSegment):
         self._p = self._complex_vectorize(p, t0, tf)
         self._dp = self._complex_vectorize(dp, t0, tf)
         self._len = None
+        self._speed = lambda t: np.abs(self._dp(t))
+        self.nsamp = nsamp
 
         # reparameterize
-        self._speed = lambda t: np.abs(self._dp(t))
         self._reparameterize(nsamp)
 
         # validation for simple and closed curve properties
@@ -200,34 +202,44 @@ class ParametricSegment(BaseSegment):
         return self._T(self.tf)
 
     @staticmethod
-    def _complex_vectorize(f, t0, tf):
-        """Puts the function f in a vectorized form with complex-valued outputs"""
-        out = f(t0)
-        is_complex = np.isscalar(out) and np.iscomplexobj(out)
-        is_real_pair = (isinstance(out, (list, tuple, np.ndarray)) and 
-                    len(out) == 2)
+    def _complex_vectorize(f: Callable, t0, tf) -> Callable:
+        """
+        Convert a scalar-argument function f to a vectorized complex-valued function.
+        
+        Accepts f that returns any of:
+        - a complex scalar
+        - a real scalar (passed through as-is)
+        - a tuple/list/array of two reals (interpreted as real + imag)
+        
+        Returns a function that accepts scalar or array input and always returns
+        a complex numpy array (or complex scalar for scalar input).
+        """
+        def _to_complex(val):
+            val = np.asarray(val)
+            if val.shape == (2,):
+                return val[0] + 1j * val[1]
+            scalar = val.item()
+            return complex(scalar)
 
-        if (not is_complex) and (not is_real_pair):
-            raise ValueError("f must have complex-scalar outputs or length-2 real outputs")
+        def wrapped(t):
+            t = np.asarray(t)
+            scalar_input = t.ndim == 0
+            t = np.atleast_1d(t)
+            result = np.array([_to_complex(f(ti)) for ti in t], dtype=complex)
+            return result[0] if scalar_input else result
 
-        t_test = np.linspace(t0, tf, 3)
+        # Probe f to check if it's already vectorized and returns complex
         try:
-            out = f(t_test)
-            if out.shape == (2,3): f_vec = lambda t: f(t).T
-            else: f_vec = f
-        except:
-            if is_complex:
-                f_vec = np.vectorize(f, signature="() -> ()")
-            elif is_real_pair:
-                f_vec = np.vectorize(f, signature="() -> (2)")
+            probe = np.linspace(t0, tf, 3)
+            raw = f(probe)
+            raw = np.asarray(raw)
+            if raw.shape == probe.shape and np.iscomplexobj(raw):
+                # Already vectorized and complex — return as-is
+                return f
+        except Exception:
+            pass  # Fall through to wrapping
 
-        if is_real_pair:
-            def f_cvec(t):
-                arr = f_vec(t)
-                return arr[...,0] + 1j*arr[...,1]
-        elif is_complex:
-            f_cvec = f_vec
-        return f_cvec
+        return wrapped
     
     def _reparameterize(self, nsamp):
         self.nsamp = nsamp
@@ -373,6 +385,26 @@ class ParametricSegment(BaseSegment):
 
         res = minimize_scalar(f, bounds=(tau0, tau1), options={'xatol':1e-14})
         return res.fun
+    
+    def __mul__(self, other):
+        if not np.isscalar(other):
+            raise ValueError("non-segment operand must be a scalar")
+        p_new = lambda t: other*self._p(t)
+        dp_new = lambda t: other*self._dp(t)
+        return ParametricSegment(p_new, dp_new, self.t0, self.tf, self.bc, self.nsamp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __add__(self, other):
+        if isinstance(other, BaseSegment):
+            return MultiSegment([self, other])
+        elif np.isscalar(other):
+            p_new = lambda t: self._p(t) + other
+            dp_new = self._dp
+            return ParametricSegment(p_new, dp_new, self.t0, self.tf, self.bc, self.nsamp)
+        else:
+            raise TypeError("__add__ with Segment must be another Segment or complex scalar")
             
 class LineSegment(BaseSegment):
     """Class for straight line segments.
@@ -383,12 +415,12 @@ class LineSegment(BaseSegment):
     b : complex
         end point of segment
     """
-    def __init__(self, a, b, bc='dir', nsamp=100):
-        if np.isclose(a,b):
-            raise ValueError("'a' and 'b' are too close together to form a line segment")
+    def __init__(self, p0, pf, bc='dir', nsamp=100):
+        if np.isclose(p0, pf):
+            raise ValueError("'p0' and 'pf' are too close together to form a line segment")
         super().__init__(bc)
-        self._p0 = complex_form(a)
-        self._pf = complex_form(b)
+        self._p0 = complex_form(p0)
+        self._pf = complex_form(pf)
         self._len = np.abs(self._pf-self._p0)
         self._tangent = (self._pf-self._p0)/self._len
         self._normal = self._tangent.imag - 1j*self._tangent.real
@@ -514,6 +546,22 @@ class LineSegment(BaseSegment):
         d = self._pf - self._p0
         t = float(np.clip(((pt - self._p0) * d.conjugate()).real / (self._len ** 2), 0.0, 1.0))
         return float(np.abs(pt - (self._p0 + t * d)))
+    
+    def __mul__(self, other):
+        if not np.isscalar(other):
+            raise ValueError("non-segment operand must be a scalar")
+        return LineSegment(other*self.p0, other*self.pf, self.bc, self.nsamp)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    
+    def __add__(self, other):
+        if isinstance(other, BaseSegment):
+            return MultiSegment([self, other])
+        elif np.isscalar(other):
+            return LineSegment(self.p0 + other, self.pf + other, self.bc, self.nsamp)
+        else:
+            raise TypeError("__add__ with Segment must be another Segment or complex scalar")
 
 class SplineSegment(ParametricSegment):
     """Segments with spline boundary"""
@@ -536,7 +584,6 @@ class SplineSegment(ParametricSegment):
                         nsamp=100, val_simple=False, val_closed=False):
         """Builds a BSpline segment interpolating the given points."""
         t = np.linspace(0, 1, len(pts))
-        pts = real_form(pts)
         spline = make_interp_spline(t, pts, bc_type=spline_bc_type)
         return cls(spline, 0, 1, bc, nsamp, val_simple, val_closed)
     
@@ -553,40 +600,64 @@ class SplineSegment(ParametricSegment):
     
     def to_splineseg(self):
         return self
+    
+    def __mul__(self, other):
+        if not np.isscalar(other):
+            raise ValueError("non-segment operand must be a scalar")
+        else:
+            spline = self.spline
+            newspline = BSpline(spline.t, other*spline.c, spline.k, spline.extrapolate, spline.axis)
+            return SplineSegment(newspline, self.t0, self.tf, self.bc, self.nsamp)
+        
+    def __add__(self, other):
+        if np.isscalar(other):
+            spline = self.spline
+            newspline = BSpline(spline.t, spline.c + other, spline.k, spline.extrapolate, spline.axis)
+            return SplineSegment(newspline, self.t0, self.tf, self.bc, self.nsamp)
+        else:
+            return super().__add__(other)
 
 class MultiSegment:
-    """An ordered collection of boundary segments forming a planar curve.
+    """An ordered collection of segments forming a planar curve.
 
     Segments are joined end-to-end and may optionally be validated as closed
     (last endpoint matches first) or simple (no self-intersections).  The
     class exposes aggregated geometry: arc length, corner detection, boundary
     point placement, and minimum distance queries.
 
+    Each segment may have different boundary conditions.
+
     Parameters
     ----------
     segments : list of BaseSegment
         Ordered list of curve segments.
-    val_closed : bool, optional
-        If True, raise ValueError unless the segments form a closed curve.
     val_simple : bool, optional
         If True, raise ValueError unless the segments form a simple curve.
+    val_closed : bool, optional
+        If True, raise ValueError unless the segments form a closed curve.
     """
-    def __init__(self, segments, val_closed=False, val_simple=False):
-        if not all(isinstance(seg, BaseSegment) for seg in segments):
-            raise TypeError("segments must be an iterable of Segment objects")
-        if val_closed:
-            if not self._validate_closed(segments):
-                raise ValueError("segments must form a closed curve")
-            else: self._is_closed = True
-        else:
-            self._is_closed = None
+    def __init__(self, segments, val_simple=True, val_closed=False, val_contiguous=True):
+        if not all(isinstance(seg, BaseSegment) or isinstance(seg, MultiSegment) for seg in segments):
+            raise TypeError("segments must be an iterable of Segment or MultiSegment objects")
+        self._is_simple = None
+        self._is_closed = None
+        self._is_contiguous = None
+        self.segments = []
+        for seg in segments:
+            if isinstance(seg, BaseSegment):
+                self.segments.append(seg)
+            elif isinstance(seg, MultiSegment):
+                self.segments += seg.segments
         if val_simple:
-            if not self._validate_simple(segments):
+            if not self.is_simple:
                 raise ValueError("segments must form a simple curve")
-            else: self._is_simple = True
-        else:
-            self._is_simple = None
-        self.segments = segments
+        if val_closed:
+            if not self.is_closed:
+                raise ValueError("segments must form a closed curve")
+        if val_contiguous:
+            if not self.is_contiguous:
+                raise ValueError("segments must be contiguous")
+
         self._len = None
         self._corners = None
         self._corner_idx = None
@@ -602,21 +673,26 @@ class MultiSegment:
         segments = [LineSegment(vertices[i], vertices[i+1], bc, nsamp) for i in range(len(vertices)-1)]
         if make_closed:
             segments += [LineSegment(vertices[-1], vertices[0], bc, nsamp)]
-        multiseg = cls(segments, val_simple=val_simple)
+        multiseg = cls(segments, val_simple, val_contiguous=False)
+        multiseg._is_contiguous = True
         if make_closed: multiseg._is_closed = True
         return multiseg
+    
+    @staticmethod
+    def _validate_contiguous(segments):
+        p0 = np.array([seg.p0 for seg in segments])
+        pf = np.array([seg.pf for seg in segments])
+        return np.allclose(pf[:-1], p0[1:])
 
     @staticmethod
     def _validate_closed(segments):
         if len(segments) == 1:
             return segments[0].is_closed
         else:
-            # get initial and final points for each segment
-            p0 = np.array([seg.p0 for seg in segments])
-            pf = np.array([seg.pf for seg in segments])
-    
-            # check if initial and final points match
-            return np.allclose(p0, np.roll(pf, 1))
+            if MultiSegment._validate_contiguous(segments):
+                # check if initial and final points match (closed loop)
+                return np.isclose(segments[0].p0, segments[-1].pf)
+            else: return False
 
     @staticmethod
     def _validate_simple(segments):
@@ -656,6 +732,12 @@ class MultiSegment:
                 if len(intersections) > 0:
                     return False
         return True
+    
+    @property
+    def is_contiguous(self):
+        if self._is_contiguous is None:
+            self._is_contiguous = self._validate_contiguous(self.segments)
+        return self._is_contiguous
 
     @property
     def is_simple(self):
@@ -762,6 +844,28 @@ class MultiSegment:
             self._corners, self._corner_idx, self._corner_angle0, self._corner_angle1 = self._find_corners()
         return self._corner_angle0, self._corner_angle1
     
+    def __add__(self, other):
+        if isinstance(other, BaseSegment):
+            return MultiSegment(self.segments + [other], val_simple=False)
+        elif isinstance(other, MultiSegment):
+            return MultiSegment(self.segments + other.segments, val_simple=False)
+        elif np.isscalar(other):
+            new_segments = [seg + other for seg in self.segments]
+            return MultiSegment(new_segments, val_simple=False, val_contiguous=False)
+        else:
+            raise TypeError("__add__ with MultiSegment must be another MultiSegment, a Segment, or complex scalar")
+
+    def __radd__(self, other):
+        if isinstance(other, BaseSegment):
+            return MultiSegment([other] + self.segments, val_simple=False)
+        elif isinstance(other, MultiSegment):
+            return MultiSegment(other.segments + self.segments, val_simple=False)
+        elif np.isscalar(other):
+            new_segments = [seg + other for seg in self.segments]
+            return MultiSegment(new_segments, val_simple=False, val_contiguous=False)
+        else:
+            raise TypeError("__add__ with MultiSegment must be another MultiSegment, a Segment, or complex scalar")
+    
     def plot(self, ax=None, showbc=False, **pltkwargs):
         """Plots the MultiSegment"""
         if ax is None:
@@ -791,6 +895,17 @@ class MultiSegment:
         for seg in self.segments:
             quivs.append(seg.plot_normals(ax=ax, **pltkwargs))
         return quivs
+    
+    def __mul__(self, other):
+        if not np.isscalar(other):
+            raise ValueError("non-MultiSegment operand must be a scalar")
+        new_segments = [other*seg for seg in self.segments]
+        return MultiSegment(new_segments, val_simple=False, val_contiguous=False)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    
+
 
 # domain class
 class Domain(BaseDomain):
@@ -805,14 +920,21 @@ class Domain(BaseDomain):
     ----------
     bdry : MultiSegment
         Closed, simple boundary curve of the domain.
+    val_simple : bool, optional
+        If True, raise ValueError unless the boundary is a simple curve.
+    val_closed : bool, optional
+        If True, raise ValueError unless the boundary is a closed curve.
     """
-    def __init__(self, bdry):
+    def __init__(self, bdry, val_simple=True, val_closed=True):
         if not isinstance(bdry, MultiSegment):
             raise TypeError("'bdry' must be an instance of MultiSegment")
-        if not bdry.is_closed:
-            raise ValueError("boundary must be closed")
-        if not bdry.is_simple:
-            raise ValueError("boundary must be simple")
+        if val_simple:
+            if not bdry.is_simple:
+                raise ValueError("boundary must be simple")
+        if val_closed:
+            if not bdry.is_closed:
+                raise ValueError("boundary must be closed")
+
         self.bdry = bdry
         self._area = None
         self._diameter = None
@@ -1033,16 +1155,34 @@ class Domain(BaseDomain):
         if 'c' not in plt_kwargs.keys() and 'color' not in plt_kwargs.keys():
             plt_kwargs['color'] = 'k'
         return self.bdry.plot(ax, showbc, **plt_kwargs)
+    
+    def __add__(self, other):
+        if not np.isscalar(other):
+            raise TypeError("'other' must be a complex scalar")
+        new_bdry = self.bdry + other
+        return Domain(new_bdry, False, False)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __mul__(self, other):
+        if not np.isscalar(other):
+            raise TypeError("'other' must be a complex scalar")
+        new_bdry = other*self.bdry
+        return Domain(new_bdry, False, False)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
 
 # polygon class
 class Polygon(Domain):
     """Class for polygonal domains"""
-    def __init__(self, vertices=None, bdry=None, val_simple=True):
+    def __init__(self, vertices=None, bdry=None, bc='dir', val_simple=True):
         if not ((vertices is None)^(bdry is None)):
             raise ValueError("exactly one of 'vertices' and 'bdry' must be provided")
         elif vertices is not None:
             vertices = complex_form(vertices)
-            bdry = MultiSegment.from_vertices(vertices, val_simple=val_simple)
+            bdry = MultiSegment.from_vertices(vertices, bc)
             self.vertices = vertices
         elif bdry is not None:
             if not isinstance(bdry, MultiSegment) or not bdry.is_polyline:
@@ -1055,7 +1195,7 @@ class Polygon(Domain):
                 raise ValueError("'bdry' must be closed")
             else:
                 self.vertices = np.array([seg.p0 for seg in bdry.segments])
-        super().__init__(bdry)
+        super().__init__(bdry, val_simple=False, val_closed=False)
 
     def _compute_area(self):
         return polygon_area(self.vertices)
@@ -1121,3 +1261,120 @@ class Polygon(Domain):
         xy = real_form(pts)
         poly = ShapelyPolygon(real_form(self.vertices))
         return np.array(poly.contains(shapely_points(xy)))
+    
+    def __add__(self, other):
+        if not np.isscalar(other):
+            raise TypeError("'other' must be a complex scalar")
+        new_bdry = self.bdry + other
+        return Polygon(bdry=new_bdry, val_simple=False)
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+    def __mul__(self, other):
+        if not np.isscalar(other):
+            raise TypeError("'other' must be a complex scalar")
+        new_bdry = other*self.bdry
+        return Polygon(bdry=new_bdry, val_simple=False)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    
+### Sample domains
+def rect(L, H, bc='dir'):
+    return Polygon([0, L, L + 1j*H, 1j*H], bc=bc, val_simple=False)
+
+def L_shape(bc='dir'):
+    return Polygon([0, 1j, -1+1j, -1-1j, 1-1j, 1], bc=bc, val_simple=False)
+
+def GWW1(bc='dir'):
+    """first GWW domain"""
+    vx = np.array([1,3,3,-1,-1,-3,-1,1])
+    vy = np.array([-3,-1,1,1,3,1,-1,-1])
+    vertices = vx + 1j*vy
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def GWW2(bc='dir'):
+    """second GWW domain"""
+    vx = np.array([1,1,3,1,-1,-1,-3,-3])
+    vy = np.array([-3,-1,-1,1,1,3,3,1])
+    vertices = vx + 1j*vy
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def circle(r=1, bc='dir', nsamp=100):
+    """circle of radius r"""
+    seg = ParametricSegment(
+        lambda t: r*np.exp(1j*t),
+        lambda t: 1j*r*np.exp(1j*t),
+        0, 2*np.pi, bc, nsamp
+    )
+    bdry = MultiSegment([seg])
+    return Domain(bdry, val_simple=False, val_closed=False)
+
+def chevron(h1=1, h2=2, bc='dir'):
+    """chevron domain"""
+    if h1 >= h2:
+        raise ValueError("h1 must be less than h2")
+    elif h1 < 0 or h2 < 0:
+        raise ValueError("h1 and h2 must be nonnegative")
+    
+    vertices = np.array([-1, 1j*h1, 1, 1j*h2])
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def cut_square(r=0.5, bc='dir', nsamp=100):
+    """cut square domain"""
+    if not (0 < r < 1):
+        raise ValueError("r must be between 0 and 1 (strictly)")
+    seg1 = LineSegment(0, 1, bc=bc)
+    seg2 = LineSegment(1, 1 + (1-r)*1j, bc=bc)
+    seg3 = ParametricSegment(lambda t: 1+1j+r*np.exp(-1j*t),
+                             lambda t: -1j*r*np.exp(-1j*t),
+                             np.pi/2, np.pi, bc, nsamp)
+    seg4 = LineSegment((1-r)+1j, 1j, bc=bc)
+    seg5 = LineSegment(1j, 0, bc=bc)
+    bdry = MultiSegment([seg1, seg2, seg3, seg4, seg5])
+    return Domain(bdry, val_simple=False, val_closed=False)
+
+def H_shape(bc='dir'):
+    vx = np.array([-1,  0,  0,  1,  1, 2, 2, 1, 1, 0, 0, -1])
+    vy = np.array([-2, -2, -1, -1, -2,-2, 1, 1, 0, 0, 1,  1])
+    vertices = vx + 1j*vy
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def reg_ngon(n, bc='dir'):
+    theta = np.linspace(0, 2*np.pi, n+1)[:-1]
+    vertices = np.exp(1j*theta)
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def circle_sector(r=1, theta=np.pi/2, bc='dir', nsamp=100):
+    if not (0 < theta < 2*np.pi):
+        raise ValueError("theta must be between 0 and 2pi (strictly)")
+    seg1 = LineSegment(0, r, bc=bc)
+    seg2 = ParametricSegment(
+        lambda t: r*np.exp(1j*t),
+        lambda t: 1j*r*np.exp(1j*t),
+        0, theta, bc, nsamp,
+        val_simple=False
+    )
+    seg3 = LineSegment(r*np.exp(1j*theta), 0, bc=bc)
+    bdry = MultiSegment([seg1,seg2,seg3])
+    return Domain(bdry, val_simple=False, val_closed=False)
+
+def iso_right_tri(l=1, bc='dir'):
+    return Polygon([0, l, 1j*l], bc=bc, val_simple=False)
+
+def iso_tri(h=1, bc='dir'):
+    return Polygon([1,1j*h,-1], bc=bc, val_simple=False)
+
+def mushroom(a=1, b=1, r=1.5, bc='dir', nsamp=100):
+    if r <= b:
+        raise ValueError('b must be less than r')
+    vert = np.array([-r, -b/2, -b/2 - 1j*a, b/2 - 1j*a, b/2, r])
+    seg1 = MultiSegment.from_vertices(vert, bc, False)
+    seg2 = ParametricSegment(
+        lambda t: r*np.exp(1j*t),
+        lambda t: 1j*r*np.exp(1j*t),
+        0, np.pi, bc, nsamp
+    )
+    bdry = MultiSegment([seg1, seg2])
+    return Domain(bdry, val_simple=False, val_closed=False)
