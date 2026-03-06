@@ -11,6 +11,7 @@ import scipy.linalg as la
 import warnings
 from gsvd4py import gsvd, gsvdvals
 from scipy.optimize import bracket, minimize_scalar
+from tqdm import tqdm
 
 ### tolerance defaults
 rtol_default = 1e-14
@@ -426,24 +427,30 @@ def sort_merge_brackets(eig_brackets, ltol=ltol_default, verbose=0):
     sort_idx = np.argsort([lam[1] for lam in eig_brackets])
     eig_brackets = [eig_brackets[i] for i in sort_idx]
 
+    if verbose > 0:
+        print(f"\tlen(brackets)={len(eig_brackets)}")
+
     # process brackets for proximity
     i = 0
     while i < len(eig_brackets)-1:
-        lam0 = eig_brackets[i]
-        lam1 = eig_brackets[i+1]
-        tol = ltol*lam0[1]
-        if lam1[1]-lam0[1] < tol:
+        brack0 = eig_brackets[i]
+        brack1 = eig_brackets[i+1]
+        if verbose > 1: print(f"\tchecking [{brack0[0]:.2e},{brack0[2]:.2e}]")
+        tol = ltol*brack0[1]
+        if brack1[1]-brack0[1] < tol:
+            if verbose > 1: print(f"\tmerging [{brack1[0]:.2e},{brack1[2]:.2e}] diff={brack1[1]-brack0[1]} < tol={tol}")
             # merge, using average as eigenvalue
             # use lower bound of first bracket and upper bound of second bracket
             new_brack = np.empty(3, dtype='float')
-            new_brack[0] = lam0[0]
-            new_brack[1] = (lam0[1]+lam1[1])/2
-            new_brack[2] = lam1[2]
+            new_brack[0] = brack0[0]
+            new_brack[1] = (brack0[1]+brack1[1])/2
+            new_brack[2] = brack1[2]
             eig_brackets[i] = new_brack
             # delete no-longer needed bracket, post-merger
             del eig_brackets[i+1]
         else:
             i += 1
+    if verbose > 0: print(f"\tlen(brackets)={len(eig_brackets)} after merging")
     return eig_brackets
 
 def estimate_multiplicity(tensions, eig, a, b, ttol=ttol_default, verbose=0):
@@ -461,9 +468,15 @@ def estimate_multiplicity(tensions, eig, a, b, ttol=ttol_default, verbose=0):
     # check for presence of local min and sufficiently small tension
     is_locmin = (t_eig <= t_a)&(t_eig <= t_b)&((t_eig != t_a)|(t_eig != t_b))
     is_small = t_eig <= ttol
+    if verbose > 1:
+        print(f"\teig={eig:.16e}")
+        print(f"\tis_locmin: {is_locmin[:10].astype(int)}")
+        print(f"\tis_small:  {is_small[:10].astype(int)}")
 
     # multiplicity is largest k such that is_locmin[j] and is_small[j] are both true for all j=0,...,k-1
     mult = np.argmin(is_locmin & is_small)
+    if verbose > 0:
+        print(f"\tmult({eig:.2e}) = {mult}")
     return mult
    
 def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default, 
@@ -474,20 +487,28 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
 
     # build initial search grid
     lamgrid = make_lamgrid(a, b, n_pts)
+    if verbose > 0: print(f"solve_interval on [{a:.2e},{b:.2e}], n_pts={n_pts+2}")
+
 
     # evaluate tensions on the lambda grid
-    sigmagrid = np.array([tensions(lam)[:2] for lam in lamgrid]).T
+    if verbose > 0: 
+        print(f"1. evaluating tensions on lamgrid...")
+        tensiongrid = np.array([tensions(lam)[:3] for lam in tqdm(lamgrid)]).T
+    else:
+        tensiongrid = np.array([tensions(lam)[:3] for lam in lamgrid]).T
     fevals = len(lamgrid)
 
     # get brackets containing minima
-    brackets, fe = bracket_mins(lambda lam: tensions(lam)[:2], lamgrid, 
-                                sigmagrid, ltol, verbose=verbose, **bracket_kwargs)
+    if verbose > 0: print("2. finding eigenvalue brackets...")
+    brackets, fe = bracket_mins(lambda lam: tensions(lam)[:3], lamgrid, 
+                                tensiongrid, ltol, verbose=verbose-1, **bracket_kwargs)
     fevals += fe
 
     # minimize on each bracket, filtering for small tension values at minimizer
+    if verbose > 0: print("3. minimizing tension on brackets...")
     eig_brackets = []
     for bracket in brackets:
-        minimizer, fe = minimize_on_bracket(lambda lam: tensions(lam)[0], bracket, ltol, minsolver, verbose)
+        minimizer, fe = minimize_on_bracket(lambda lam: tensions(lam)[0], bracket, ltol, minsolver, verbose-1)
         fevals += fe
         minima = tensions(minimizer)[0]
         if minima < ttol:
@@ -496,16 +517,21 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
             eig_brackets.append([lam[0], minimizer, lam[2]])
 
     # sort brackets and merge sufficiently close eigenvalues
-    eig_brackets = sort_merge_brackets(eig_brackets, ltol, verbose)
+    if verbose > 0: print("4. sorting & merging eigenvalues...")
+    eig_brackets = sort_merge_brackets(eig_brackets, ltol, verbose-1)
 
     # filter for eigenvalues within search interval
+    if verbose > 0: print("5. filtering eigenvalues...")
     eig_brackets = [bracket for bracket in eig_brackets if (bracket[1] >= a and bracket[1] <= b)]
     eigs = [bracket[1] for bracket in eig_brackets]
 
     # estimate multiplicity for each eigenvalue
+    if verbose > 0: print("6. estimating multiplicities...")
     mults = []
     for bracket in eig_brackets:
         a, eig, b = bracket
-        mult = estimate_multiplicity(tensions, eig, a, b, ttol, verbose)
+        mult = estimate_multiplicity(tensions, eig, a, b, ttol, verbose-1)
         mults.append(mult)
+    if verbose > 0:
+        print(f"***found {len(eigs)} eigenvalues, total_mult={np.sum(mults)}, fevals={fevals}***")
     return np.array(eigs), np.array(mults), fevals

@@ -68,7 +68,7 @@ def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     return nodes, weights
 
 ### Triangular meshes and cubature rules
-def load_cubature_rules(path='cubature_rules/'):
+def load_cubature_rules(path='.cubature_rules/'):
     kinds = ['7pts','alb_col','bern_esp1','bern_esp2','bern_esp4','cowper','day_taylor',
              'dedon_rob','dunavant','vior_rok','xiao_gim','lether','stroud']
     rules = {}

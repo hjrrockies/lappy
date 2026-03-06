@@ -243,3 +243,16 @@ def sector_eigs(k, R, alpha):
     m_vals = range(1, max_idx + 1)
     n_vals = range(1, max_idx + 1)
     return _take_k_from_grid(lambda m, n: sector_eig(m, n, R, alpha), m_vals, n_vals, k)
+
+# ── Other domains ─────────────────────────────────────────────────────
+def gww_eigs(k):
+    """The first 25 Dirichlet eigenvalues of the GWW isospectral domains, accurate to 12 digits, in sorted order"""
+    if k > 25:
+        raise ValueError("Only the first 25 eigenvalues are available")
+    # just letting numpy sort because Driscoll's table wasn't easy to copy and paste!
+    eigs = np.sort([2.53794399980, 9.20929499840, 14.3138624643, 20.8823950433, 24.6740110027, 
+                    3.65550971352, 10.5969856913, 15.871302620, 21.2480051774, 26.0802400997, 
+                    5.17555935622, 11.5413953956, 16.9417516880, 22.2328517930, 27.3040189211, 
+                    6.53755744376, 12.3370055014, 17.6651184368, 23.7112974848, 28.1751285815, 
+                    7.24807786256, 13.0536540557, 18.9810673877, 24.4792340693, 29.5697729132])
+    return eigs[:k]

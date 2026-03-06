@@ -11,6 +11,7 @@ from . import geometry
 from . import exact
 from . import asymp
 from . import bounds
+from . import opt
 
 # classes and functions available directly from lappy
 from .mps import MPSEigensolver

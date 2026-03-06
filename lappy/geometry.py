@@ -8,6 +8,7 @@ from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh,
                    tri_quad, cached_leggauss, cached_chebgauss)
 
 from typing import Callable
+import copy
 import numpy as np
 from scipy.integrate import cumulative_simpson, quad
 from scipy.interpolate import make_interp_spline, BSpline
@@ -1173,6 +1174,14 @@ class Domain(BaseDomain):
 
     def __rmul__(self, other):
         return self.__mul__(other)
+    
+    def to_bc(self, bc):
+        """Makes a copy of the domain with a different boundary condition"""
+        new_dom = copy.deepcopy(self)
+        for seg in new_dom.bdry.segments:
+            seg.bc = bc
+        return new_dom
+
 
 # polygon class
 class Polygon(Domain):
