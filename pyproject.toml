@@ -19,4 +19,5 @@ dependencies = [
     "gsvd4py>=0.2.1",
     "jupyter>=1.1.1",
     "pytest>=8.4.1",
+    "tqdm>=4.6"
 ]
