@@ -130,10 +130,7 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
     # evaluate f(x) on new grid points
     fevals = 0
     for i in range(length):
-        if verbose > 0:
-            y_tmp[:,1+i*shrink:(i+1)*shrink] = np.array([f(x_) for x_ in tqdm(x_tmp[1+i*shrink:(i+1)*shrink])]).T
-        else:
-            y_tmp[:,1+i*shrink:(i+1)*shrink] = np.array([f(x_) for x_ in x_tmp[1+i*shrink:(i+1)*shrink]]).T
+        y_tmp[:,1+i*shrink:(i+1)*shrink] = np.array([f(x_) for x_ in x_tmp[1+i*shrink:(i+1)*shrink]]).T
         fevals += shrink-1
     
     # add ghost points to runs that don't already have them

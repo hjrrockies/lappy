@@ -1,7 +1,7 @@
 def gww(n_eigs, n_basis, ltol, rtol, ppl):
     # GWW domain: Dirichlet eigenvalues and error estimates
     from lappy import geometry, FourierBesselBasis
-    from benchmarking import estimate_peon, precice_eigs
+    from benchmarking import estimate_peon, precise_eigs
 
     # get domain (Dirichlet and Neumann boundary)
     gww = geometry.GWW1()
@@ -26,16 +26,16 @@ def gww(n_eigs, n_basis, ltol, rtol, ppl):
     # C(Omega) <= 1/sqrt(inradius(Omega)*mu_1(Omega))
     # where mu_1(Omega) is the first nonzero Neumann eigenvalue
     print("Estimating Poisson extension operator norm")
-    basis_neu = basis_neu = FourierBesselBasis.from_domain(gww_neu, orders).to_normalized(bdry_pts + int_pts)
+    basis_neu = FourierBesselBasis.from_domain(gww_neu, orders).to_normalized(bdry_pts + int_pts)
     peon_bound = estimate_peon(gww_neu, basis_neu, bdry_pts, int_pts, bdry_normals, ltol, rtol, ppl, verbose=2)
     print(f"estimated bound on C(Omega):", peon_bound)
 
     # solve for Dirichlet eigs
     print("Solving for Dirichlet eigenvalues")
     basis = FourierBesselBasis.from_domain(gww, orders).to_normalized(bdry_pts + int_pts)
-    eigs, tensions = precice_eigs(n_eigs, gww, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
+    eigs, tensions = precise_eigs(n_eigs, gww, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
 
-    # compute esimated relative error bound
+    # compute estimated relative error bound
     relerr_est = tensions*peon_bound
 
     print(eigs)

@@ -1,7 +1,9 @@
+import numpy as np
+
 def chevron(h1, h2, n_eigs, n_fb_basis, n_fs_basis, ltol, rtol, ppl):
     # chevron domain: Dirichlet eigenvalues and error estimates
     from lappy import geometry, FourierBesselBasis, FundamentalBasis, asymp
-    from benchmarking import estimate_peon, precice_eigs
+    from benchmarking import estimate_peon, precise_eigs
 
     # get domain (Dirichlet and Neumann boundary)
     chev = geometry.chevron(h1, h2)
@@ -45,11 +47,11 @@ def chevron(h1, h2, n_eigs, n_fb_basis, n_fs_basis, ltol, rtol, ppl):
     print("Solving for Dirichlet eigenvalues")
     fb_basis = FourierBesselBasis.from_domain(chev, orders).to_normalized(bdry_pts + int_pts)
     d = 2*np.pi/asymp.weyl_est(1, chev)
-    fs_basis = FundamentalBasis.from_domain(chev_neu, sources_per_seg, d=d)
+    fs_basis = FundamentalBasis.from_domain(chev, sources_per_seg, d=d)
     basis = (fb_basis + fs_basis).to_normalized(bdry_pts + int_pts)
-    eigs, tensions = precice_eigs(n_eigs, chev, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
+    eigs, tensions = precise_eigs(n_eigs, chev, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
 
-    # compute esimated relative error bound
+    # compute estimated relative error bound
     relerr_est = tensions*peon_bound
 
     print(eigs)

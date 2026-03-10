@@ -2,7 +2,7 @@ from lappy import *
 import numpy as np
 
 def estimate_peon(dom, basis, bdry_pts, int_pts, bdry_normals, ltol, rtol, ppl, verbose=0):
-    """estimates a bound on the Poisson extention operator norm based on the first
+    """estimates a bound on the Poisson extension operator norm based on the first
     nonzero Neumann eigenvalue and the inradius of the domain"""
     solver = MPSEigensolver(basis, bdry_pts, int_pts, bdry_normals, 1, ltol=ltol, rtol=rtol)
     eigprob = Eigenproblem(dom, solver)
@@ -10,7 +10,7 @@ def estimate_peon(dom, basis, bdry_pts, int_pts, bdry_normals, ltol, rtol, ppl, 
     peon_bound = 1/np.sqrt(dom.inradius*eigs_neu[1])
     return peon_bound
 
-def precice_eigs(n_eigs, dom, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, verbose=0):
+def precise_eigs(n_eigs, dom, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, verbose=0):
     """get high-precision estimates of dirichlet eigenvalues"""
     eval_solver = MPSEigensolver(basis, bdry_pts, int_pts, ltol=ltol, rtol=rtol)
     evec_solver = MPSEigensolver(basis, bdry_nodes, int_nodes, ltol=ltol, rtol=rtol)

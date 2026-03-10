@@ -1,7 +1,7 @@
 def L_shape(n_eigs, n_basis, ltol, rtol, ppl):
     # L-shaped domain: Dirichlet eigenvalues and error estimates
     from lappy import geometry, FourierBesselBasis
-    from benchmarking import estimate_peon, precice_eigs
+    from benchmarking import estimate_peon, precise_eigs
 
     # get domain (Dirichlet and Neumann boundary)
     ldom = geometry.L_shape()
@@ -33,9 +33,9 @@ def L_shape(n_eigs, n_basis, ltol, rtol, ppl):
     # solve for Dirichlet eigs
     print("Solving for Dirichlet eigenvalues")
     basis = FourierBesselBasis.from_domain(ldom, orders).to_normalized(bdry_pts + int_pts)
-    eigs, tensions = precice_eigs(n_eigs, ldom, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
+    eigs, tensions = precise_eigs(n_eigs, ldom, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
 
-    # compute esimated relative error bound
+    # compute estimated relative error bound
     relerr_est = tensions*peon_bound
 
     print(eigs)
