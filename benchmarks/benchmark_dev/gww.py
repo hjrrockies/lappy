@@ -27,7 +27,7 @@ def gww(n_eigs, n_basis, ltol, rtol, ppl):
     # where mu_1(Omega) is the first nonzero Neumann eigenvalue
     print("Estimating Poisson extension operator norm")
     basis_neu = FourierBesselBasis.from_domain(gww_neu, orders).to_normalized(bdry_pts + int_pts)
-    peon_bound = estimate_peon(gww_neu, basis_neu, bdry_pts, int_pts, bdry_normals, ltol, rtol, ppl, verbose=2)
+    peon_bound = estimate_peon(gww_neu, basis_neu, bdry_pts, int_pts, bdry_normals, ltol, 1e-8, ppl, verbose=2)
     print(f"estimated bound on C(Omega):", peon_bound)
 
     # solve for Dirichlet eigs

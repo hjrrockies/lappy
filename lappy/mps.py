@@ -487,7 +487,7 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
 
     # build initial search grid
     lamgrid = make_lamgrid(a, b, n_pts)
-    if verbose > 0: print(f"solve_interval on [{a:.2e},{b:.2e}], n_pts={n_pts+2}")
+    if verbose > 0: print(f"solve_interval on [{a:.5e},{b:.5e}], n_pts={n_pts+2}")
 
 
     # evaluate tensions on the lambda grid
@@ -511,10 +511,12 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
         minimizer, fe = minimize_on_bracket(lambda lam: tensions(lam)[0], bracket, ltol, minsolver, verbose-1)
         fevals += fe
         minima = tensions(minimizer)[0]
-        if minima < ttol:
+        if minima <= ttol:
             # new bracket with "minimizer in the middle"
+            if verbose > 1: print(f"eigenvalue accepted lam={minimizer:.5e}")
             lam = bracket[0]
             eig_brackets.append([lam[0], minimizer, lam[2]])
+        elif verbose > 1: print(f"tension above threshold: {minima:.1e} > {ttol:.1e}")
 
     # sort brackets and merge sufficiently close eigenvalues
     if verbose > 0: print("4. sorting & merging eigenvalues...")

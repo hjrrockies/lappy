@@ -158,7 +158,7 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
     of f(x)[1] and f(x)[2] to guide refinement."""
     tabs = min(nrecurse,5)*"\t" # tab spacing for verbose mode
     if verbose > 0:
-        print(tabs+f"bracket_mins on [{x[1]:.2e},{x[-2]:.2e}] (len={x[-2]-x[1]:.2e}, npts={len(x)})")
+        print(tabs+f"bracket_mins on [{x[1]:.5e},{x[-2]:.5e}] (len={x[-2]-x[1]:.2e}, npts={len(x)})")
 
     # get discrete local min indices for y1 and y2
     y0_min_idx = discrete_locmin_idx(y[0])
@@ -176,7 +176,7 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
         if not refine_flag[idx]:
             brackets.append((x[idx-1:idx+2],y[0,idx-1:idx+2]))
             if verbose > 1:
-                print(tabs+f"+[{x[idx-1]:.2e},{x[idx+1]:.2e}]")
+                print(tabs+f"+[{x[idx-1]:.5e},{x[idx+1]:.5e}]")
     if verbose > 0 and len(y0_min_idx) == 0:
         print(f"No minima found on {x[1]:.16e} to {x[-2]:.16e}")
         with np.printoptions(precision=16):
@@ -195,19 +195,19 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
                 min_idx = y[0,start:end+1].argmin() + start
                 brackets.append((x[[start, min_idx, end]], y[0,[start, min_idx, end]]))
                 if verbose > 1:
-                    print(tabs+f"+[{x[start]:.2e},{x[end]:.2e}] (below xtol)")
+                    print(tabs+f"+[{x[start]:.5e},{x[end]:.5e}] (below xtol)")
             else:
                 x_tmp, y_tmp, fe = fill_refinement(f, x, y, start, end, shrink, verbose)
                 fevals += fe
                 if verbose > 1:
-                    print(tabs+f"refine on [{x[start]:.2e},{x[end]:.2e}], shrink={shrink}")
+                    print(tabs+f"refine on [{x[start]:.5e},{x[end]:.5e}], shrink={shrink}")
                 # check for flat objective at this scale
                 mindiff = np.abs(np.diff(y_tmp[0])).min()
                 if mindiff == 0:
                     half_idx = int((end+start)/2)
                     brackets.append((x[[start,half_idx,end]],y[0,[start,half_idx,end]]))
                     if verbose > 1:
-                        print(tabs+f"+[{x[start]:.2e},{x[end]:.2e}] (flat objective)")
+                        print(tabs+f"+[{x[start]:.5e},{x[end]:.5e}] (flat objective)")
 
                 # recurse, extending the list of brackets and incrementing the function evaluations
                 else:
@@ -223,7 +223,7 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
 def minimize_on_bracket(f, bracket, xtol, minsolver='parabolic', verbose=0):
     x, y = bracket # unpack bracket
     if verbose > 0:
-        print(f"minimizing on [{x[0]:.2e},{x[2]:.2e}]")
+        print(f"minimizing on [{x[0]:.5e},{x[2]:.5e}]")
     tol = xtol*x[0] # get absolute tolerance from relative
 
     # only minimize further if bracket is at least width tol
@@ -244,14 +244,14 @@ def minimize_on_bracket(f, bracket, xtol, minsolver='parabolic', verbose=0):
         minimizer = x[1]
         fevals = 0
     if verbose > 0:
-        print(f"min={minimizer:.2e}, fevals={fevals}")
+        print(f"min={minimizer:.5e}, fevals={fevals}")
     return minimizer, fevals
 
 rho = (3-5**0.5)/2
 def golden_search(f, a, b, tol=1e-15, maxiter=100, verbose=0):
     """Golden ratio minimization search"""
     if verbose > 0:
-        print(f"golden search on [{a:.2e},{b:.2e}]")
+        print(f"golden search on [{a:.5e},{b:.5e}]")
     h = b-a
     u, v = a+rho*h, b-rho*h
     fu, fv = f(u), f(v)
