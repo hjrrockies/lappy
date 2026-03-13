@@ -142,50 +142,103 @@ class NormalizedBasis(ParticularBasis):
     """Class for particular bases which are normalized to be (approximately) unit norm in L^2. Wraps an existing
     basis, and normalizes it. Note that this is done *pointwise* with respect to the spectral parameter λ. This
     means that each evaluation of the basis (potentially) requires an additional evaluation of the L^2 norms (which may
-    involve a Pointset which is different from the desired evaluation set). Automatically prunes basis terms that are 
-    norm zero.
+    involve a Pointset which is different from the desired evaluation set). Automatically prunes basis terms with
+    norms below rtol * max_norm (relative threshold). Accepts either a single PointSet or a list of component
+    PointSets (e.g. [bdry_pts, int_pts]) for norm computation.
     """
-    def __init__(self, basis, quad_pts, quad_wts=None):
+    def __init__(self, basis, pts, quad_wts=None, rtol=np.finfo(float).eps):
         if not isinstance(basis, ParticularBasis):
             raise TypeError("'basis' must be an instance of ParticularBasis")
         self.basis = basis
-        
-        if isinstance(quad_pts, PointSet):
-            self.quad_pts = quad_pts
-        else:
-            self.quad_pts = PointSet(quad_pts)
+        self.rtol = rtol
 
-        if quad_wts is not None:
-            self.sqrt_wts = np.sqrt(quad_wts)[:,np.newaxis]
-        elif hasattr(quad_pts, 'wts'):
-            self.sqrt_wts = self.quad_pts.sqrt_wts
+        if isinstance(pts, PointSet):
+            self.component_pts = [pts]
         else:
-            self.sqrt_wts = None
+            self.component_pts = list(pts)
+            for p in self.component_pts:
+                if not isinstance(p, PointSet):
+                    raise TypeError("each element of pts must be a PointSet")
+
+        # quad_wts: legacy scalar-weight path — only valid for single combined PointSet
+        if quad_wts is not None:
+            self._legacy_quad_wts = np.sqrt(quad_wts)[:, np.newaxis]
+        else:
+            self._legacy_quad_wts = None
 
     def __len__(self):
         return len(self.basis)
 
+    @instance_lru_cache(maxsize=4)
+    def _weighted_eval(self, lam, pts):
+        """basis._eval_pointset with row-weighting baked in (if pts has weights)."""
+        A = self.basis._eval_pointset(lam, pts)
+        if hasattr(pts, 'sqrt_wts'):
+            return A * pts.sqrt_wts
+        return A
+
+    @instance_lru_cache(maxsize=4)
+    def _weighted_grad_eval(self, lam, pts):
+        """basis._grad_pointset with row-weighting baked in (if pts has weights)."""
+        Ag = self.basis._grad_pointset(lam, pts)
+        if hasattr(pts, 'sqrt_wts'):
+            return Ag * pts.sqrt_wts
+        return Ag
+
     @instance_lru_cache(maxsize=128)
     def norms(self, lam):
-        A = self.basis._eval_pointset(lam, self.quad_pts)
-        if self.sqrt_wts is not None:
-            A *= self.sqrt_wts
-        norms = norm(A, axis=0)
-        nonzero_cols = (norms > 0)
-        return norms[nonzero_cols], nonzero_cols
-
+        As = [self._weighted_eval(lam, pts) for pts in self.component_pts]
+        A = np.vstack(As)
+        if self._legacy_quad_wts is not None:
+            A = A * self._legacy_quad_wts
+        col_norms = norm(A, axis=0)
+        if col_norms.max() == 0:
+            return col_norms, np.zeros(len(col_norms), dtype=bool)
+        active = col_norms > self.rtol * col_norms.max()
+        return col_norms[active], active
 
     def _eval_pointset(self, lam, pts):
         A = self.basis._eval_pointset(lam, pts)
-        norms, nonzero_cols = self.norms(lam)
-        return A[:,nonzero_cols]/norms
-
+        norms, active = self.norms(lam)
+        return A[:, active] / norms
 
     def _grad_pointset(self, lam, pts):
-        Agrad = self.basis._grad_pointset(lam, pts)
-        norms, nonzero_cols = self.norms(lam)
-        return Agrad[:,nonzero_cols]/norms
-    
+        Ag = self.basis._grad_pointset(lam, pts)
+        norms, active = self.norms(lam)
+        return Ag[:, active] / norms
+
+    def __call__(self, lam, pts, wts=False):
+        if not isinstance(pts, PointSet):
+            pts = PointSet(pts)
+        norms, active = self.norms(lam)          # warms _weighted_eval for component_pts
+        if wts is True and hasattr(pts, 'wts'):
+            A_w = self._weighted_eval(lam, pts)  # cache HIT if pts is a component
+            return A_w[:, active] / norms
+        elif isinstance(wts, np.ndarray):
+            A = self.basis._eval_pointset(lam, pts)
+            return (A[:, active] / norms) * wts[:, np.newaxis]
+        else:
+            A = self.basis._eval_pointset(lam, pts)
+            return A[:, active] / norms
+
+    def ddiff(self, lam, pts, vecs, wts=False):
+        if not isinstance(pts, PointSet):
+            pts = PointSet(pts)
+        norms, active = self.norms(lam)
+        if isinstance(vecs, PointSet):
+            vecs = vecs.pts
+        vecs = vecs[:, np.newaxis]
+        if wts is True and hasattr(pts, 'wts'):
+            Ag_w = self._weighted_grad_eval(lam, pts)  # cache HIT if pts is a component
+            Ag = Ag_w[:, active] / norms
+        elif isinstance(wts, np.ndarray):
+            Ag_raw = self.basis._grad_pointset(lam, pts)
+            Ag = (Ag_raw[:, active] / norms) * wts[:, np.newaxis]
+        else:
+            Ag_raw = self.basis._grad_pointset(lam, pts)
+            Ag = Ag_raw[:, active] / norms
+        return Ag.real * vecs.real + Ag.imag * vecs.imag
+
     def __str__(self):
         return f"NormalizedBasis({self.basis})"
     

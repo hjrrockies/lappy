@@ -254,7 +254,7 @@ class MPSEigensolver(BaseEigensolver):
             int_pts = domain.int_pts('mesh', use_weights, cubature_kind, cubature_deg, mesh_kwargs)
 
         # normalize basis
-        basis = basis.to_normalized(bdry_pts + int_pts)
+        basis = basis.to_normalized([bdry_pts, int_pts])
 
         return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, ltol)
         
@@ -267,17 +267,33 @@ class MPSEigensolver(BaseEigensolver):
             ltol if ltol is not None else self.ltol
         )
     
-    # @instance_lru_cache(maxsize=256)
-    def tensions(self, lam, reg_type=None, rtol=None):
+    @instance_lru_cache(maxsize=256)
+    def _tensions_scalar(self, lam, reg_type=None, rtol=None):
+        """Evaluate tensions at a single scalar lambda=lam (cached)."""
+        reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
+        return tensions(self.A_B(lam), self.A_I(lam), reg_type, rtol)
+
+    def tensions(self, lam, reg_type=None, rtol=None, n_workers=1):
         """Evaluate tensions at lambda=lam.
 
         Parameters
         ----------
-        lam : float
-            Spectral parameter lambda
+        lam : float or np.ndarray
+            Spectral parameter. If an array, returns a list of tension arrays,
+            one per element. Use n_workers > 1 for parallel evaluation.
+        n_workers : int
+            Number of threads for parallel array dispatch (default 1 = serial).
         """
-        reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
-        return tensions(self.A_B(lam), self.A_I(lam), reg_type, rtol)
+        if isinstance(lam, np.ndarray):
+            if lam.size == 0:
+                return []
+            if n_workers > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=n_workers) as ex:
+                    return list(ex.map(
+                        lambda l: self._tensions_scalar(float(l), reg_type, rtol), lam))
+            return [self._tensions_scalar(float(l), reg_type, rtol) for l in lam]
+        return self._tensions_scalar(float(lam), reg_type, rtol)
 
     def sigma(self, lam, reg_type=None, rtol=None):
         return self.tensions(lam, reg_type, rtol)[0]
@@ -379,11 +395,11 @@ class MPSEigensolver(BaseEigensolver):
                                               reg_type=reg_type, rtol=rtol, ttol=ttol)
 
     def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None,
-                       ltol=None, minsolver='parabolic', verbose=0):
+                       ltol=None, minsolver='parabolic', n_workers=1, verbose=0):
         """solves for all eigenvalues in [a,b] using MPS"""
         reg_type, rtol, ttol, ltol = self._get_params(reg_type, rtol, ttol, ltol)
         return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
-                              ltol, ttol, minsolver, verbose=verbose)
+                              ltol, ttol, minsolver, n_workers=n_workers, verbose=verbose)
     
     def plot_tensions(self, low, high, nlam, n_angle=1, mps_kwargs={}, ax=None, **plot_kwargs):
         import matplotlib.pyplot as plt
@@ -485,7 +501,7 @@ def estimate_multiplicity(tensions, eig, a, b, ttol=ttol_default, verbose=0):
     return mult
    
 def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
-                   minsolver='parabolic', bracket_kwargs={}, verbose=0):
+                   minsolver='parabolic', bracket_kwargs={}, n_workers=1, verbose=0):
     """Finds eigenvalues from MPS tensions."""
     if minsolver not in ['parabolic','golden','brent']:
         raise ValueError("'minsolver' must be one of 'parabolic', 'golden', or 'brent'")
@@ -495,8 +511,13 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
     if verbose > 0: print(f"solve_interval on [{a:.5e},{b:.5e}], n_pts={n_pts}")
 
     # evaluate tensions on the lambda grid
-    if verbose > 0:
-        print(f"1. evaluating tensions on lamgrid...")
+    if verbose > 0: print(f"1. evaluating tensions on lamgrid...")
+    if n_workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=n_workers) as ex:
+            rows = list(ex.map(lambda lam: tensions(lam)[:3], lamgrid))
+        tensiongrid = np.array(rows).T
+    elif verbose > 0:
         tensiongrid = np.array([tensions(lam)[:3] for lam in tqdm(lamgrid)]).T
     else:
         tensiongrid = np.array([tensions(lam)[:3] for lam in lamgrid]).T
