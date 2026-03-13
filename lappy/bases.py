@@ -6,7 +6,7 @@ from .core import BaseDomain
 import numpy as np
 from scipy.special import jv, jvp, yv, yvp
 from scipy.linalg import norm
-from functools import cache, lru_cache
+from .cache import instance_cache, instance_lru_cache
 from abc import ABC, abstractmethod
 
 import mpmath as mp
@@ -165,7 +165,7 @@ class NormalizedBasis(ParticularBasis):
     def __len__(self):
         return len(self.basis)
 
-    @lru_cache
+    @instance_lru_cache(maxsize=128)
     def norms(self, lam):
         A = self.basis._eval_pointset(lam, self.quad_pts)
         if self.sqrt_wts is not None:
@@ -173,14 +173,14 @@ class NormalizedBasis(ParticularBasis):
         norms = norm(A, axis=0)
         nonzero_cols = (norms > 0)
         return norms[nonzero_cols], nonzero_cols
-    
-    @lru_cache
+
+
     def _eval_pointset(self, lam, pts):
         A = self.basis._eval_pointset(lam, pts)
         norms, nonzero_cols = self.norms(lam)
         return A[:,nonzero_cols]/norms
-    
-    @lru_cache
+
+
     def _grad_pointset(self, lam, pts):
         Agrad = self.basis._grad_pointset(lam, pts)
         norms, nonzero_cols = self.norms(lam)
@@ -289,12 +289,12 @@ class FourierBesselBasis(ParticularBasis):
         self.alphak = [alphai*np.arange(1,ki+1) for alphai,ki in zip(alpha,self.orders)]
         self.alphak_vec = np.concatenate(self.alphak)[np.newaxis]
 
-    @cache
+    @instance_cache
     def _z(self, pts):
         """Positions of PointSet pts relative to sources"""
         return np.subtract.outer(pts.pts, self.sources)
 
-    @cache
+    @instance_cache
     def _theta(self, pts):
         """Computes the angles of the given PointSet pts with respect to the bases vertices
         with branch cuts as needed."""
@@ -312,21 +312,21 @@ class FourierBesselBasis(ParticularBasis):
 
         return theta
     
-    @cache
+    @instance_cache
     def _r(self, pts):
         """Computes the distances from the PointSet pts to the source points"""
         # evaluation points relative to source points
         z = self._z(pts)
         r = np.abs(z)
         return r
-    
-    @cache
+
+    @instance_cache
     def _r_rep(self, pts):
         r = self._r(pts)
         r_rep = np.repeat(r,self.orders,axis=1)
         return r_rep
-    
-    @cache
+
+    @instance_cache
     def _sin(self, pts):
         """Computes the sine terms of Fourier-Bessel functions on the given PointSet pts"""
         theta = self._theta(pts)
@@ -336,7 +336,7 @@ class FourierBesselBasis(ParticularBasis):
             sin[:,cumk[i]:cumk[i+1]] = np.sin(np.outer(theta[:,i],self.alphak[i]))
         return sin
     
-    @cache
+    @instance_cache
     def _cos(self, pts):
         """Computes the cosine terms of Fourier-Bessel functions on the given PointSet pts"""
         theta = self._theta(pts)
@@ -346,21 +346,21 @@ class FourierBesselBasis(ParticularBasis):
             cos[:,cumk[i]:cumk[i+1]] = np.cos(np.outer(theta[:,i],self.alphak[i]))
         return cos
     
-    @lru_cache
+
     def _bessel(self, lam, pts):
         """Computes the Bessel part of the Fourier-Bessel functions on the given PointSet pts"""
         r_rep = self._r_rep(pts)
         bessel = jv(self.alphak_vec, np.sqrt(lam)*r_rep)
         return bessel
-    
-    @lru_cache
+
+
     def _besselp(self, lam, pts):
         """Computes the derivatives of the Bessel part of the Fourier-Bessel functions on the given PointSet pts"""
         r_rep = self._r_rep(pts)
         besselp = jvp(self.alphak_vec, np.sqrt(lam)*r_rep)
         return besselp
 
-    @lru_cache
+
     def _eval_pointset(self, lam, pts):
         # get (potentially cached) evaluations of sine/cosine part and Bessel part
         bessel = self._bessel(lam, pts)
@@ -375,15 +375,15 @@ class FourierBesselBasis(ParticularBasis):
             cos = self._cos(pts)
             return np.hstack((bessel*sin,bessel*cos))
     
-    @cache
+    @instance_cache
     def _dr_dz(self, pts):
          # partial derivatives of distance to source points w.r.t. x and y
         z = self._z(pts)
         r = self._r(pts)
         dr_dz = np.repeat(z/r, self.orders,axis=1)
         return dr_dz
-        
-    @cache
+
+    @instance_cache
     def _dtheta_dz(self,pts):
         z = self._z(pts)
         r = self._r(pts)
@@ -391,9 +391,9 @@ class FourierBesselBasis(ParticularBasis):
         dtheta_dz = np.repeat(dtheta_dz_temp,self.orders,axis=1)
         return dtheta_dz
     
-    @lru_cache
+
     def _grad_pointset(self, lam, pts):
-        """Evaluates the gradients of the basis functions on the given PointSet. Returns in complex form, 
+        """Evaluates the gradients of the basis functions on the given PointSet. Returns in complex form,
         with the x-partial in the real part and the y-partial in the imaginary part"""
         if not isinstance(pts, PointSet):
             raise TypeError("'pts' must be an instance of PointSet")
@@ -510,28 +510,28 @@ class FundamentalBasis(ParticularBasis):
     #  Cached geometric computations (independent of λ)                  #
     # ------------------------------------------------------------------ #
 
-    @cache
+    @instance_cache
     def _z(self, pts):
         """Displacement vectors from each source to each evaluation point."""
         return np.subtract.outer(pts.pts, self.sources)
 
-    @cache
+    @instance_cache
     def _r(self, pts):
         """Distances from each evaluation point to each source."""
         return np.abs(self._z(pts))
 
-    @cache
+    @instance_cache
     def _theta(self, pts):
         """Angles from each evaluation point to each source."""
         return np.angle(self._z(pts))
 
-    @cache
+    @instance_cache
     def _r_cols(self, pts):
         """r values broadcast to basis columns: shape (n_pts, n_basis)."""
         r = self._r(pts)
         return r[:, self._src_idx]
 
-    @cache
+    @instance_cache
     def _angular(self, pts):
         """Cosine and sine angular factors for every basis column."""
         theta = self._theta(pts)
@@ -540,7 +540,7 @@ class FundamentalBasis(ParticularBasis):
         ang = np.where(self._is_sin, np.sin(m_theta), np.cos(m_theta))
         return ang
 
-    @cache
+    @instance_cache
     def _angular_deriv(self, pts):
         """Derivative of angular factor w.r.t. θ for every basis column.
         d/dθ cos(mθ) = -m sin(mθ),  d/dθ sin(mθ) = m cos(mθ)."""
@@ -557,14 +557,14 @@ class FundamentalBasis(ParticularBasis):
     #  Cached radial (Bessel) computations (depend on λ)                 #
     # ------------------------------------------------------------------ #
 
-    @lru_cache
+
     def _bessel(self, lam, pts):
         """Y_m(√λ · r) for every basis column."""
         k = np.sqrt(lam)
         r_cols = self._r_cols(pts)
         return yv(self._m[np.newaxis, :], k * r_cols)
 
-    @lru_cache
+
     def _besselp(self, lam, pts):
         """Y_m'(√λ · r) for every basis column (derivative w.r.t. the argument)."""
         k = np.sqrt(lam)
@@ -575,7 +575,7 @@ class FundamentalBasis(ParticularBasis):
     #  Core evaluation methods                                            #
     # ------------------------------------------------------------------ #
 
-    @lru_cache
+
     def _eval_pointset(self, lam, pts):
         """Evaluate all basis functions at the given points.
 
@@ -583,7 +583,7 @@ class FundamentalBasis(ParticularBasis):
         """
         return self._bessel(lam, pts) * self._angular(pts)
 
-    @lru_cache
+
     def _grad_pointset(self, lam, pts):
         """Evaluate gradients of all basis functions at the given points.
 
@@ -648,7 +648,7 @@ class ExPrecFBBasis(FourierBesselBasis):
         else: kind = 'sincos'
         return cls(sources, phi0, phi1, orders, branch_cuts, kind, dps)
     
-    @cache
+    @instance_cache
     def _sin(self, pts):
         """Computes the sine terms of Fourier-Bessel functions on the given PointSet ps"""
         mp.mp.dps = self.dps
@@ -663,7 +663,7 @@ class ExPrecFBBasis(FourierBesselBasis):
                     sin[j,k] = mp.sin(alphak_theta[j,kk])
         return sin
     
-    @cache
+    @instance_cache
     def _cos(self, pts):
         """Computes the sine terms of Fourier-Bessel functions on the given PointSet ps"""
         mp.mp.dps = self.dps
@@ -678,7 +678,7 @@ class ExPrecFBBasis(FourierBesselBasis):
                     cos[j,k] = mp.cos(alphak_theta[j,kk])
         return cos
     
-    @lru_cache
+
     def _bessel(self, lam, pts):
         """Computes the Bessel part of the Fourier-Bessel functions on the given PointSet ps"""
         mp.mp.dps = self.dps
@@ -690,14 +690,14 @@ class ExPrecFBBasis(FourierBesselBasis):
                 bessel[i,j] = mp.besselj(self.alphak_vec[0,j], sqrtlam_r_rep[i,j])
         return bessel
     
-    @lru_cache
+
     def _eval_pointset(self, lam, pts):
         mp.mp.dps = self.dps
         mat = self._eval_pointset_mp(lam, pts)
         arr = np.array(mat.tolist(), dtype='float')
         return arr
-    
-    @lru_cache
+
+
     def _eval_pointset_mp(self, lam, pts):
         # get (potentially cached) evaluations of sine part and Bessel part
         mp.mp.dps = self.dps
@@ -745,7 +745,7 @@ class NormalizedExPrecFBBasis(ExPrecFBBasis):
     def __len__(self):
         return len(self.basis)
 
-    @lru_cache
+
     def norms(self, lam):
         mp.mp.dps = self.dps
         A = self.basis._eval_pointset_mp(lam, self.quad_pts)
@@ -754,8 +754,8 @@ class NormalizedExPrecFBBasis(ExPrecFBBasis):
         for j in range(n):
             norms[j,0] = mp.norm(A[:,j])
         return norms
-    
-    @lru_cache
+
+
     def _eval_pointset_mp(self, lam, pts):
         mp.mp.dps = self.dps
         A = self.basis._eval_pointset_mp(lam, pts)
@@ -764,7 +764,7 @@ class NormalizedExPrecFBBasis(ExPrecFBBasis):
         for j in range(A.cols):
             mat[:,j] = A[:,j]/norms[j,0]
         return mat
-    
+
 class InfNormalizedExPrecFBBasis(ExPrecFBBasis):
     def __init__(self, basis, norm_pts):
         if not isinstance(basis, ExPrecFBBasis):
@@ -780,7 +780,7 @@ class InfNormalizedExPrecFBBasis(ExPrecFBBasis):
     def __len__(self):
         return len(self.basis)
 
-    @lru_cache
+
     def norms(self, lam):
         mp.mp.dps = self.dps
         A = self.basis._eval_pointset_mp(lam, self.quad_pts)
@@ -789,8 +789,8 @@ class InfNormalizedExPrecFBBasis(ExPrecFBBasis):
         for j in range(n):
             norms[j,0] = mp.norm(A[:,j], p=mp.inf)
         return norms
-    
-    @lru_cache
+
+
     def _eval_pointset_mp(self, lam, pts):
         mp.mp.dps = self.dps
         A = self.basis._eval_pointset_mp(lam, pts)

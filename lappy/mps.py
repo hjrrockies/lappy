@@ -5,7 +5,8 @@ from .opt import bracket_mins, minimize_on_bracket, discrete_locmin_idx
 from .geometry import PointSet, pts_per_seg
 from .bases import make_default_basis, ParticularBasis
 
-from functools import cache, lru_cache
+from functools import lru_cache
+from .cache import instance_lru_cache
 import numpy as np
 import scipy.linalg as la
 import warnings
@@ -160,18 +161,15 @@ def make_bdry_vander(basis, bdry_pts, bdry_normals=None, bc_param=0, bdry_wts=No
 
     # dirichlet boundary condition
     if np.all(bc_param == 0):
-        @lru_cache
         def A_B(lam): return basis(lam, bdry_pts, bdry_wts)
         
     # neumann boundary condition
     elif np.all(bc_param == 1):
-        @lru_cache
         def A_B(lam): return basis.ddiff(lam, bdry_pts, bdry_normals, bdry_wts)
         
     # robin boundary condition
     else:
         bc_param = bc_param[:,np.newaxis]
-        @lru_cache
         def A_B(lam):
             dir = basis(lam, bdry_pts, hasattr(bdry_pts, 'wts'))
             neu = basis.ddiff(lam, bdry_pts, bdry_normals, bdry_wts)
@@ -190,7 +188,6 @@ def make_vander(basis, pts, wts=None):
     elif not isinstance(wts, np.ndarray):
         raise TypeError("'wts' must be None, True/False, or ndarray")
     
-    @lru_cache
     def A(lam):
         return basis(lam, pts, wts)
     return A
@@ -206,7 +203,6 @@ def make_ddiff_vander(basis, pts, vecs, wts=None):
     elif not isinstance(wts, np.ndarray):
         raise TypeError("'wts' must be None, True/False, or ndarray")
     
-    @lru_cache
     def A(lam):
         return basis.ddiff(lam, pts, vecs, wts)
     return A
@@ -271,15 +267,22 @@ class MPSEigensolver(BaseEigensolver):
             ltol if ltol is not None else self.ltol
         )
     
-    @cache
+    # @instance_lru_cache(maxsize=256)
     def tensions(self, lam, reg_type=None, rtol=None):
+        """Evaluate tensions at lambda=lam.
+
+        Parameters
+        ----------
+        lam : float
+            Spectral parameter lambda
+        """
         reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
         return tensions(self.A_B(lam), self.A_I(lam), reg_type, rtol)
-    
+
     def sigma(self, lam, reg_type=None, rtol=None):
         return self.tensions(lam, reg_type, rtol)[0]
     
-    @lru_cache
+    @instance_lru_cache(maxsize=64)
     def eigenfunction_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         reg_type, rtol, ttol, _ = self._get_params(reg_type, rtol, ttol)
         return nullspace_coef(self.A_B(eig), self.A_I(eig), mult, reg_type, rtol, ttol)
@@ -366,36 +369,38 @@ class MPSEigensolver(BaseEigensolver):
             U_ddiff /= ddiff_pts.sqrt_wts
         return tuple([arr for arr in (U_B, U_I, U_extra, U_ddiff) if arr is not None])
         
-    @lru_cache
+    @instance_lru_cache(maxsize=64)
     def eigenfunction_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         return self.eigenfunction_eval_extras(eig, mult, reg_type=reg_type, rtol=rtol, ttol=ttol)
 
-    @lru_cache
+    @instance_lru_cache(maxsize=64)
     def eigenfunction_eval_normals(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         return self.eigenfunction_eval_extras(eig, mult, ddiff_pts=self.bdry_pts, ddiff_vecs=self.bdry_normals,
                                               reg_type=reg_type, rtol=rtol, ttol=ttol)
 
-    def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None, 
+    def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None,
                        ltol=None, minsolver='parabolic', verbose=0):
         """solves for all eigenvalues in [a,b] using MPS"""
         reg_type, rtol, ttol, ltol = self._get_params(reg_type, rtol, ttol, ltol)
         return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
                               ltol, ttol, minsolver, verbose=verbose)
     
-    def plot_tensions(self, low, high, nlam, n_angle=1, ax=None, mps_kwargs={}, **plot_kwargs):
+    def plot_tensions(self, low, high, nlam, n_angle=1, mps_kwargs={}, ax=None, **plot_kwargs):
         import matplotlib.pyplot as plt
         L = np.linspace(low, high, nlam+1)
-        tans = np.array([self.tensions(lam, **mps_kwargs)[:n_angle] for lam in L])
+        results = [self.tensions(lam, **mps_kwargs) for lam in L]
+        tans = np.array([r[:n_angle] for r in results])
         if ax is None:
             fig = plt.figure()
             plt.plot(L, tans, **plot_kwargs)
             return fig
         else:
             ax.plot(L, tans, **plot_kwargs)
-            ax.set_xlim(low,high)
+            ax.set_xlim(low, high)
 
     def adaptive_rtol(self, lam, reg_type=None, rtol=None, ltol=None, rtol_max=1e-5):
         """Adjust rtol to reduce tension evaluation noise at the scale of ltol"""
+        raise NotImplementedError("feature under development")
         reg_type, rtol, _, ltol = self._get_params(reg_type, rtol, None, ltol)
         lamgrid = np.linspace(lam*(1-ltol), lam*(1+ltol), 5)
         tensions = np.array([self.tensions(lam, reg_type)[0] for lam in lamgrid])
@@ -479,7 +484,7 @@ def estimate_multiplicity(tensions, eig, a, b, ttol=ttol_default, verbose=0):
         print(f"\tmult({eig:.2e}) = {mult}")
     return mult
    
-def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default, 
+def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
                    minsolver='parabolic', bracket_kwargs={}, verbose=0):
     """Finds eigenvalues from MPS tensions."""
     if minsolver not in ['parabolic','golden','brent']:
@@ -487,11 +492,10 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
 
     # build initial search grid
     lamgrid = make_lamgrid(a, b, n_pts)
-    if verbose > 0: print(f"solve_interval on [{a:.5e},{b:.5e}], n_pts={n_pts+2}")
-
+    if verbose > 0: print(f"solve_interval on [{a:.5e},{b:.5e}], n_pts={n_pts}")
 
     # evaluate tensions on the lambda grid
-    if verbose > 0: 
+    if verbose > 0:
         print(f"1. evaluating tensions on lamgrid...")
         tensiongrid = np.array([tensions(lam)[:3] for lam in tqdm(lamgrid)]).T
     else:

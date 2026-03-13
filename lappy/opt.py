@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.optimize import brentq, minimize_scalar
-from tqdm import tqdm
 
 def parabola_vertex(x,y):
     """Finds the vertex of a parabola passing through the points

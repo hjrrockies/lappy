@@ -302,7 +302,7 @@ class ParametricSegment(BaseSegment):
         tau, wts = quadfunc(n)
         pts = self.p(tau)
         if weights:
-            return PointSet(pts, wts)
+            return PointSet(pts, self.len*wts)
         else:
             return PointSet(pts)
     
@@ -312,7 +312,7 @@ class ParametricSegment(BaseSegment):
         tau, wts = quadfunc(n)
         tangents = self.T(tau)
         if weights:
-            return PointSet(tangents, wts)
+            return PointSet(tangents, self.len*wts)
         else:
             return PointSet(tangents)
         
@@ -322,7 +322,7 @@ class ParametricSegment(BaseSegment):
         tau, wts = quadfunc(n)
         normals = self.N(tau)
         if weights:
-            return PointSet(normals, wts)
+            return PointSet(normals, self.len*wts)
         else:
             return PointSet(normals)
 
@@ -518,7 +518,7 @@ class LineSegment(BaseSegment):
         tau, wts = quadfunc(n)
         pts = self.p(tau)
         if weights:
-            return PointSet(pts, wts)
+            return PointSet(pts, self.len*wts)
         else:
             return PointSet(pts)
     
@@ -528,7 +528,7 @@ class LineSegment(BaseSegment):
         tau, wts = quadfunc(n)
         tangents = self.T(tau)
         if weights:
-            return PointSet(tangents, wts)
+            return PointSet(tangents, self.len*wts)
         else:
             return PointSet(tangents)
         
@@ -538,7 +538,7 @@ class LineSegment(BaseSegment):
         tau, wts = quadfunc(n)
         normals = self.N(tau)
         if weights:
-            return PointSet(normals, wts)
+            return PointSet(normals, self.len*wts)
         else:
             return PointSet(normals)
 
