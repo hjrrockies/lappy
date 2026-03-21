@@ -13,12 +13,13 @@
 set -euo pipefail
 
 # ── Cluster settings (edit these) ─────────────────────────────────────────────
-ACCOUNT="REPLACE_WITH_YOUR_ACCOUNT"
-PARTITION="REPLACE_WITH_YOUR_PARTITION"
-PYTHON_MODULE="python/3.11"          # match what you used in setup_env.sh
-TIME_LIMIT="02:00:00"                # wall time per task; increase for large sweeps
-MEM_PER_TASK="8G"
+ACCOUNT="siallocation"
+PARTITION="normal_q"
+PYTHON_MODULE="Python/3.12.3-GCCcore-13.3.0"          # match what you used in setup_env.sh
+TIME_LIMIT="24:00:00"                # wall time per task; increase for large sweeps
+MEM_PER_TASK="64G"
 MAX_CONCURRENT=32                    # max simultaneous tasks (%N in --array)
+VENV="$HOME/venvs/.lappy"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Parse arguments
@@ -46,7 +47,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
 # Generate config pickle and capture ARRAY_SIZE / CONFIG_FILE
-PREPARE_OUT=$(.venv/bin/python -m benchmarks.benchmark_suite.slurm.prepare_jobs \
+PREPARE_OUT=$($VENV/bin/python -m benchmarks.benchmark_suite.slurm.prepare_jobs \
     --sweep "$SWEEP" $DOMAINS_ARG --outdir "$OUTDIR")
 echo "$PREPARE_OUT"
 
@@ -74,8 +75,8 @@ JOB_ID=$(sbatch --parsable <<EOF
 
 module load ${PYTHON_MODULE}
 cd ${REPO_ROOT}
-
-.venv/bin/python -m benchmarks.benchmark_suite.slurm.run_job \
+source ~/venv/.lappy/bin/activate
+$VENV/bin/python -m benchmarks.benchmark_suite.slurm.run_job \
     --config_file ${CONFIG_FILE}
 EOF
 )

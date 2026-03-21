@@ -6,11 +6,10 @@
 
 set -euo pipefail
 
-PYTHON_MODULE="python/3.11"   # <-- adjust to match your cluster
+PYTHON_MODULE="Python/3.12.3-GCCcore-13.3.0"   # <-- adjust to match your cluster
 
 module load "$PYTHON_MODULE"
 python -m venv .venv
-.venv/bin/pip install --upgrade pip
 .venv/bin/pip install -e .
 
 echo ""
