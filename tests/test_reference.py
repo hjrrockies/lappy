@@ -139,20 +139,20 @@ def test_rect_eig_mult_mn_consistent():
 def test_iso_tri_eig_first():
     """First eigenvalue of isosceles right triangle: λ_{2,1} = 5π²/a²."""
     a = 1.0
-    assert np.isclose(reference.iso_tri_eig(2, 1, a), 5 * np.pi**2)
+    assert np.isclose(reference.iso_right_tri_eig(2, 1, a), 5 * np.pi**2)
 
 
 def test_iso_tri_eig_invalid_returns_none():
     """m ≤ n or n < 1 returns None."""
-    assert reference.iso_tri_eig(1, 1, 1.0) is None   # m == n
-    assert reference.iso_tri_eig(1, 2, 1.0) is None   # m < n
-    assert reference.iso_tri_eig(2, 0, 1.0) is None   # n < 1
+    assert reference.iso_right_tri_eig(1, 1, 1.0) is None   # m == n
+    assert reference.iso_right_tri_eig(1, 2, 1.0) is None   # m < n
+    assert reference.iso_right_tri_eig(2, 0, 1.0) is None   # n < 1
 
 
 def test_iso_tri_eig_scales_with_a():
     """λ scales as 1/a²."""
-    val1 = reference.iso_tri_eig(2, 1, 1.0)
-    val2 = reference.iso_tri_eig(2, 1, 2.0)
+    val1 = reference.iso_right_tri_eig(2, 1, 1.0)
+    val2 = reference.iso_right_tri_eig(2, 1, 2.0)
     assert np.isclose(val1 / val2, 4.0)
 
 
@@ -160,27 +160,27 @@ def test_iso_tri_eig_scales_with_a():
 
 def test_iso_tri_eigs_count():
     """Returns referencely k values."""
-    eigs = reference.iso_tri_eigs(10, 1.0)
+    eigs = reference.iso_right_tri_eigs(10, 1.0)
     assert len(eigs) == 10
 
 
 def test_iso_tri_eigs_sorted():
     """Returned eigenvalues are sorted ascending."""
-    eigs = reference.iso_tri_eigs(10, 1.0)
+    eigs = reference.iso_right_tri_eigs(10, 1.0)
     assert np.all(np.diff(eigs) >= 0)
 
 
 def test_iso_tri_eigs_first_matches_eig():
     """First eigenvalue matches iso_tri_eig(2, 1, a)."""
     a = 3.0
-    eigs = reference.iso_tri_eigs(5, a)
-    assert np.isclose(eigs[0], reference.iso_tri_eig(2, 1, a))
+    eigs = reference.iso_right_tri_eigs(5, a)
+    assert np.isclose(eigs[0], reference.iso_right_tri_eig(2, 1, a))
 
 
 def test_iso_tri_eigs_scales_with_a():
     """All eigenvalues scale as 1/a²."""
-    eigs1 = reference.iso_tri_eigs(6, 1.0)
-    eigs2 = reference.iso_tri_eigs(6, 2.0)
+    eigs1 = reference.iso_right_tri_eigs(6, 1.0)
+    eigs2 = reference.iso_right_tri_eigs(6, 2.0)
     np.testing.assert_allclose(eigs1 / eigs2, 4.0)
 
 
