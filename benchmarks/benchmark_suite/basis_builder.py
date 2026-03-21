@@ -22,7 +22,8 @@ def build_fb_basis(domain, n_fb, strategy='singular_angle_weighted'):
     -------
     FourierBesselBasis
     """
-    int_angles = domain.int_angles
+    phi0, phi1 = domain.corner_angles
+    int_angles = (phi1 - phi0) % (2 * np.pi)
     n_corners = len(int_angles)
     orders = np.zeros(n_corners, dtype=int)
 

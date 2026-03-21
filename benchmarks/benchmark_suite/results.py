@@ -106,8 +106,9 @@ def results_to_dataframe(results: list) -> 'pd.DataFrame':
         row['n_basis_actual'] = r.n_basis_actual
         row['n_bdry_pts'] = r.n_bdry_pts
         row['n_int_pts'] = r.n_int_pts
-        row['median_tension'] = float(np.median(r.tensions))
-        row['max_tension'] = float(np.max(r.tensions))
+        row['n_eigs_returned'] = len(r.eigs)
+        row['median_tension'] = float(np.median(r.tensions)) if len(r.tensions) > 0 else None
+        row['max_tension'] = float(np.max(r.tensions)) if len(r.tensions) > 0 else None
         if r.rel_errors is not None and len(r.rel_errors) > 0:
             row['median_rel_error'] = float(np.median(r.rel_errors))
             row['max_rel_error'] = float(np.max(r.rel_errors))

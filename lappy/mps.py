@@ -494,8 +494,10 @@ def estimate_multiplicity(tensions, eig, a, b, ttol=ttol_default, verbose=0):
         print(f"\tis_locmin: {is_locmin[:10].astype(int)}")
         print(f"\tis_small:  {is_small[:10].astype(int)}")
 
-    # multiplicity is largest k such that is_locmin[j] and is_small[j] are both true for all j=0,...,k-1
-    mult = np.argmin(is_locmin & is_small)
+    # multiplicity is the largest k such that is_locmin[j] & is_small[j] for all j < k
+    mult = 0
+    while mult < n and is_locmin[mult] and is_small[mult]:
+        mult += 1
     if verbose > 0:
         print(f"\tmult({eig:.2e}) = {mult}")
     return mult
