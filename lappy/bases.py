@@ -94,8 +94,8 @@ class ParticularBasis(ABC):
         else:
             return MultiBasis([self, other])
     
-    def to_normalized(self, quad_pts, quad_wts=None):
-        return NormalizedBasis(self, quad_pts, quad_wts)
+    def to_normalized(self, quad_pts, quad_wts=None, max_scale=True):
+        return NormalizedBasis(self, quad_pts, quad_wts, max_scale=max_scale)
     
     @abstractmethod
     def __len__(self):
@@ -142,15 +142,14 @@ class NormalizedBasis(ParticularBasis):
     """Class for particular bases which are normalized to be (approximately) unit norm in L^2. Wraps an existing
     basis, and normalizes it. Note that this is done *pointwise* with respect to the spectral parameter λ. This
     means that each evaluation of the basis (potentially) requires an additional evaluation of the L^2 norms (which may
-    involve a Pointset which is different from the desired evaluation set). Automatically prunes basis terms with
-    norms below rtol * max_norm (relative threshold). Accepts either a single PointSet or a list of component
-    PointSets (e.g. [bdry_pts, int_pts]) for norm computation.
+    involve a Pointset which is different from the desired evaluation set). Prunes only basis terms with exactly
+    zero norm. Accepts either a single PointSet or a list of component PointSets (e.g. [bdry_pts, int_pts])
+    for norm computation.
     """
-    def __init__(self, basis, pts, quad_wts=None, rtol=np.finfo(float).eps):
+    def __init__(self, basis, pts, wts=None, max_scale=False):
         if not isinstance(basis, ParticularBasis):
             raise TypeError("'basis' must be an instance of ParticularBasis")
         self.basis = basis
-        self.rtol = rtol
 
         if isinstance(pts, PointSet):
             self.component_pts = [pts]
@@ -160,11 +159,14 @@ class NormalizedBasis(ParticularBasis):
                 if not isinstance(p, PointSet):
                     raise TypeError("each element of pts must be a PointSet")
 
-        # quad_wts: legacy scalar-weight path — only valid for single combined PointSet
-        if quad_wts is not None:
-            self._legacy_quad_wts = np.sqrt(quad_wts)[:, np.newaxis]
+        # wts: legacy scalar-weight path — only valid for single combined PointSet
+        if wts is not None:
+            self._legacy_quad_wts = np.sqrt(wts)[:, np.newaxis]
         else:
             self._legacy_quad_wts = None
+
+        # rescale each column by max before norm computation
+        self.max_scale = max_scale
 
     def __len__(self):
         return len(self.basis)
@@ -191,10 +193,14 @@ class NormalizedBasis(ParticularBasis):
         A = np.vstack(As)
         if self._legacy_quad_wts is not None:
             A = A * self._legacy_quad_wts
+        if self.max_scale:
+            col_max = np.abs(A.max(axis=0))
+            col_max[col_max==0] = 1.0
+            A /= col_max
         col_norms = norm(A, axis=0)
-        if col_norms.max() == 0:
-            return col_norms, np.zeros(len(col_norms), dtype=bool)
-        active = col_norms > self.rtol * col_norms.max()
+        if self.max_scale:
+            col_norms *= col_max
+        active = col_norms > 0
         return col_norms[active], active
 
     def _eval_pointset(self, lam, pts):
@@ -241,6 +247,8 @@ class NormalizedBasis(ParticularBasis):
 
     def __str__(self):
         return f"NormalizedBasis({self.basis})"
+
+# Fourier-Bessel bases and helper functions
     
 class FourierBesselBasis(ParticularBasis):
     """

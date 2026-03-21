@@ -9,7 +9,7 @@ from lappy import Polygon
 from lappy.geometry import MultiSegment
 
 
-# Bessel zeros (reference values)
+# Bessel zeros ( reference values)
 _j01 = jn_zeros(0, 1)[0]
 _j11 = jn_zeros(1, 1)[0]
 

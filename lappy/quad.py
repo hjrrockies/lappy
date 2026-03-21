@@ -301,7 +301,7 @@ def quadrilateral_mesh(vertices,mesh_size):
     return mesh
 
 def transform_quad(xi,eta,x_v,y_v):
-    """Computes a transformation from the reference square [-1,1]^2 to a
+    """Computes a transformation from the  reference square [-1,1]^2 to a
     quadrilateral with given vertices. Also computes the Jacobian determinant"""
     a,b = x_v[2]-x_v[3],x_v[2]+x_v[3]
     c,d = x_v[1]-x_v[0],x_v[1]+x_v[0]

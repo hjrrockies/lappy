@@ -18,8 +18,8 @@ def right_triangle():
     return Polygon(np.array([0, 3, 3+4j]))
 
 @pytest.fixture
-def unit_circle_seg():
-    """Unit circle as a ParametricSegment."""
+def unit_disk_seg():
+    """Unit disk as a ParametricSegment."""
     return ParametricSegment(
         lambda t: np.exp(1j*t),
         lambda t: 1j*np.exp(1j*t),

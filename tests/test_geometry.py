@@ -4,8 +4,8 @@ import numpy as np
 from lappy import PointSet, Domain, Polygon, ParametricSegment, LineSegment, MultiSegment
 from lappy.geometry import SplineSegment
 from lappy.geometry import (
-    rect, circle, L_shape, GWW1, GWW2, H_shape, reg_ngon,
-    circle_sector, iso_right_tri, iso_tri, mushroom, cut_square, chevron,
+    rect, disk, L_shape, GWW1, GWW2, H_shape, reg_ngon,
+    disk_sector, iso_right_tri, iso_tri, mushroom, cut_square, chevron,
 )
 
 
@@ -191,39 +191,39 @@ class TestParametricSegment:
                 val_simple=False
             )
 
-    def test_circle_len(self, unit_circle_seg):
-        assert np.isclose(unit_circle_seg.len, 2*np.pi, rtol=1e-5)
+    def test_circle_len(self, unit_disk_seg):
+        assert np.isclose(unit_disk_seg.len, 2*np.pi, rtol=1e-5)
 
-    def test_circle_p_endpoints(self, unit_circle_seg):
-        assert np.isclose(unit_circle_seg.p(0), 1+0j, atol=1e-6)
-        assert np.isclose(unit_circle_seg.p(1), 1+0j, atol=1e-6)
+    def test_disk_p_endpoints(self, unit_disk_seg):
+        assert np.isclose(unit_disk_seg.p(0), 1+0j, atol=1e-6)
+        assert np.isclose(unit_disk_seg.p(1), 1+0j, atol=1e-6)
 
-    def test_tangent_unit_norm(self, unit_circle_seg):
+    def test_tangent_unit_norm(self, unit_disk_seg):
         tau = np.linspace(0.05, 0.95, 10)
-        assert np.allclose(np.abs(unit_circle_seg.T(tau)), 1.0, atol=1e-12)
+        assert np.allclose(np.abs(unit_disk_seg.T(tau)), 1.0, atol=1e-12)
 
-    def test_normal_unit_norm(self, unit_circle_seg):
+    def test_normal_unit_norm(self, unit_disk_seg):
         tau = np.linspace(0.05, 0.95, 10)
-        assert np.allclose(np.abs(unit_circle_seg.N(tau)), 1.0, atol=1e-12)
+        assert np.allclose(np.abs(unit_disk_seg.N(tau)), 1.0, atol=1e-12)
 
-    def test_tangent_normal_orthogonal(self, unit_circle_seg):
+    def test_tangent_normal_orthogonal(self, unit_disk_seg):
         tau = np.linspace(0.05, 0.95, 10)
-        T = unit_circle_seg.T(tau)
-        N = unit_circle_seg.N(tau)
+        T = unit_disk_seg.T(tau)
+        N = unit_disk_seg.N(tau)
         assert np.allclose((T * np.conj(N)).real, 0.0, atol=1e-12)
 
-    def test_arc_length_parametrization(self, unit_circle_seg):
+    def test_arc_length_parametrization(self, unit_disk_seg):
         # After reparameterization, |dp/dtau| == len (constant speed)
         tau = np.linspace(0.05, 0.95, 10)
-        dp_mag = np.abs(unit_circle_seg.dp(tau))
-        assert np.allclose(dp_mag, unit_circle_seg.len, rtol=1e-4)
+        dp_mag = np.abs(unit_disk_seg.dp(tau))
+        assert np.allclose(dp_mag, unit_disk_seg.len, rtol=1e-4)
 
-    def test_is_closed(self, unit_circle_seg):
-        assert unit_circle_seg.is_closed == True
+    def test_is_closed(self, unit_disk_seg):
+        assert unit_disk_seg.is_closed == True
 
-    def test_dist(self, unit_circle_seg):
-        # Distance from origin to unit circle == 1.0
-        assert np.isclose(unit_circle_seg.dist(0+0j), 1.0, rtol=1e-4)
+    def test_dist(self, unit_disk_seg):
+        # Distance from origin to unit disk == 1.0
+        assert np.isclose(unit_disk_seg.dist(0+0j), 1.0, rtol=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -288,11 +288,11 @@ class TestMultiSegment:
         assert ms.is_polyline == True
 
         # Mixed: one ParametricSegment → not a polyline
-        half_circle = ParametricSegment(
+        half_disk = ParametricSegment(
             lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
             0, np.pi, val_simple=False
         )
-        ms2 = MultiSegment([LineSegment(0, 1), half_circle])
+        ms2 = MultiSegment([LineSegment(0, 1), half_disk])
         assert ms2.is_polyline == False
 
     def test_corners_unit_square(self, unit_square_domain):
@@ -719,25 +719,25 @@ class TestLineSegmentNew:
 # ---------------------------------------------------------------------------
 
 class TestParametricSegmentNew:
-    def test_mul_scalar_scales_length(self, unit_circle_seg):
-        scaled = unit_circle_seg * 3
-        assert np.isclose(scaled.len, 3 * unit_circle_seg.len, rtol=1e-4)
+    def test_mul_scalar_scales_length(self, unit_disk_seg):
+        scaled = unit_disk_seg * 3
+        assert np.isclose(scaled.len, 3 * unit_disk_seg.len, rtol=1e-4)
 
-    def test_rmul_scalar(self, unit_circle_seg):
-        scaled1 = unit_circle_seg * 3
-        scaled2 = 3 * unit_circle_seg
+    def test_rmul_scalar(self, unit_disk_seg):
+        scaled1 = unit_disk_seg * 3
+        scaled2 = 3 * unit_disk_seg
         assert np.isclose(scaled1.len, scaled2.len, rtol=1e-4)
 
-    def test_translate_scalar(self, unit_circle_seg):
+    def test_translate_scalar(self, unit_disk_seg):
         shift = 1+2j
-        shifted = unit_circle_seg + shift
-        assert np.isclose(shifted.p0, unit_circle_seg.p0 + shift, atol=1e-6)
+        shifted = unit_disk_seg + shift
+        assert np.isclose(shifted.p0, unit_disk_seg.p0 + shift, atol=1e-6)
 
-    def test_translate_preserves_derivative(self, unit_circle_seg):
+    def test_translate_preserves_derivative(self, unit_disk_seg):
         shift = 1+2j
-        shifted = unit_circle_seg + shift
+        shifted = unit_disk_seg + shift
         tau = np.linspace(0.1, 0.9, 5)
-        assert np.allclose(shifted.dp(tau), unit_circle_seg.dp(tau), rtol=1e-4)
+        assert np.allclose(shifted.dp(tau), unit_disk_seg.dp(tau), rtol=1e-4)
 
 
 # ---------------------------------------------------------------------------
@@ -779,8 +779,8 @@ class TestFactoryFunctions:
     def test_rect_is_polygon(self):
         assert isinstance(rect(2, 1), Polygon)
 
-    def test_circle_is_domain(self):
-        assert isinstance(circle(), Domain)
+    def test_disk_is_domain(self):
+        assert isinstance(disk(), Domain)
 
     def test_L_shape_is_domain(self):
         assert isinstance(L_shape(), Polygon)
@@ -797,8 +797,8 @@ class TestFactoryFunctions:
     def test_reg_ngon_is_domain(self):
         assert isinstance(reg_ngon(6), Polygon)
 
-    def test_circle_sector_is_domain(self):
-        assert isinstance(circle_sector(), Domain)
+    def test_disk_sector_is_domain(self):
+        assert isinstance(disk_sector(), Domain)
 
     def test_iso_right_tri_is_domain(self):
         assert isinstance(iso_right_tri(), Polygon)
@@ -820,8 +820,8 @@ class TestFactoryFunctions:
     def test_rect_area(self):
         assert np.isclose(rect(2, 1).area, 2.0)
 
-    def test_circle_area(self):
-        assert np.isclose(circle(1).area, np.pi, rtol=1e-4)
+    def test_disk_area(self):
+        assert np.isclose(disk(1).area, np.pi, rtol=1e-4)
 
     def test_reg_ngon_hexagon_area(self):
         # Regular hexagon with circumradius 1: area = 3*sqrt(3)/2
@@ -839,8 +839,8 @@ class TestFactoryFunctions:
         for i in range(len(ms.segments) - 1):
             assert np.isclose(ms.segments[i].pf, ms.segments[i+1].p0, atol=1e-12)
 
-    def test_circle_sector_contiguous(self):
-        ms = circle_sector().bdry
+    def test_disk_sector_contiguous(self):
+        ms = disk_sector().bdry
         for i in range(len(ms.segments) - 1):
             assert np.isclose(ms.segments[i].pf, ms.segments[i+1].p0, atol=1e-12)
 
@@ -864,11 +864,11 @@ class TestFactoryFunctions:
         with pytest.raises(ValueError):
             mushroom(r=0.5, b=1)
 
-    def test_circle_sector_theta_out_of_range_raises(self):
+    def test_disk_sector_theta_out_of_range_raises(self):
         with pytest.raises(ValueError):
-            circle_sector(theta=0)
+            disk_sector(theta=0)
         with pytest.raises(ValueError):
-            circle_sector(theta=2*np.pi)
+            disk_sector(theta=2*np.pi)
 
     # --- BC propagation ---
 
@@ -876,6 +876,6 @@ class TestFactoryFunctions:
         r = rect(2, 1, bc='neu')
         assert all(seg.bc == 1.0 for seg in r.bdry.segments)
 
-    def test_circle_neumann_bc(self):
-        c = circle(bc='neu')
+    def test_disk_neumann_bc(self):
+        c = disk(bc='neu')
         assert all(seg.bc == 1.0 for seg in c.bdry.segments)

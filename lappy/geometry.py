@@ -1310,7 +1310,7 @@ def GWW2(bc='dir'):
     vertices = vx + 1j*vy
     return Polygon(vertices, bc=bc, val_simple=False)
 
-def circle(r=1, bc='dir', nsamp=100):
+def disk(r=1, bc='dir', nsamp=100):
     """circle of radius r"""
     seg = ParametricSegment(
         lambda t: r*np.exp(1j*t),
@@ -1355,7 +1355,7 @@ def reg_ngon(n, bc='dir'):
     vertices = np.exp(1j*theta)
     return Polygon(vertices, bc=bc, val_simple=False)
 
-def circle_sector(r=1, theta=np.pi/2, bc='dir', nsamp=100):
+def disk_sector(r=1, theta=np.pi/2, bc='dir', nsamp=100):
     if not (0 < theta < 2*np.pi):
         raise ValueError("theta must be between 0 and 2pi (strictly)")
     seg1 = LineSegment(0, r, bc=bc)
@@ -1368,6 +1368,9 @@ def circle_sector(r=1, theta=np.pi/2, bc='dir', nsamp=100):
     seg3 = LineSegment(r*np.exp(1j*theta), 0, bc=bc)
     bdry = MultiSegment([seg1,seg2,seg3])
     return Domain(bdry, val_simple=False, val_closed=False)
+
+def eq_tri(l=1, bc='dir'):
+    return Polygon([0,l,l/2 + 1j*l*np.sqrt(3)/2], bc=bc, val_simple=False)
 
 def iso_right_tri(l=1, bc='dir'):
     return Polygon([0, l, 1j*l], bc=bc, val_simple=False)
@@ -1386,4 +1389,37 @@ def mushroom(a=1, b=1, r=1.5, bc='dir', nsamp=100):
         0, np.pi, bc, nsamp
     )
     bdry = MultiSegment([seg1, seg2])
+    return Domain(bdry, val_simple=False, val_closed=False)
+
+def right_trapezoid(h1, h2, bc='dir'):
+    vertices = np.array([0,1,1+1j*h2,1j*h1])
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def parallelogram(b=1, h=1, alpha=np.pi/3, bc='dir'):
+    """Parallelogram with base b, height h, and shear angle alpha (angle between base and left side)."""
+    vertices = np.array([0, b, b + h/np.tan(alpha) + 1j*h, h/np.tan(alpha) + 1j*h])
+    return Polygon(vertices, bc=bc, val_simple=False)
+
+def stadium(L=1, H=1, bc='dir', nsamp=100):
+    """Bunimovich stadium"""
+    seg1 = LineSegment(0-1j*(H/2), L-1j*(H/2), bc=bc)
+    seg2 = ParametricSegment(
+        lambda t: L + (H/2)*np.exp(1j*t),
+        lambda t: 1j*(H/2)*np.exp(1j*t),
+        -np.pi/2, np.pi/2, bc, nsamp
+    )
+    seg3 = LineSegment(L+1j*(H/2), 1j*(H/2))
+    seg4 = ParametricSegment(
+        lambda t: (H/2)*np.exp(1j*t),
+        lambda t: 1j*(H/2)*np.exp(1j*t),
+        np.pi/2, 3*np.pi/2, bc, nsamp
+    )
+    bdry = MultiSegment([seg1, seg2, seg3, seg4], val_contiguous=False)
+    return Domain(bdry, val_simple=False, val_closed=False)
+
+def ellipse(a=2, b=1, bc='dir', nsamp=100):
+    def p(t): return a*np.cos(t) + 1j*b*np.sin(t)
+    def dp(t): return -a*np.sin(t) + 1j*b*np.cos(t)
+    seg = ParametricSegment(p, dp, 0, 2*np.pi, bc, nsamp)
+    bdry = MultiSegment([seg], val_simple=False)
     return Domain(bdry, val_simple=False, val_closed=False)

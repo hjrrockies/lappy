@@ -8,7 +8,7 @@ from . import bases
 from . import quad
 from . import utils
 from . import geometry
-from . import exact
+from . import reference
 from . import asymp
 from . import bounds
 from . import opt

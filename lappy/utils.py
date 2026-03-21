@@ -198,105 +198,105 @@ def invert_permutation(p):
     s[p] = np.arange(p.size)
     return s
 
-from .exact import rect_eig, rect_eigs, rect_eig_grad
+# from .reference import rect_eig, rect_eigs, rect_eig_grad
 
-def loss_plot(L,H,loss,log=True,ax=None):
-    import matplotlib.pyplot as plt
-    from matplotlib import colors
-    n_levels = 50
-    if ax is None:
-        fig = plt.figure()
-        ax = plt.gca()
-    if log:
-        low = np.floor(np.log10(loss.min()+1e-16))
-        high = np.ceil(np.log10(loss.max()))
-        levels = 10.0**np.linspace(low,high,n_levels)
-        norm = colors.LogNorm(vmin=loss.min()+1e-16, vmax=loss.max())
-    else:
-        levels = n_levels
-        norm = 'linear'
-    cs = ax.contourf(L,H,loss+1e-16,levels,norm=norm)
-    cbar = ax.get_figure().colorbar(cs,ax=ax)
-    if log: cbar.set_ticks(10.0**np.arange(low,(high+1)))
-    ax.set_xlabel('L')
-    ax.set_ylabel('H')
-    return ax,cs
+# def loss_plot(L,H,loss,log=True,ax=None):
+#     import matplotlib.pyplot as plt
+#     from matplotlib import colors
+#     n_levels = 50
+#     if ax is None:
+#         fig = plt.figure()
+#         ax = plt.gca()
+#     if log:
+#         low = np.floor(np.log10(loss.min()+1e-16))
+#         high = np.ceil(np.log10(loss.max()))
+#         levels = 10.0**np.linspace(low,high,n_levels)
+#         norm = colors.LogNorm(vmin=loss.min()+1e-16, vmax=loss.max())
+#     else:
+#         levels = n_levels
+#         norm = 'linear'
+#     cs = ax.contourf(L,H,loss+1e-16,levels,norm=norm)
+#     cbar = ax.get_figure().colorbar(cs,ax=ax)
+#     if log: cbar.set_ticks(10.0**np.arange(low,(high+1)))
+#     ax.set_xlabel('L')
+#     ax.set_ylabel('H')
+#     return ax,cs
 
-def eig_ratios(eigs):
-    """Computes the ratios lambda_j/lambda_1, assuming the eigenvalues are
-    indexed along the last dimension of the array"""
-    return (eigs.T[1:]/eigs.T[0]).T
+# def eig_ratios(eigs):
+#     """Computes the ratios lambda_j/lambda_1, assuming the eigenvalues are
+#     indexed along the last dimension of the array"""
+#     return (eigs.T[1:]/eigs.T[0]).T
 
-def rect_loss_std(L,H,eigs_true,weights=1,jac=False):
-    """Computes the standard loss function for a rectangle against
-    target eigenvalues. Can use weights."""
-    weights = np.asarray(weights).flatten()
-    k = len(eigs_true)
-    eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
-    pweights = weights**(0.5)
-    out = la.norm(pweights*(eigs-eigs_true),axis=-1)**2
-    if jac:
-        grad = weights*2*(eigs-eigs_true)
-        deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
-        grad = np.array([(grad*deig_dL).sum(axis=-1), (grad*deig_dH).sum(axis=-1)])
-        return out,grad
-    else:
-        return out
+# def rect_loss_std(L,H,eigs_true,weights=1,jac=False):
+#     """Computes the standard loss function for a rectangle against
+#     target eigenvalues. Can use weights."""
+#     weights = np.asarray(weights).flatten()
+#     k = len(eigs_true)
+#     eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
+#     pweights = weights**(0.5)
+#     out = la.norm(pweights*(eigs-eigs_true),axis=-1)**2
+#     if jac:
+#         grad = weights*2*(eigs-eigs_true)
+#         deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
+#         grad = np.array([(grad*deig_dL).sum(axis=-1), (grad*deig_dH).sum(axis=-1)])
+#         return out,grad
+#     else:
+#         return out
 
-def rect_loss_reciprocal(L,H,eigs_true,weights=1):
-    """Computes the standard loss function for a rectangle against
-    target eigenvalues in reciprocal form. Can use weights."""
-    weights = np.asarray(weights).flatten()
-    k = len(eigs_true)
-    eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
-    pweights = weights**(0.5)
-    out = la.norm(pweights*(1/eigs-1/eigs_true),axis=-1)**2
-    jac = False
-    if jac:
-        grad = weights*2*(eigs-eigs_true)
-        deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
-        grad = np.array([(grad*deig_dL).sum(axis=-1), (grad*deig_dH).sum(axis=-1)])
-        return out,grad
-    else:
-        return out
+# def rect_loss_reciprocal(L,H,eigs_true,weights=1):
+#     """Computes the standard loss function for a rectangle against
+#     target eigenvalues in reciprocal form. Can use weights."""
+#     weights = np.asarray(weights).flatten()
+#     k = len(eigs_true)
+#     eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
+#     pweights = weights**(0.5)
+#     out = la.norm(pweights*(1/eigs-1/eigs_true),axis=-1)**2
+#     jac = False
+#     if jac:
+#         grad = weights*2*(eigs-eigs_true)
+#         deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
+#         grad = np.array([(grad*deig_dL).sum(axis=-1), (grad*deig_dH).sum(axis=-1)])
+#         return out,grad
+#     else:
+#         return out
 
-def rect_loss_outerlog(L,H,eigs_true,weights=1,eps=1e-200,jac=False):
-    """Computes the 'outer-log loss' for rectangular eigenvalues"""
-    L,H = np.asarray(L), np.asarray(H)
-    weights = np.asarray(weights).flatten()
-    k = len(eigs_true)
-    if len(weights) == 1:
-        weights = weights*np.ones(k)
-    eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
-    eigsT = eigs.T
-    eigs_trueT = eigs_true.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
-    weightsT = weights.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
-    out = weightsT[0]*np.log((eigsT[0]-eigs_trueT[0])**2+eps)
-    eigdiff = eigsT[1:][np.newaxis]-eigs_trueT[1:][:,np.newaxis]
-    out += (weightsT[1:]*np.log(eigdiff**2 + eps).sum(axis=0)).sum(axis=0)
-    if jac:
-        deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
-        C = np.empty((k,*L.shape))
-        C[0] = (eigsT[0]-eigs_trueT[0])/((eigsT[0]-eigs_trueT[0])**2+eps)
-        eigdiff_sum = eigdiff.sum(axis=0)
-        C[1:] = eigdiff_sum/(eigdiff_sum**2+eps)
-        C *= 2*weightsT
-        grad = np.array([(C.T*deig_dL).sum(axis=-1),(C.T*deig_dH).sum(axis=-1)])
-        return out,grad
-    else:
-        return out
+# def rect_loss_outerlog(L,H,eigs_true,weights=1,eps=1e-200,jac=False):
+#     """Computes the 'outer-log loss' for rectangular eigenvalues"""
+#     L,H = np.asarray(L), np.asarray(H)
+#     weights = np.asarray(weights).flatten()
+#     k = len(eigs_true)
+#     if len(weights) == 1:
+#         weights = weights*np.ones(k)
+#     eigs,m,n = rect_eigs(k,L,H,ret_mn=True)
+#     eigsT = eigs.T
+#     eigs_trueT = eigs_true.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
+#     weightsT = weights.reshape((-1,*np.ones(eigsT.ndim-1,dtype='int')))
+#     out = weightsT[0]*np.log((eigsT[0]-eigs_trueT[0])**2+eps)
+#     eigdiff = eigsT[1:][np.newaxis]-eigs_trueT[1:][:,np.newaxis]
+#     out += (weightsT[1:]*np.log(eigdiff**2 + eps).sum(axis=0)).sum(axis=0)
+#     if jac:
+#         deig_dL, deig_dH = rect_eig_grad(m,n,L,H)
+#         C = np.empty((k,*L.shape))
+#         C[0] = (eigsT[0]-eigs_trueT[0])/((eigsT[0]-eigs_trueT[0])**2+eps)
+#         eigdiff_sum = eigdiff.sum(axis=0)
+#         C[1:] = eigdiff_sum/(eigdiff_sum**2+eps)
+#         C *= 2*weightsT
+#         grad = np.array([(C.T*deig_dL).sum(axis=-1),(C.T*deig_dH).sum(axis=-1)])
+#         return out,grad
+#     else:
+#         return out
 
-def logify(obj):
-    def log_obj(*args,**kwargs):
-        if 'jac' in kwargs.keys():
-            if kwargs['jac'] == True:
-                jac = True
-            else: jac = False
-        else: jac = False
-        if jac:
-            out,grad = obj(*args,**kwargs)
-            return np.log(out+1e-200), grad/(out+1e-200)
-        else:
-            return np.log(obj(*args,**kwargs)+1e-200)
-    return log_obj
+# def logify(obj):
+#     def log_obj(*args,**kwargs):
+#         if 'jac' in kwargs.keys():
+#             if kwargs['jac'] == True:
+#                 jac = True
+#             else: jac = False
+#         else: jac = False
+#         if jac:
+#             out,grad = obj(*args,**kwargs)
+#             return np.log(out+1e-200), grad/(out+1e-200)
+#         else:
+#             return np.log(obj(*args,**kwargs)+1e-200)
+#     return log_obj
 

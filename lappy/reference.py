@@ -1,10 +1,10 @@
-"""lappy.exact — closed-form Laplacian eigenvalue formulas for special geometries."""
+"""lappy.reference — closed-form Laplacian eigenvalue formulas for special geometries."""
 
 import numpy as np
-from scipy.special import jv
+from scipy.special import jv, jn_zeros, jnp_zeros
 from scipy.optimize import brentq
 
-
+# Rectangles
 def rect_eig(m, n, L, H):
     """Exact eigenvalue λ_{m,n} = π²m²/L² + π²n²/H² for an L×H rectangle.
 
@@ -180,36 +180,58 @@ def _bessel_zero(nu, n):
 
 # ── Isosceles right triangle (legs a, Dirichlet) ──────────────────────────────
 
-def tri_isosc_eig(m, n, a):
-    """Exact eigenvalue for an isosceles right triangle with legs a.
+def iso_right_tri_eig(m, n, l):
+    """Exact eigenvalue for an isosceles right triangle with legs l.
 
     Valid only for m > n ≥ 1 (strict inequality avoids the trivially zero
     antisymmetric combination). Returns None for invalid indices.
 
-    Formula: λ_{m,n} = π²(m² + n²) / a²
+    Formula: λ_{m,n} = π²(m² + n²) / l²
     """
     if n < 1 or m <= n:
         return None
-    return np.pi**2 * (m**2 + n**2) / a**2
+    return np.pi**2 * (m**2 + n**2) / l**2
 
 
-def tri_isosc_eigs(k, a):
-    """First k Dirichlet eigenvalues of an isosceles right triangle with legs a.
+def iso_right_tri_eigs(k, l):
+    """First k Dirichlet eigenvalues of an isosceles right triangle with legs l.
 
     Parameters
     ----------
     k : int
         Number of eigenvalues to return.
-    a : float
+    l : float
         Leg length.
     """
-    # Area = a²/2 → Weyl: λ_k ≈ 4πk/a²  → m²+n² ≲ 4k/π
-    max_idx = int(np.ceil(np.sqrt(6 * k / np.pi))) + 4
+    max_idx = 10*k
     m_vals = range(2, max_idx + 1)   # m ≥ 2 so that m > n ≥ 1 is possible
     n_vals = range(1, max_idx)
-    return _take_k_from_grid(lambda m, n: tri_isosc_eig(m, n, a), m_vals, n_vals, k)
+    return _take_k_from_grid(lambda m, n: iso_right_tri_eig(m, n, l), m_vals, n_vals, k)
 
 
+# ── Equilateral triangle (side length a, Dirichlet) ──────────────────────────────
+
+def eq_tri_eig(m, n, l=1):
+    """Eigenvalues of the equilateral triangle with side length l"""
+    if (m < 0) or (n < 1):
+        return None
+    elif m >= n:
+        return None
+    elif (m-n)%2 != 0:
+        return None
+    return (4/3)*np.pi**2*((m**2)/3 + n**2)/l**2
+
+def eq_tri_eigs(k, l=1):
+    max_idx = 10*k
+    # for m,n > 0, each eigenvalue has multiplicity 2
+    m_vals = range(1,max_idx+1)
+    n_vals = range(1,max_idx+1)
+    eigs1 = _take_k_from_grid(lambda m,n: eq_tri_eig(m, n, l), m_vals, n_vals, k)
+    # for m=0, each eigenvalue has multiplicity 1
+    eigs2 = _take_k_from_grid(lambda m,n: eq_tri_eig(m, n, l), [0], n_vals, k)
+    eigs = np.concatenate((eigs1, eigs1, eigs2))
+    return np.sort(eigs)[:k]
+    
 # ── Circular sector (radius R, opening angle alpha, Dirichlet) ────────────────
 
 def sector_eig(m, n, R, alpha):
@@ -244,7 +266,71 @@ def sector_eigs(k, R, alpha):
     n_vals = range(1, max_idx + 1)
     return _take_k_from_grid(lambda m, n: sector_eig(m, n, R, alpha), m_vals, n_vals, k)
 
-# ── Other domains ─────────────────────────────────────────────────────
+# ── Disk (radius r) ───────────────────────────────────────────────────────────
+
+def disk_eig(m, n, r, bc_type='dir'):
+    """Exact eigenvalue λ_{m,n} for a disk of radius r.
+
+    Parameters
+    ----------
+    m : int
+        Angular order (≥ 0). Multiplicity is 1 for m=0, 2 for m≥1.
+    n : int
+        Radial index (≥ 1).
+    r : float
+        Disk radius.
+    bc_type : {'dir', 'neu'}
+        Dirichlet: λ = (j_{m,n} / r)², where j_{m,n} is the n-th positive zero of J_m.
+        Neumann:   λ = (j'_{m,n} / r)², where j'_{m,n} is the n-th positive zero of J_m'.
+                   The zero eigenvalue (constant mode) is not returned by this function.
+    """
+    if bc_type == 'dir':
+        return jn_zeros(m, n)[-1] ** 2 / r**2
+    elif bc_type == 'neu':
+        return jnp_zeros(m, n)[-1] ** 2 / r**2
+    else:
+        raise ValueError(f"bc_type must be 'dir' or 'neu', got {bc_type!r}")
+
+
+def disk_eigs(k, r, bc_type='dir'):
+    """First k eigenvalues of a disk of radius r, sorted ascending (with multiplicity).
+
+    Parameters
+    ----------
+    k : int
+        Number of eigenvalues to return.
+    r : float
+        Disk radius.
+    bc_type : {'dir', 'neu'}
+        Dirichlet: λ_{m,n} = (j_{m,n}/r)², m≥0, n≥1. Multiplicity 2 for m≥1.
+        Neumann:   λ_{m,n} = (j'_{m,n}/r)², m≥0, n≥1. Multiplicity 2 for m≥1.
+                   The zero eigenvalue (m=n=0 constant mode) is prepended automatically.
+    """
+    if bc_type not in ('dir', 'neu'):
+        raise ValueError(f"bc_type must be 'dir' or 'neu', got {bc_type!r}")
+
+    # Weyl estimate: λ_k ≈ 4k/r²; j_{m,n} ≈ (n + m/2)*π.
+    # Over-estimate the required index range to be safe.
+    max_m = int(np.ceil(2 * np.sqrt(k) + 6))
+    max_n = int(np.ceil(np.sqrt(k) + 6))
+
+    eigs = [] if bc_type == 'dir' else [0.0]  # Neumann includes λ=0
+    zero_fn = jn_zeros if bc_type == 'dir' else jnp_zeros
+    for m in range(0, max_m + 1):
+        zeros = zero_fn(m, max_n)
+        mult = 1 if m == 0 else 2
+        eigs.extend((z / r) ** 2 for z in zeros for _ in range(mult))
+
+    eigs = np.sort(eigs)
+    if len(eigs) < k:
+        raise ValueError(
+            f"Grid produced only {len(eigs)} eigenvalues; need {k}. "
+            "Increase index range."
+        )
+    return eigs[:k]
+
+
+# ── Domains without closed-form eigenvalues ─────────────────────────────────────────────────────
 def gww_eigs(k):
     """The first 25 Dirichlet eigenvalues of the GWW isospectral domains, accurate to 12 digits, in sorted order"""
     if k > 25:
@@ -256,3 +342,43 @@ def gww_eigs(k):
                     6.53755744376, 12.3370055014, 17.6651184368, 23.7112974848, 28.1751285815, 
                     7.24807786256, 13.0536540557, 18.9810673877, 24.4792340693, 29.5697729132])
     return eigs[:k]
+
+def L_shape_eigs(k):
+    """The first 25 eigenvalues of the L-shaped domain, accurate to at least 14 digits"""
+    if k > 25:
+        raise ValueError("Only the first 25 eigenvalues are available")
+    return np.array([  9.639723844021946,  15.197251926454308,  19.739208802178716,
+                      29.521481114144848,  31.912635957137752,  41.47450989021491,
+                      44.94848778135119,   49.34802200544678,   49.34802200544678,
+                      56.70960988738507,   65.37653570984583,   71.05775564851349,
+                      71.57267968033655,   78.95683520871486,   89.30166835196012,
+                      92.3069067630492,    97.38072264602184,   98.69604401089357,
+                      98.69604401089357,  101.60529408377867,  112.36860922562566,
+                     115.5201730946677,   128.30485721416164,  128.30485721416164,
+                     130.11902885096785])[:k]
+
+def chevron_eigs(k, h1=1.0, h2=2.0):
+    """The first 10 eigenvalues of the chevron with heights h1,h2, accurate to 12 digits"""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+    
+    if h1 == 1 and h2 == 2:
+        return np.array([ 39.66587536762846,  77.66316267381548,  81.88608149069968,
+                        111.42970385691103, 120.59489370950362, 152.06601346806502,
+                        161.16007983417921, 179.80395817996902, 204.7047973867004 ,
+                        205.98199724200455])[:k]
+    else:
+        raise ValueError("eigenvalues not available for this h1,h2 pair")
+
+def iso_tri_eigs(k, h=1.0):
+    """The first 10 eigenvalues of the isosceles triangle, accurate to 12 digits"""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+    if h==20.0:
+        return np.array([ 3.538204270133983,  4.552162970620473,  5.539932740921296,
+                        6.544007125902493,  7.578949068369423,  8.651562362007823,
+                        9.765571848342804, 10.923228519465912, 12.125988718163306,
+                        12.4252704009599  ])[:k]
+    else:
+        raise ValueError("eigenvalues not available for this value of h")
+
