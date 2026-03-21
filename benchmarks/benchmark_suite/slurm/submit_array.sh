@@ -19,7 +19,7 @@ PYTHON_MODULE="Python/3.12.3-GCCcore-13.3.0"          # match what you used in s
 TIME_LIMIT="24:00:00"                # wall time per task; increase for large sweeps
 MEM_PER_TASK="64G"
 MAX_CONCURRENT=32                    # max simultaneous tasks (%N in --array)
-VENV="$HOME/venvs/.lappy"
+VENV="$HOME/venvs/lappy"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Parse arguments

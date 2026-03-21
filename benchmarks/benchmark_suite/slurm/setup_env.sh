@@ -7,7 +7,7 @@
 set -euo pipefail
 
 PYTHON_MODULE="Python/3.12.3-GCCcore-13.3.0"
-VENV_DIR="$HOME/venvs/.lappy"
+VENV_DIR="$HOME/venvs/lappy"
 
 module load "$PYTHON_MODULE"
 mkdir -p "$(dirname "$VENV_DIR")"
