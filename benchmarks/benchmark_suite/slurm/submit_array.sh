@@ -7,7 +7,7 @@
 #
 # Before first use:
 #   1. Fill in ACCOUNT, PARTITION, and PYTHON_MODULE below.
-#   2. Run setup_env.sh once on a login node to create .venv.
+#   2. Run setup_env.sh once in an interactive job to create the venv.
 #   3. Then run this script to prepare and submit.
 
 set -euo pipefail
@@ -75,8 +75,7 @@ JOB_ID=$(sbatch --parsable <<EOF
 
 module load ${PYTHON_MODULE}
 cd ${REPO_ROOT}
-source ~/venv/.lappy/bin/activate
-$VENV/bin/python -m benchmarks.benchmark_suite.slurm.run_job \
+${VENV}/bin/python -m benchmarks.benchmark_suite.slurm.run_job \
     --config_file ${CONFIG_FILE}
 EOF
 )

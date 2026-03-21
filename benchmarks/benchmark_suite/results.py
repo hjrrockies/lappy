@@ -4,6 +4,17 @@ import os
 import numpy as np
 from dataclasses import asdict
 
+
+class _NumpyEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
+
 from .runner import BenchmarkConfig, BenchmarkResult
 
 
@@ -42,7 +53,7 @@ def save_result(result: BenchmarkResult, outdir: str, sweep_name: str,
         'has_rel_errors': result.rel_errors is not None,
     }
     with open(base_path + '.json', 'w') as f:
-        json.dump(meta, f, indent=2)
+        json.dump(meta, f, indent=2, cls=_NumpyEncoder)
 
     return base_path
 
