@@ -2,8 +2,9 @@
 Tests distribution of basis functions at corners
 """
 from lappy import *
-from benchmarking import build_eigprob
+from .benchmarking import build_eigprob
 import numpy as np
+import os
 
 def test_right_trap(n_basis, verbose=False):
     """Tests basis point distribution across two corners"""
@@ -43,16 +44,6 @@ def test_right_trap(n_basis, verbose=False):
             if verbose: print("n1 =", n1)
             eigprob = right_trap_evp(h1, h2, n1, n2)
             try:
-                # if h1 == 1.45 and n1 == 30:
-                #     import matplotlib.pyplot as plt
-                #     dom = eigprob.domain
-                #     print(eigprob.eval_solver.rtol)
-                #     eigprob.eval_solver.plot_tensions(bounds.faber_krahn(dom), 
-                #                                       asymp.weyl_est(2, dom), 1000)
-                #     plt.show()
-                #     eigs[i,j] = eigprob.solve(1, n_workers=10, verbose=3)[0]
-                # else:
-                #     pass
                 eigs[i,j] = eigprob.solve(1, n_workers=10)[0]
                 sigmas[i,j] = eigprob.eval_solver.sigma(eigs[i,j])
                 R[i,j] = eigprob.eval_solver.rtol
@@ -86,32 +77,33 @@ def test_fb_strats(dom, N, rtol=None, verbose=False):
     
 
 if __name__ == "__main__":
-    outdir = "results/"
+    outdir = os.path.join(os.path.dirname(__file__), "results")
+    os.makedirs(outdir, exist_ok=True)
     np.random.seed(0)
     # trapeizoid tests
     print("running trapezoid tests")
     n_basis = 120
     H1, H2, N1, N2, eigs, sigmas, R = test_right_trap(n_basis, True)
-    np.savez(outdir+"fb_corner_trap.npz", H1=H1, H2=H2, N1=N1, N2=N2, 
+    np.savez(os.path.join(outdir, "fb_corner_trap.npz"), H1=H1, H2=H2, N1=N1, N2=N2,
              eigs=eigs, sigmas=sigmas, R=R)
-    
+
     # L_shaped domain
     print("running L-shaped domain tests")
     N = np.arange(60, 121, 10)
     eigs, sigmas, R = test_fb_strats(geometry.L_shape(), N, verbose=True)
-    np.savez(outdir+"fb_corner_lshape.npz", N=N, eigs=eigs, sigmas=sigmas, R=R)
+    np.savez(os.path.join(outdir, "fb_corner_lshape.npz"), N=N, eigs=eigs, sigmas=sigmas, R=R)
 
     # GWW domains
     print("running GWW domain tests")
     N = np.arange(240,481,40)
     eigs, sigmas, R = test_fb_strats(geometry.GWW1(), N, verbose=True, rtol=1e-12)
-    np.savez(outdir+"fb_corner_gww1.npz", N=N, eigs=eigs, sigmas=sigmas)
-    eigs, sigmas, R = test_fb_strats(gww2, N, verbose=True, rtol=1e-12)
-    np.savez(outdir+"fb_corner_gww2.npz", N=N, eigs=eigs, sigmas=sigmas)
+    np.savez(os.path.join(outdir, "fb_corner_gww1.npz"), N=N, eigs=eigs, sigmas=sigmas, R=R)
+    eigs, sigmas, R = test_fb_strats(geometry.GWW2(), N, verbose=True, rtol=1e-12)
+    np.savez(os.path.join(outdir, "fb_corner_gww2.npz"), N=N, eigs=eigs, sigmas=sigmas, R=R)
 
     # chevron
     print("running chevron domain tests")
     N = np.arange(100,200,10)
-    eigs, sigmas, R = test_fb_strats(geometry.chevron(1,4))
-    np.savez(outdir+"fb_corner_chev14.npz", N=N, eigs=eigs, sigmas=sigmas, R=R)
+    eigs, sigmas, R = test_fb_strats(geometry.chevron(1,4), N, verbose=True)
+    np.savez(os.path.join(outdir, "fb_corner_chev14.npz"), N=N, eigs=eigs, sigmas=sigmas, R=R)
 

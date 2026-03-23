@@ -1,12 +1,13 @@
-from lappy.geometry import (eq_tri, iso_right_tri, iso_tri, rect, parallelogram, disk_sector, L_shape,
-                            GWW1, GWW2, H_shape, chevron, mushroom, cut_square)
+from lappy.geometry import (eq_tri as _eq_tri, iso_right_tri as _iso_right_tri, iso_tri, rect,
+                            parallelogram, disk_sector, L_shape, GWW1, GWW2, H_shape, chevron,
+                            mushroom as _mushroom, cut_square)
 
 import numpy as np
 
 # domains
 # triangles
-eq_tri = eq_tri()
-iso_right_tri = iso_right_tri()
+eq_tri = _eq_tri()
+iso_right_tri = _iso_right_tri()
 iso_tri_05 = iso_tri(0.5)
 iso_tri_1 = iso_tri(1.0)
 iso_tri_2 = iso_tri(2.0)
@@ -41,7 +42,7 @@ chevron_14 = chevron(1,4)
 chevron_34 = chevron(3,4)
 
 # curved boundary segments with corners
-mushroom = mushroom()
+mushroom = _mushroom()
 cut_square_025 = cut_square(0.25)
 cut_square_05 = cut_square(0.5)
 cut_square_075 = cut_square(0.75)
