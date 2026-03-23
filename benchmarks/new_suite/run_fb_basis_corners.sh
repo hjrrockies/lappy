@@ -15,7 +15,7 @@ PYTHON_MODULE="Python/3.12.3-GCCcore-13.3.0"
 
 module load "$PYTHON_MODULE"
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_ROOT="$HOME/projects/lappy"
 cd "$REPO_ROOT"
 
 PYTHONPATH="$REPO_ROOT" "$VENV/bin/python" -m benchmarks.new_suite.fb_basis_corners
