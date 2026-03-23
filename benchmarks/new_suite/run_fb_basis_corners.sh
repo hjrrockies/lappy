@@ -18,4 +18,4 @@ module load "$PYTHON_MODULE"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-"$VENV/bin/python" -m benchmarks.new_suite.fb_basis_corners
+PYTHONPATH="$REPO_ROOT" "$VENV/bin/python" -m benchmarks.new_suite.fb_basis_corners
