@@ -18,4 +18,4 @@ module load "$PYTHON_MODULE"
 REPO_ROOT="$HOME/projects/lappy"
 cd "$REPO_ROOT"
 
-PYTHONPATH="$REPO_ROOT" "$VENV/bin/python" -m benchmarks.new_suite.fb_basis_corners
+PYTHONPATH="$REPO_ROOT" "$VENV/bin/python" -u -m benchmarks.new_suite.fb_basis_corners
