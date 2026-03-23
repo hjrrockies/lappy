@@ -32,24 +32,16 @@ class PointSet:
                 self.sqrt_wts = np.sqrt(weights)[:,np.newaxis]
                 self.sqrt_wts.flags.writeable = False
 
-        self._hash = hash((self.pts.shape,self.pts.tobytes()))
-    
     @property
     def x(self):
         return self.pts.real
-    
+
     @property
     def y(self):
         return self.pts.imag
-    
+
     def __len__(self):
         return len(self.pts)
-
-    def __hash__(self):
-        return self._hash
-    
-    def __eq__(self, other):
-        return self.pts is other.pts
     
     def __str__(self):
         return f"PointSet(size={len(self.pts)}, hash={self._hash})"
@@ -569,6 +561,9 @@ class SplineSegment(ParametricSegment):
     def __init__(self, spline, t0=None, tf=None, bc='dir', nsamp=100, val_simple=False, val_closed=False):
         if not isinstance(spline, BSpline):
             raise TypeError("'spline' must be an instance of BSpline")
+        if spline.c.ndim == 2 and spline.c.shape[1] == 2:
+            spline = BSpline(spline.t, spline.c[:, 0] + 1j * spline.c[:, 1], spline.k,
+                             spline.extrapolate, spline.axis)
         self.spline = spline
         p = lambda t: self.spline(t)
         dp = lambda t: self.spline(t, nu=1)
@@ -760,6 +755,10 @@ class MultiSegment:
         if self._len is None:
             self._len = self._compute_length()
         return self._len
+    
+    @property
+    def seg_lens(self):
+        return np.array([seg.len for seg in self.segments])
 
     @property
     def is_polyline(self):
@@ -814,8 +813,8 @@ class MultiSegment:
         corners = np.array([seg.p0 for seg in segments])[corner_idx]
         corner_angle0 = np.array(corner_angle0)
         corner_angle1 = np.array(corner_angle1)
-        corner_angle0[corner_angle0 < 0] += 2*np.pi
-        corner_angle1[corner_angle1 < 0] += 2*np.pi
+        corner_angle0 = corner_angle0 % (2*np.pi)
+        corner_angle1 = corner_angle1 % (2*np.pi)
         return corners, corner_idx, corner_angle0, corner_angle1
     
     def dist(self, pt, nsamp=100):
@@ -1151,6 +1150,10 @@ class Domain(BaseDomain):
     @property
     def corner_idx(self):
         return self.bdry.corner_idx
+    
+    @property
+    def int_angles(self):
+        return (self.corner_angles[1]-self.corner_angles[0]) % (2*np.pi)
 
     def plot(self, ax=None, showbc=False, **plt_kwargs):
         if 'c' not in plt_kwargs.keys() and 'color' not in plt_kwargs.keys():
@@ -1181,6 +1184,10 @@ class Domain(BaseDomain):
         for seg in new_dom.bdry.segments:
             seg.bc = bc
         return new_dom
+    
+    @property
+    def seg_lens(self):
+        return self.bdry.seg_lens
 
 
 # polygon class
@@ -1392,7 +1399,7 @@ def mushroom(a=1, b=1, r=1.5, bc='dir', nsamp=100):
     return Domain(bdry, val_simple=False, val_closed=False)
 
 def right_trapezoid(h1, h2, bc='dir'):
-    vertices = np.array([0,1,1+1j*h2,1j*h1])
+    vertices = np.array([1j*h1, 0, 1, 1+1j*h2])
     return Polygon(vertices, bc=bc, val_simple=False)
 
 def parallelogram(b=1, h=1, alpha=np.pi/3, bc='dir'):

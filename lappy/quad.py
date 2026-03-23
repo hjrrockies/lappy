@@ -159,9 +159,9 @@ def curvature_sampling(spline, t0, tf, pts_per_2pi=20):
     t_fine = np.linspace(t0, tf, 1000)
     dr = spline.derivative(nu=1)(t_fine)
     ddr = spline.derivative(nu=2)(t_fine)
-    
-    speed = np.sqrt(dr[:, 0]**2 + dr[:, 1]**2)
-    cross = dr[:, 0] * ddr[:, 1] - dr[:, 1] * ddr[:, 0]
+
+    speed = np.abs(dr)
+    cross = (dr.conj() * ddr).imag
     curvature = np.abs(cross) / (speed**3 + 1e-10)
     
     # Point density: higher curvature = more points
@@ -217,8 +217,8 @@ def spline_mesh_with_curvature(segments, pts_per_2pi=20, mesh_size_min=0.05, mes
         # Also get curvature at these points for mesh sizing
         dr = seg.spline.derivative(nu=1)(t_samples)
         ddr = seg.spline.derivative(nu=2)(t_samples)
-        speed = np.sqrt(dr[:, 0]**2 + dr[:, 1]**2)
-        cross = dr[:, 0] * ddr[:, 1] - dr[:, 1] * ddr[:, 0]
+        speed = np.abs(dr)
+        cross = (dr.conj() * ddr).imag
         curvature = np.abs(cross) / (speed**3 + 1e-10)
         
         boundary_points.append(pts)
@@ -236,7 +236,7 @@ def spline_mesh_with_curvature(segments, pts_per_2pi=20, mesh_size_min=0.05, mes
             all_points.append(pts[1:])
             all_curvatures.append(curv[1:])
             
-    all_points = np.vstack(all_points)[:-1]
+    all_points = np.concatenate(all_points)[:-1]
     all_curvatures = np.concatenate(all_curvatures)[:-1]
     
     # Remove last point if it duplicates the first (closing the loop)
@@ -256,7 +256,7 @@ def spline_mesh_with_curvature(segments, pts_per_2pi=20, mesh_size_min=0.05, mes
         # Create gmsh points with prescribed mesh sizes
         gmsh_points = []
         for pt, size in zip(all_points, mesh_sizes):
-            gmsh_points.append(geom.add_point([pt[0], pt[1], 0], mesh_size=size))
+            gmsh_points.append(geom.add_point([pt.real, pt.imag, 0], mesh_size=size))
         
         # Create line segments connecting consecutive points
         lines = []

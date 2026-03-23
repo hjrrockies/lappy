@@ -1,5 +1,5 @@
 # module imports
-from .core import BaseEigenproblem, BaseEigensolver, BaseDomain
+from .core import BaseEigenproblem, BaseEigensolver, BaseDomain, EigensolverFailure
 from .utils import invert_permutation, complex_form
 from .opt import bracket_mins, minimize_on_bracket, discrete_locmin_idx
 from .geometry import PointSet, pts_per_seg
@@ -401,31 +401,48 @@ class MPSEigensolver(BaseEigensolver):
         return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
                               ltol, ttol, minsolver, n_workers=n_workers, verbose=verbose)
     
-    def plot_tensions(self, low, high, nlam, n_angle=1, mps_kwargs={}, ax=None, **plot_kwargs):
+    def plot_tensions(self, low, high, nlam, n_angle=1, rtol=None, reg_type=None,
+                      ax=None, **plot_kwargs):
         import matplotlib.pyplot as plt
-        L = np.linspace(low, high, nlam+1)
-        results = [self.tensions(lam, **mps_kwargs) for lam in L]
+        lamgrid = np.linspace(low, high, nlam+1)
+        results = self.tensions(lamgrid, reg_type, rtol, n_workers=10)
         tans = np.array([r[:n_angle] for r in results])
         if ax is None:
             fig = plt.figure()
-            plt.plot(L, tans, **plot_kwargs)
+            plt.plot(lamgrid, tans, **plot_kwargs)
             return fig
         else:
-            ax.plot(L, tans, **plot_kwargs)
+            ax.plot(lamgrid, tans, **plot_kwargs)
             ax.set_xlim(low, high)
 
-    def adaptive_rtol(self, lam, reg_type=None, rtol=None, ltol=None, rtol_max=1e-5):
-        """Adjust rtol to reduce tension evaluation noise at the scale of ltol"""
-        raise NotImplementedError("feature under development")
-        reg_type, rtol, _, ltol = self._get_params(reg_type, rtol, None, ltol)
-        lamgrid = np.linspace(lam*(1-ltol), lam*(1+ltol), 5)
-        tensions = np.array([self.tensions(lam, reg_type)[0] for lam in lamgrid])
-        locmin_idx = discrete_locmin_idx(tensions)
-        while len(locmin_idx) > 1 and rtol < rtol_max:
-            rtol = min(rtol_max, 2*rtol) # double rtol
-            tensions = np.array([self.tensions(lam, reg_type)[0] for lam in lamgrid])
-            locmin_idx = discrete_locmin_idx(tensions)
-        return rtol
+    def adapt_rtol(self, a, b, n=7, reg_type=None, rtol_min=1e-14, rtol_max=1e-5):
+        """Find the smallest rtol that yields a smooth sigma(λ) curve on [a, b].
+        """
+        reg_type, _, _, _ = self._get_params(reg_type)
+        lamgrid = np.linspace(a, b, n)
+
+        def noise(sigma):
+            d1 = np.diff(sigma)
+            d2 = np.diff(d1)
+            return la.norm(d2)/la.norm(d1)
+
+        # compute tensions, noise
+        tensions0 = self.tensions(lamgrid, rtol=rtol_max)
+        sigma0 = np.array([t[0] for t in tensions0])
+        noise0 = noise(sigma0)
+
+        # shrink rtol until noise jumps
+        rtol = rtol_max/10
+        tensions1 = self.tensions(lamgrid, rtol=rtol)
+        sigma1 = np.array([t[0] for t in tensions1])
+        noise1 = noise(sigma1)
+        while noise1 < 1.1*noise0 and rtol >= rtol_min:
+            rtol = rtol/10
+            tensions1 = self.tensions(lamgrid, rtol=rtol)
+            sigma1 = np.array([t[0] for t in tensions1])
+            noise1 = noise(sigma1)
+
+        return 10*rtol
     
 ### Minimization Eigsearch Code
 def make_lamgrid(a, b, n_pts):
@@ -517,17 +534,21 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
     if n_workers > 1:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=n_workers) as ex:
-            rows = list(ex.map(lambda lam: tensions(lam)[:3], lamgrid))
+            rows = list(ex.map(lambda lam: tensions(lam)[:2], lamgrid))
         tensiongrid = np.array(rows).T
     elif verbose > 0:
-        tensiongrid = np.array([tensions(lam)[:3] for lam in tqdm(lamgrid)]).T
+        tensiongrid = np.array([tensions(lam)[:2] for lam in tqdm(lamgrid)]).T
     else:
-        tensiongrid = np.array([tensions(lam)[:3] for lam in lamgrid]).T
+        tensiongrid = np.array([tensions(lam)[:2] for lam in lamgrid]).T
     fevals = len(lamgrid)
+
+    tension_logmean = 10.0**(np.log10(tensiongrid[0]).mean())
+    if tension_logmean < ttol:
+        raise EigensolverFailure(f"Tension grid all small (logmean={tension_logmean}): solver likely needs to be reconfigured.")
 
     # get brackets containing minima
     if verbose > 0: print("2. finding eigenvalue brackets...")
-    brackets, fe = bracket_mins(lambda lam: tensions(lam)[:3], lamgrid, 
+    brackets, fe = bracket_mins(lambda lam: tensions(lam)[:2], lamgrid, 
                                 tensiongrid, ltol, verbose=verbose-1, **bracket_kwargs)
     fevals += fe
 

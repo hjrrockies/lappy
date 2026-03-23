@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import brentq, minimize_scalar
+from .core import EigensolverFailure
 
 def parabola_vertex(x,y):
     """Finds the vertex of a parabola passing through the points
@@ -121,7 +122,7 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
     # x and y grids for recursive call
     x_tmp = np.concatenate(([x[start]],
                             *np.linspace(x[np.arange(start,end)],x[np.arange(start,end)+1],shrink+1)[1:].T))
-    y_tmp = np.empty((3,len(x_tmp)))
+    y_tmp = np.empty((2,len(x_tmp)))
 
     # fill in known values of y=f(x)
     y_tmp[:,::shrink] = y[:,start:end+1]
@@ -137,7 +138,7 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
         # runs that don't have the leading ghost point
         # prepend x,y from previous interval endpoint
         x_tmp2 = np.concatenate(([x[start-1]],x_tmp))
-        y_tmp2 = np.empty((3,len(x_tmp)+1))
+        y_tmp2 = np.empty((2,len(x_tmp)+1))
         y_tmp2[:,1:] = y_tmp
         y_tmp2[:,0] = y[:,start-1]
         x_tmp, y_tmp = x_tmp2, y_tmp2
@@ -145,7 +146,7 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
         # runs that don't have the trailing ghost point
         # append x,y from following interval endpoint
         x_tmp2 = np.concatenate((x_tmp,[x[end+1]]))
-        y_tmp2 = np.empty((3,len(x_tmp)+1))
+        y_tmp2 = np.empty((2,len(x_tmp)+1))
         y_tmp2[:,:-1] = y_tmp
         y_tmp2[:,-1] = y[:,end+1]
         x_tmp, y_tmp = x_tmp2, y_tmp2
@@ -154,7 +155,7 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
 def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
     """Bracket the minima of f(x)[0] using a gridsearch. Returns a list of brackets which (hopefully!) each 
     contain a single local minimum of the first component of f. Uses the local minima 
-    of f(x)[1] and f(x)[2] to guide refinement."""
+    of f(x)[1] to guide refinement."""
     tabs = min(nrecurse,5)*"\t" # tab spacing for verbose mode
     if verbose > 0:
         print(tabs+f"bracket_mins on [{x[1]:.5e},{x[-2]:.5e}] (len={x[-2]-x[1]:.2e}, npts={len(x)})")
@@ -162,12 +163,14 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
     # get discrete local min indices for y1 and y2
     y0_min_idx = discrete_locmin_idx(y[0])
     y1_min_idx = discrete_locmin_idx(y[1])
-    y2_min_idx = discrete_locmin_idx(y[2])
+
+    if verbose > 0:
+        print("number of local minima:",len(y0_min_idx))
+    if nrecurse==0 and len(y0_min_idx) > len(x)/3:
+        raise EigensolverFailure("f has too many local minima")
 
     # get refinement flags (based on proximity of y1_mins/y2_mins relative to y0_mins)
-    refine_flag1 = flag_refinement_intervals(len(x)-1, y0_min_idx, y1_min_idx)
-    refine_flag2 = flag_refinement_intervals(len(x)-1, y0_min_idx, y2_min_idx)
-    refine_flag = refine_flag1|refine_flag2
+    refine_flag = flag_refinement_intervals(len(x)-1, y0_min_idx, y1_min_idx)
 
     # brackets that don't need refinement
     brackets = []

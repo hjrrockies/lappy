@@ -15,7 +15,7 @@ from . import opt
 
 # classes and functions available directly from lappy
 from .mps import MPSEigensolver
-
+from .core import EigensolverFailure
 from .evp import Eigenproblem
 from .bases import ParticularBasis, MultiBasis, FourierBesselBasis, NormalizedBasis, FundamentalBasis
 from .geometry import PointSet, Domain, Polygon, ParametricSegment, LineSegment, MultiSegment
