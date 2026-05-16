@@ -1,5 +1,5 @@
 from .utils import complex_form
-from .asymp import weyl_est as _weyl_est
+from .asymp import weyl_est
 from .geometry import PointSet
 from .core import BaseDomain
 
@@ -11,37 +11,55 @@ from abc import ABC, abstractmethod
 
 import mpmath as mp
 
-def make_default_basis(domain, fs_orders=1, n_eig=10, ltol=1e-12, fs_mult=1, fb_mult=1, d_mult=1):
-    """Make the default basis for a domain"""
-    raise NotImplementedError("functionality under development")
-    # approximate max spectral parameter
-    lam_max = _weyl_est(n_eig+1, area=domain.area, perim=domain.perimeter, bc_type='dir')
+def make_default_basis(domain, n_basis, fs_bdry_order=1, fs_d=1.0, fs_corner_order=2, fs_sigma=1.0, fs_C=1.0):
+    """Make the default basis for a domain of size n_basis"""
+    # smooth domains: pure boundary fundamental solutions
+    if len(domain.corners) == 0:
+        n_sources = np.round(n_basis/(2*(fs_bdry_order-1)+1)).astype(int)
+        # single segment case
+        if len(domain.bdry.segments) == 1:
+            t = np.linspace(0,1,n_sources+1)[:-1]
+            bdry_pts = domain.bdry.segments[0].p(t)
+            bdry_normals = domain.bdry.segments[0].N(t)
+            sources = bdry_pts + fs_d*bdry_normals
+        # multiple segments
+        else:
+            lens = domain.seg_lens
+            sources_per_seg = np.round(n_sources*lens/lens.sum()).astype(int)
+            T = [np.linspace(0, 1, k+1) for k in sources_per_seg]
+            bdry_pts = np.concatenate([seg.p(t) for seg,t in zip(domain.bdry.segments,T)])
+            bdry_normals = np.concatenate([seg.N(t) for seg,t in zip(domain.bdry.segments,T)])
+            sources = bdry_pts + fs_d*bdry_normals
+        basis = FundamentalBasis(sources, fs_bdry_order)
 
-    # get fundamental solution basis
-    lens = np.array([seg.len for seg in domain.bdry.segments])
-    n_per_seg = np.ceil(fs_mult*np.sqrt(lam_max)*lens).astype(int)
-    d = d_mult*np.minimum(3/np.sqrt(lam_max), lens.mean()/4)
-    basis = FundamentalBasis.from_domain(domain, n_per_seg, d, fs_orders)
+    # domains with corners
+    else:
+        int_angles = domain.int_angles
+        ratio = np.pi / int_angles
+        is_regular = np.abs(ratio - np.round(ratio))/ratio < 1e-15
+        is_singular = ~is_regular
+        # all regular corners: pure Fourier-Bessel at each corner
+        if np.all(is_regular):
+            orders = fb_corner_orders(domain, n_basis)
+            basis = FourierBesselBasis.from_domain(domain, orders)
+        # one singular corner: pure Fourier-Bessel at singular corner
+        if is_singular.sum() == 1:
+            orders = fb_corner_orders(domain, n_basis)
+            basis = FourierBesselBasis.from_domain(domain, orders)
+        # multiple singular corners: 50-50 split of Fourier-Bessel at singular corners, FS near corners
+        else:
+            n_fb = np.round(n_basis/2).astype(int)
+            n_fs = n_basis - n_fb
+            # Fourier-Bessel terms
+            fb_orders = fb_corner_orders(domain, n_fb)
+            fb_basis = FourierBesselBasis.from_domain(domain, fb_orders)
 
-    if len(domain.corners) > 0:
-        corners = domain.corners
-        # maximum from each corner
-        R = np.array([domain.max_dist(corner) for corner in corners])
+            # Fundamental solution terms
+            sources_per_corner = fs_corner_orders(domain, n_fs, order=fs_corner_order)
+            fs_basis = FundamentalBasis.by_corners(domain, sources_per_corner, fs_C, fs_sigma, fs_corner_order)
 
-        # corner angles
-        phi0, phi1 = domain.corner_angles
-        ray0 = np.exp(1j*phi0)
-        ray1 = np.exp(1j*phi1)
-        angles = np.angle(ray1/ray0)
-        angles[angles < 0] += 2*np.pi
-
-        # compute alphas
-        alpha = np.pi/angles
-        
-        # compute orders
-        orders = np.ceil(fb_mult*np.sqrt(lam_max)*R/alpha).astype(int) + 2
-        basis = FourierBesselBasis.from_domain(domain, orders) + basis
-    
+            # combine
+            basis = fb_basis + fs_basis
     return basis
 
 class ParticularBasis(ABC):
@@ -249,7 +267,54 @@ class NormalizedBasis(ParticularBasis):
         return f"NormalizedBasis({self.basis})"
 
 # Fourier-Bessel bases and helper functions
-    
+def fb_corner_fraction(domain, regular_mult=0, singular_mult=1, reentrant_mult=1):
+    """computes the score for each corner for placement of Fourier-Bessel particular solutions"""
+    # weight by angle measure
+    int_angles = domain.int_angles
+    scores = int_angles.copy()
+
+    # apply adjustments for regular, singular, reentrant corners
+    ratio = np.pi / int_angles
+    is_regular = np.abs(ratio - np.round(ratio))/ratio < 1e-15
+    # all regular corners: override regular_mult
+    if np.all(is_regular): regular_mult = 1
+    scores[is_regular] *= regular_mult
+
+    is_singular = ~is_regular
+    scores[is_singular] *= singular_mult
+
+    is_reentrant = (int_angles > np.pi)
+    scores[is_reentrant] *= reentrant_mult
+
+    # all weights zero => uniform weighting
+    if scores.max() == 0:
+        return np.ones(len(int_angles))/len(int_angles)
+    else:
+        # fraction is score[i] / sum(scores)
+        return scores/scores.sum()
+
+def fb_corner_orders(domain, n_basis, f=None, min_order=1, exact=False):
+    """computes the number of FB terms to place at domain corners for a basis of size n_basis"""
+    if f is None:
+        f = fb_corner_fraction(domain)
+    orders = np.zeros(len(domain.corners), dtype=int)
+    orders[f != 0] = min_order
+    remaining = n_basis - orders.sum()
+
+    if remaining > 0:
+        if not exact:
+            orders_plus = np.round(remaining*f).astype(int)
+        if exact:
+            orders_plus = np.floor(remaining*f).astype(int)
+            remainders = remaining*f - orders_plus
+            deficit = remaining - orders_plus.sum()
+            if deficit > 0:
+                priority = np.lexsort((f, remainders))[::-1]
+                for i in priority[:deficit]:
+                    orders_plus[i] += 1
+        orders += orders_plus
+    return orders
+ 
 class FourierBesselBasis(ParticularBasis):
     """
         Parameters
@@ -320,6 +385,44 @@ class FourierBesselBasis(ParticularBasis):
         if dom.bc_type == 'dir': kind = 'sin'
         elif dom.bc_type == 'neu': kind = 'cos'
         else: kind = 'sincos'
+        return cls(sources, phi0, phi1, orders, branch_cuts, kind)
+    
+    @classmethod
+    def at_corners(cls, domain, orders):
+        """Builds a corner-adapted Fourier-Bessel basis for the given domain.
+        """
+        orders = np.asarray(orders, dtype='int')
+        sources = domain.corners
+        phi0, phi1 = domain.corner_angles
+
+        # set branch cuts to bisect the exterior angle at each corner
+        psi = np.angle(np.exp(phi0*1j)/np.exp(phi1*1j))
+        psi[psi < 0] += 2*np.pi
+        branch_cuts = phi1 + psi/2
+        branch_cuts[branch_cuts >= 2*np.pi] -= 2*np.pi
+
+        # determine kind of basis
+        if domain.bc_type == 'dir': kind = 'sin'
+        elif domain.bc_type == 'neu': kind = 'cos'
+        else: kind = 'sincos'
+        return cls(sources, phi0, phi1, orders, branch_cuts, kind)
+    
+    @classmethod
+    def on_boundary(cls, domain, n_per_seg, order=1, spacing='even'):
+        """Builds a Fourier-Bessel basis along the boundary of 'domain'"""
+        n_per_seg = np.asarray(n_per_seg, dtype='int')
+        
+        sources = domain.bdry_pts(n_per_seg, kind=spacing).pts
+        tangents = domain.bdry_tangents(n_per_seg, kind=spacing).pts
+        phi0 = np.angle(tangents) % (2*np.pi)
+        phi1 = (phi0 + np.pi) % (2*np.pi)
+        branch_cuts = phi0
+
+        # determine kind of basis
+        if domain.bc_type == 'dir': kind = 'sin'
+        elif domain.bc_type == 'neu': kind = 'cos'
+        else: kind = 'sincos'
+        orders = order*np.full(len(sources), order)
         return cls(sources, phi0, phi1, orders, branch_cuts, kind)
 
     @property
@@ -484,6 +587,54 @@ class FourierBesselBasis(ParticularBasis):
         # combine using chain rule
         return dA_dr*dr_dz.real + dA_dtheta*dtheta_dz.real + 1j*(dA_dr*dr_dz.imag + dA_dtheta*dtheta_dz.imag)
     
+def fs_bdry_sps(domain, n, order=1, min_per_seg=1):
+    """determines sources_per_seg for a FS basis of (approximate) size 'n' along the boundary of the domain"""
+    n_sources = np.round(n/(1+2*(order-1)))
+    seg_lens = domain.seg_lens
+    sources_per_seg = np.round(n_sources*seg_lens/seg_lens.sum()).astype(int)
+    sources_per_seg[sources_per_seg < min_per_seg] = min_per_seg
+    return sources_per_seg
+
+def fs_corner_fraction(domain, regular_mult=0, singular_mult=1, reentrant_mult=1):
+    """computes the score for each corner for placement of FS particular solutions"""
+    # weight by angle measure
+    int_angles = domain.int_angles
+    scores = int_angles.copy()
+
+    # apply adjustments for regular, singular, reentrant corners
+    ratio = np.pi / int_angles
+    is_regular = np.abs(ratio - np.round(ratio))/ratio < 1e-15
+    # all regular corners: override regular_mult
+    if np.all(is_regular): regular_mult = 1
+    scores[is_regular] *= regular_mult
+
+    is_singular = ~is_regular
+    scores[is_singular] *= singular_mult
+
+    is_reentrant = (int_angles > np.pi)
+    scores[is_reentrant] *= reentrant_mult
+
+    # all weights zero => uniform weighting
+    if scores.max() == 0:
+        return np.ones(len(int_angles))/len(int_angles)
+    else:
+        # fraction is score[i] / sum(scores)
+        return scores/scores.sum()
+
+def fs_corner_orders(domain, n, f=None, order=1, min_sources=1):
+    """computes the number of FS terms to place at domain corners for a basis of size n"""
+    if f is None:
+        f = fs_corner_fraction(domain)
+    n_sources = np.round(n/(1+2*(order-1)))
+    sources_per_corner = np.zeros(len(domain.corners), dtype=int)
+    sources_per_corner[f != 0] = min_sources
+    remaining = n_sources - sources_per_corner.sum()
+
+    if remaining > 0:
+        sources_per_corner += np.round(remaining*f).astype(int)
+    
+    return sources_per_corner
+    
 class FundamentalBasis(ParticularBasis):
     """
     Basis of real-valued fundamental solutions to the Helmholtz equation
@@ -529,6 +680,28 @@ class FundamentalBasis(ParticularBasis):
         bdry_normals = domain.bdry_normals(n_per_seg, kind='even').pts
         sources = bdry_pts + d*bdry_normals
         return cls(sources, orders)
+    
+    @classmethod
+    def by_boundary(cls, domain, n_per_seg, d=1, order=1, spacing='even'):
+        n_per_seg = np.asarray(n_per_seg, dtype='int')
+        bdry_pts = domain.bdry_pts(n_per_seg, kind=spacing).pts
+        bdry_normals = domain.bdry_normals(n_per_seg, kind=spacing).pts
+        sources = bdry_pts + d*bdry_normals
+        return cls(sources, order)
+    
+    @classmethod
+    def by_corners(cls, domain, n_per_corner, C=1, sigma=1, order=1):
+        if isinstance(n_per_corner, np.integer):
+            n_per_corner = np.full(len(domain.corners), n_per_corner)
+        psi = domain.int_angles
+        phi0, phi1 = domain.corner_angles
+        out_angles = phi0 + psi/2
+        rays = -np.exp(1j*out_angles)
+        
+        J = [np.arange(1,n+1) for n in n_per_corner]
+        dists = [C*np.exp(-sigma*(np.sqrt(n)-np.sqrt(j))) for n,j in zip(n_per_corner, J)]
+        sources = np.concatenate([corner+d*ray for corner,d,ray in zip(domain.corners,dists,rays)])
+        return cls(sources, order)
 
     def _build_index_maps(self):
         """Build arrays that map each basis column to a source index, order m,

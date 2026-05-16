@@ -20,7 +20,7 @@ class PointSet:
     """Class for pointsets. Written to make caching of basis evaluations easier. Optionally includes weights for 
     numerical quadrature. Designed to be immutable."""
     def __init__(self, points, weights=None):
-        self.pts = complex_form(points)
+        self.pts = complex_form(points).flatten()
         self.pts.flags.writeable = False
         if weights is not None:
             weights = np.asarray(weights)
@@ -44,7 +44,7 @@ class PointSet:
         return len(self.pts)
     
     def __str__(self):
-        return f"PointSet(size={len(self.pts)}, hash={self._hash})"
+        return f"PointSet(size={len(self.pts)})"
     
     def __add__(self, other):
         if not isinstance(other, PointSet):
@@ -63,15 +63,15 @@ class PointSet:
                     new_wts = np.concatenate((np.ones(len(self.pts)), other.wts))
                 return PointSet(new_pts, new_wts)
 
-def pts_per_seg(domain, basis, mult=2, min_per_seg=0):
+def pts_per_seg(domain, fb_basis, mult=2, min_per_seg=0):
     """Computes how many boundary points to have along each segment of a domain boundary so that each
     corner's basis has enough points on non-adjacent edges."""
 
     # get the number of basis functions associated to each corner of the domain
     n_basis = np.zeros(len(domain.bdry.segments), dtype='int')
     p0 = np.array([seg.p0 for seg in domain.bdry.segments])
-    has_basis = np.any(np.isclose(np.subtract.outer(p0, basis.sources), 0), axis=1)
-    n_basis[has_basis] = basis.orders
+    has_basis = np.any(np.isclose(np.subtract.outer(p0, fb_basis.sources), 0), axis=1)
+    n_basis[has_basis] = fb_basis.orders
 
     # get the adjacent edge lengths to ith vertex into the first and last positions of column i, then drop rows
     seg_lengths = np.array([seg.len for seg in domain.bdry.segments])

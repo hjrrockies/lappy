@@ -81,6 +81,9 @@ class Eigenproblem(BaseEigenproblem):
             self._eval_solver = solver
         elif solver == 'mps':
             self._eval_solver = MPSEigensolver.from_domain(self.domain)
+        elif solver == 'fem':
+            from .fem import FEMEigensolver
+            self._eval_solver = FEMEigensolver(self.domain)
         else:
             raise TypeError("'solver' must be a valid Eigensolver or None")
 

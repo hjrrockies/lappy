@@ -393,6 +393,88 @@ class MPSEigensolver(BaseEigensolver):
     def eigenfunction_eval_normals(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         return self.eigenfunction_eval_extras(eig, mult, ddiff_pts=self.bdry_pts, ddiff_vecs=self.bdry_normals,
                                               reg_type=reg_type, rtol=rtol, ttol=ttol)
+    
+    def eigenfunction_energies(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+        """computes the energy values for the particular solution basis
+        for the eigenfunction(s) corresponding to the given eigenvalue"""
+        C = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol) 
+        AI = self.A_I(eig)
+        col_norms = la.norm(AI, axis=0)
+        denoms = la.norm(AI@C, axis=0)
+        energies = ((col_norms[:,np.newaxis]*C)**2)/(denoms**2)
+        return energies
+    
+    def _tension_diagnostics(self, lam, reg_type=None, rtol=None):
+        """computes diagnostics for tension error estimation"""
+        reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
+        reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
+        A1, A2 = self.A_B(lam), self.A_I(lam)
+        if reg_type:
+            A1_reg, A2_reg = regularize_pencil(A1, A2, reg_type, rtol)[:2]
+        else:
+            rtol = 0
+            A1_reg, A2_reg = A1, A2
+
+        # compute GSVD (LAPACK-style)
+        D1, D2, R, Q, k, l = gsvd(A1_reg, A2_reg, mode='separate', compute_u=False, compute_v=False)
+        c, s = np.max(D1, axis=0), np.max(D2, axis=0)
+        idx = np.lexsort((s,-c))[-1]
+
+        # solve for right generalized singular vector
+        e = np.eye(R.shape[0])[:,idx]
+        x = Q[:,-R.shape[1]:]@la.solve_triangular(R, e)
+
+        # set up diagonistics dict
+        out = dict()
+        out['c'] = c[idx]
+        out['s'] = s[idx]
+        out['sigma'] = c[idx]/s[idx]
+        out['x'] = x
+        out['x_norm'] = la.norm(x)
+        out['sigma_cond'] = (out['x_norm']/s[idx])*(1 + out['sigma'])
+        AB_svdvals = la.svdvals(A1)
+        out['AB_max_svdval'] = AB_svdvals.max()
+        out['AB_min_svdval'] = AB_svdvals.min()
+        AI_svdvals = la.svdvals(A2)
+        out['AI_max_svdval'] = AI_svdvals.max()
+        out['AI_min_svdval'] = AI_svdvals.min()
+        AB_reg_svdvals = la.svdvals(A1_reg)
+        out['AB_reg_max_svdval'] = AB_reg_svdvals.max()
+        out['AB_reg_min_svdval'] = AB_reg_svdvals.min()
+        AI_reg_svdvals = la.svdvals(A2_reg)
+        out['AI_reg_max_svdval'] = AI_reg_svdvals.max()
+        out['AI_reg_min_svdval'] = AI_reg_svdvals.min()
+        out['n'] = A1.shape[1]
+        out['n_reg'] = A1_reg.shape[1]
+        out['k'] = k
+        out['l'] = l
+        out['gsvd_rank'] = k+l
+        out['K'] = np.sqrt(out['n_reg'])*max(out['AB_reg_max_svdval'],out['AI_reg_max_svdval'])
+        out['err_linalg'] = out['K']*(out['sigma']/out['AB_reg_min_svdval'])*(1 + out['sigma'])*1e-16
+        out['err_reg'] = (1 + out['sigma'])*out['x_norm']*rtol
+
+        return out
+
+
+    def sigma_cond(self, lam, mult=1, reg_type=None, rtol=None):
+        """computes the condition number of the smallest generalized singular value(s) of the MPS pencil,
+        to detect the accuracy floor."""
+        reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
+        A1, A2 = self.A_B(lam), self.A_I(lam)
+        if reg_type:
+            A1, A2 = regularize_pencil(A1, A2, reg_type, rtol)[:2]
+        # compute GSVD (LAPACK-style)
+        D1, D2, R, Q = gsvd(A1, A2, mode='separate', compute_u=False, compute_v=False)[:-2]
+        c, s = np.max(D1, axis=0), np.max(D2, axis=0)
+        idx = np.lexsort((s,-c))[-mult:][::-1]
+
+        # solve for coefficient vectors
+        Er = np.eye(R.shape[0])[:,idx]
+        Xr = Q[:,-R.shape[1]:]@la.solve_triangular(R, Er)
+
+        # return condition number(s) of smallest generalized singular value(s)
+        cond = (la.norm(Xr, axis=0)/s[idx])*(1 + c[idx]/s[idx])
+        return cond
 
     def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None,
                        ltol=None, minsolver='parabolic', n_workers=1, verbose=0):
@@ -415,7 +497,7 @@ class MPSEigensolver(BaseEigensolver):
             ax.plot(lamgrid, tans, **plot_kwargs)
             ax.set_xlim(low, high)
 
-    def adapt_rtol(self, a, b, n=7, reg_type=None, rtol_min=1e-14, rtol_max=1e-5):
+    def adapt_rtol(self, a, b, n=15, reg_type=None, rtol_min=1e-14, rtol_max=1e-5):
         """Find the smallest rtol that yields a smooth sigma(λ) curve on [a, b].
         """
         reg_type, _, _, _ = self._get_params(reg_type)
@@ -542,11 +624,15 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
         tensiongrid = np.array([tensions(lam)[:2] for lam in lamgrid]).T
     fevals = len(lamgrid)
 
-    tension_logmean = 10.0**(np.log10(tensiongrid[0]).mean())
-    if tension_logmean < ttol:
-        raise EigensolverFailure(f"Tension grid all small (logmean={tension_logmean}): solver likely needs to be reconfigured.")
+    # tension_logmean = 10.0**(np.log10(tensiongrid[0]).mean())
+    # if tension_logmean < ttol:
+    #     raise EigensolverFailure(f"Tension grid all small (logmean={tension_logmean}): solver likely needs to be reconfigured.")
 
     # get brackets containing minima
+    if verbose > 0:
+        d1 = np.diff(tensiongrid)
+        d2 = np.diff(d1)
+        print("noise_est =", la.norm(d2)/la.norm(d1))
     if verbose > 0: print("2. finding eigenvalue brackets...")
     brackets, fe = bracket_mins(lambda lam: tensions(lam)[:2], lamgrid, 
                                 tensiongrid, ltol, verbose=verbose-1, **bracket_kwargs)

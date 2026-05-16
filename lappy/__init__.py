@@ -12,10 +12,15 @@ from . import reference
 from . import asymp
 from . import bounds
 from . import opt
+from . import convergence_tests
 
 # classes and functions available directly from lappy
 from .mps import MPSEigensolver
 from .core import EigensolverFailure
 from .evp import Eigenproblem
+try:
+    from .fem import FEMEigensolver
+except ImportError:
+    pass
 from .bases import ParticularBasis, MultiBasis, FourierBesselBasis, NormalizedBasis, FundamentalBasis
 from .geometry import PointSet, Domain, Polygon, ParametricSegment, LineSegment, MultiSegment
