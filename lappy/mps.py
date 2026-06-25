@@ -1,17 +1,15 @@
 # module imports
-from .core import BaseEigenproblem, BaseEigensolver, BaseDomain, EigensolverFailure
+from .core import BaseEigensolver, BaseDomain
 from .utils import invert_permutation, complex_form
-from .opt import bracket_mins, minimize_on_bracket, discrete_locmin_idx
-from .geometry import PointSet, pts_per_seg
-from .bases import make_default_basis, ParticularBasis
+from .opt import bracket_mins, minimize_on_bracket
+from .geometry import PointSet
+from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBasis, FourierBesselBasis
 
-from functools import lru_cache
 from .cache import instance_lru_cache
 import numpy as np
 import scipy.linalg as la
 import warnings
 from gsvd4py import gsvd, gsvdvals
-from scipy.optimize import bracket, minimize_scalar
 from tqdm import tqdm
 
 ### tolerance defaults
@@ -81,19 +79,7 @@ def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_
     Er = np.eye(R.shape[0])[:,idx]
     Xr = Q[:,-R.shape[1]:]@la.solve_triangular(R, Er)
 
-    # old way using matlab-style gsvd
-    # # compute GSVD
-    # C, S, X = gsvd(A1, A2, mode='econ', compute_u=False, compute_v=False)
-    # c, s = np.max(C, axis=0), np.max(S, axis=0)
-    # q = len(c) # numerical rank of pencil
-    # sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
-        
-    # # warn if multiplicity is deficient
-    # if sigmas[q-mult] > ttol:
-    #     warnings.warn(f"Eigenvalue may have deficient multiplicity ({sigmas[q-mult]:.3e}>{ttol:.3e})")
-
-    # solve for coefficient vectors
-    # Xr = la.lstsq(X.T, np.eye(X.shape[1])[:,-mult:])[0][:,::-1]
+    # post-process if regularization was used
     if not reg_type: coef = Xr
     else:
         if reg_type == 'svd': 
@@ -231,12 +217,24 @@ class MPSEigensolver(BaseEigensolver):
         self.ltol = ltol
 
     @classmethod
+    def default_basis(domain, n):
+        pass
+
+    @classmethod
+    def default_bdry_pts():
+        pass
+
+    @classmethod
+    def default_int_pts():
+        pass
+
+    @classmethod
     def from_domain(cls, domain, basis=None, use_mesh=False, use_weights=False, cubature_kind='dunavant', 
                     cubature_deg=4, mesh_kwargs={}, reg_type='svd', rtol=rtol_default, 
                     ltol=ltol_default, ttol=ttol_default):
-        raise NotImplementedError("functionality under development")
+
         if not isinstance(domain, BaseDomain):
-            raise TypeError("'eigenprob' must be an Eigenproblem object")
+            raise TypeError("'domain' must be a Domain object")
         # make basis for the domain
         if basis is None:
             basis = make_default_basis(domain, ltol=ltol)
@@ -254,7 +252,7 @@ class MPSEigensolver(BaseEigensolver):
             int_pts = domain.int_pts('mesh', use_weights, cubature_kind, cubature_deg, mesh_kwargs)
 
         # normalize basis
-        basis = basis.to_normalized([bdry_pts, int_pts])
+        basis = basis.to_normalized((bdry_pts, int_pts))
 
         return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, ltol)
         
@@ -671,3 +669,41 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
     if verbose > 0:
         print(f"***found {len(eigs)} eigenvalues, total_mult={np.sum(mults)}, fevals={fevals}***")
     return np.array(eigs), np.array(mults), fevals
+
+### default MPS collocation points
+def pts_per_seg(domain, basis, mult=2, min_per_seg=0):
+    if isinstance(basis, NormalizedBasis):
+        return pts_per_seg(domain, basis.basis, mult, min_per_seg)
+    
+    elif isinstance(basis, MultiBasis):
+        pps = np.sum([pts_per_seg(domain, basis_, mult, 0) for basis_ in basis.bases], axis=0)
+        return np.maximum(pps, min_per_seg).astype('int')
+    
+    elif isinstance(basis, FourierBesselBasis):
+        # get the number of basis functions associated to each corner of the domain
+        orders = np.zeros(len(domain.bdry.segments), dtype='int')
+        p0 = np.array([seg.p0 for seg in domain.bdry.segments])
+        has_basis = np.any(np.isclose(np.subtract.outer(p0, basis.sources), 0), axis=1)
+        orders[has_basis] = basis.orders
+
+        # get the adjacent edge lengths to ith vertex into the first and last positions of column i, then drop rows
+        seg_lens = domain.seg_lens
+        rolled_lens = np.array([np.roll(seg_lens, -j) for j in range(len(seg_lens))])[1:-1]
+
+        # normalize each column by sum of edge lengths
+        normalized_lens = rolled_lens/rolled_lens.sum(axis=0)
+
+        # multiply by orders, take ceiling
+        pps = np.ceil(mult*orders*normalized_lens)
+
+        # unroll and sum
+        pps = np.array([np.roll(pps[i], i+1) for i in range(len(pps))]).sum(axis=0)
+
+        # threshold with min_per_seg
+        return np.maximum(pps, min_per_seg).astype('int')
+    
+    else:
+        # place points proportional to segmenth length
+        seg_lens = domain.seg_lens
+        pps = np.round(len(basis)*seg_lens/seg_lens.sum()).astype(int)
+        return np.maximum(pps, min_per_seg).astype('int')

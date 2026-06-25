@@ -1,11 +1,11 @@
 from .core import BaseSegment, BaseDomain
 from .utils import (polygon_area, polygon_diameter, complex_form, real_form, rand_interior_points,
-                    interior_angles, edge_lengths, segment_intersection)
+                    interior_angles, edge_lengths)
 from shapely.geometry import Polygon as ShapelyPolygon
 from shapely import points as shapely_points
 from .opt import find_all_roots
-from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh, 
-                   tri_quad, cached_leggauss, cached_chebgauss)
+from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh,
+                   tri_quad, cached_leggauss, cached_chebgauss, jacgauss)
 
 from typing import Callable
 import copy
@@ -15,6 +15,29 @@ from scipy.interpolate import make_interp_spline, BSpline
 from scipy.optimize import minimize, minimize_scalar, linprog
 import matplotlib.pyplot as plt
 from pygmsh.geo import Geometry
+
+def segment_intersection(a0, a1, b0, b1):
+    """Computes the intersection of two line segments, if it exists."""
+    # segment vectors
+    d1 = a1 - a0
+    d2 = b1 - b0
+
+    # Cross product in 2D: d1 × d2
+    cross = d1.real * d2.imag - d1.imag * d2.real
+
+    # Solve for parameters s and t
+    delta = b0 - a0
+    if cross == 0:
+        s,t = np.inf, np.inf
+    else:
+        s = (delta.real * d2.imag - delta.imag * d2.real) / cross
+        t = (delta.real * d1.imag - delta.imag * d1.real) / cross
+
+    # Check if intersection is within both segments
+    if 0 <= s <= 1 and 0 <= t <= 1:
+        return a0 + s*d1
+
+    else: return None
 
 class PointSet:
     """Class for pointsets. Written to make caching of basis evaluations easier. Optionally includes weights for 
@@ -87,13 +110,46 @@ def pts_per_seg(domain, fb_basis, mult=2, min_per_seg=0):
     return n_per_seg
     
 # segment classes
-def get_quadfunc(kind):
+def get_quadfunc(kind, **kwargs):
     if kind == 'legendre': return cached_leggauss
     elif kind == 'chebyshev': return cached_chebgauss
     elif kind == 'even': return lambda n: (np.linspace(0, 1, n+2)[1:-1], np.ones(n)/n)
+    elif kind == 'jacobi': return lambda n: jacgauss(n, **kwargs)
     else: raise NotImplementedError(f"quadrature rule {kind} is not implemented")
 
-class ParametricSegment(BaseSegment):
+class SegmentQuadratureMixin:
+    """Provides pts/tangents/normals for any segment exposing p(tau), T(tau), N(tau), and len."""
+    def pts(self, n, kind='legendre', weights=False, **kwargs):
+        """Gets n points spaced along the segment, optionally with quadrature weights"""
+        quadfunc = get_quadfunc(kind, **kwargs)
+        tau, wts = quadfunc(n)
+        pts = self.p(tau)
+        if weights:
+            return PointSet(pts, self.len*wts)
+        else:
+            return PointSet(pts)
+
+    def tangents(self, n, kind='legendre', weights=False, **kwargs):
+        """Gets the unit tangent vectors for n points spaced along the segment, optionally with quadrature weights"""
+        quadfunc = get_quadfunc(kind, **kwargs)
+        tau, wts = quadfunc(n)
+        tangents = self.T(tau)
+        if weights:
+            return PointSet(tangents, self.len*wts)
+        else:
+            return PointSet(tangents)
+
+    def normals(self, n, kind='legendre', weights=False, **kwargs):
+        """Gets the unit outward normal vectors for n points spaced along the segment, optionally with quadrature weights"""
+        quadfunc = get_quadfunc(kind, **kwargs)
+        tau, wts = quadfunc(n)
+        normals = self.N(tau)
+        if weights:
+            return PointSet(normals, self.len*wts)
+        else:
+            return PointSet(normals)
+
+class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
     """Class for boundary segments (lines, curves) given in terms of a differentiable function p(t). 
     Handles boundary point placement, boundary tangents and normals.
     All segments are automatically re-parameterized by tau in [0,1]"""
@@ -288,36 +344,6 @@ class ParametricSegment(BaseSegment):
         """Unit outward normal vector (unit tangent rotated 90deg clockwise) in terms of tau from [0,1]"""
         return self._N_of_s(self.len*tau)
 
-    def pts(self, n, kind='legendre', weights=False):
-        """Gets n points spaced along the segment, optionally with quadrature weights"""
-        quadfunc = get_quadfunc(kind)
-        tau, wts = quadfunc(n)
-        pts = self.p(tau)
-        if weights:
-            return PointSet(pts, self.len*wts)
-        else:
-            return PointSet(pts)
-    
-    def tangents(self, n, kind='legendre', weights=False):
-        """Gets the unit tangent vectors for n points spaced along the segment, optionally with quadrature weights"""
-        quadfunc = get_quadfunc(kind)
-        tau, wts = quadfunc(n)
-        tangents = self.T(tau)
-        if weights:
-            return PointSet(tangents, self.len*wts)
-        else:
-            return PointSet(tangents)
-        
-    def normals(self, n, kind='legendre', weights=False):
-        """Gets the unit outward normal vectors for n points spaced along the segment, optionally with quadrature weights"""
-        quadfunc = get_quadfunc(kind)
-        tau, wts = quadfunc(n)
-        normals = self.N(tau)
-        if weights:
-            return PointSet(normals, self.len*wts)
-        else:
-            return PointSet(normals)
-
     def intersection(self, other):
         if self is other:
             return self
@@ -354,7 +380,21 @@ class ParametricSegment(BaseSegment):
                         if res.success:
                             intersections.append(self.p(res.x[0]))
             return np.array(intersections)
-        
+
+    def intersects(self, other):
+        """Cheap boolean test for whether this segment crosses another. Stops at the
+        first polyline crossing, skipping the point-localization (and the per-crossing
+        optimization) done by ``intersection``."""
+        if self is other:
+            return True
+        elif isinstance(other, LineSegment):
+            return other.intersects(self)
+        elif isinstance(other, ParametricSegment):
+            p1 = self.p(np.linspace(0, 1, self.nsamp))
+            p2 = other.p(np.linspace(0, 1, other.nsamp))
+            return any(segment_intersection(p1[i], p1[i+1], p2[j], p2[j+1]) is not None
+                       for i in range(len(p1)-1) for j in range(len(p2)-1))
+
     def dist(self, pt):
         """Computes the (minimum) distance from the given point to the segment"""
         tau = np.linspace(0, 1, self.nsamp)
@@ -399,7 +439,7 @@ class ParametricSegment(BaseSegment):
         else:
             raise TypeError("__add__ with Segment must be another Segment or complex scalar")
             
-class LineSegment(BaseSegment):
+class LineSegment(SegmentQuadratureMixin, BaseSegment):
     """Class for straight line segments.
     Parameters
     ----------
@@ -451,7 +491,7 @@ class LineSegment(BaseSegment):
         """Gets unit outward normal along line segment"""
         tau = np.asarray(tau)
         return np.full_like(tau, self._normal, dtype='complex')
-
+    
     def intersection(self, other):
         """Finds the point(s) of intersection between a LineSegment and another Segment"""
         if self is other:
@@ -478,7 +518,19 @@ class LineSegment(BaseSegment):
                 if 0 <= tau2 <= 1:
                     intersections.append(p)
             return np.array(intersections)
-        
+
+    def intersects(self, other):
+        """Cheap boolean test for whether this segment crosses another, without
+        localizing the intersection point(s) done by ``intersection``."""
+        if self is other:
+            return True
+        elif isinstance(other, LineSegment):
+            return segment_intersection(self.p0, self.pf, other.p0, other.pf) is not None
+        elif isinstance(other, ParametricSegment):
+            q = other.p(np.linspace(0, 1, other.nsamp))
+            return any(segment_intersection(self.p0, self.pf, q[k], q[k+1]) is not None
+                       for k in range(len(q) - 1))
+
     def to_splineseg(self, spline_bc_type='natural', nsamp=None):
         """Returns a SplineSegment with the same geometry as this segment"""
         if nsamp is None:
@@ -503,36 +555,6 @@ class LineSegment(BaseSegment):
     def Tf(self):
         """Unit tangent vector at final point"""
         return self._tangent
-    
-    def pts(self, n, kind='legendre', weights=False):
-        """Gets n points spaced along the segment, optionally with quadrature weights"""
-        quadfunc = get_quadfunc(kind)
-        tau, wts = quadfunc(n)
-        pts = self.p(tau)
-        if weights:
-            return PointSet(pts, self.len*wts)
-        else:
-            return PointSet(pts)
-    
-    def tangents(self, n, kind='legendre', weights=False):
-        """Gets the unit tangent vectors for n points spaced along the segment, optionally with quadrature weights"""
-        quadfunc = get_quadfunc(kind)
-        tau, wts = quadfunc(n)
-        tangents = self.T(tau)
-        if weights:
-            return PointSet(tangents, self.len*wts)
-        else:
-            return PointSet(tangents)
-        
-    def normals(self, n, kind='legendre', weights=False):
-        """Gets the unit outward normal vectors for n points spaced along the segment, optionally with quadrature weights"""
-        quadfunc = get_quadfunc(kind)
-        tau, wts = quadfunc(n)
-        normals = self.N(tau)
-        if weights:
-            return PointSet(normals, self.len*wts)
-        else:
-            return PointSet(normals)
 
     def dist(self, pt):
         """Computes the distance from pt to this line segment."""
@@ -724,10 +746,29 @@ class MultiSegment:
             if i == 0: end = len(segments)-1
             else: end = len(segments)
             for j in range(i+2, end):
-                intersections = segments[i].intersection(segments[j])
-                if len(intersections) > 0:
+                if segments[i].intersects(segments[j]):
                     return False
         return True
+    
+    @property
+    def p0(self):
+        return np.array([seg.p0 for seg in self.segments])
+    
+    @property
+    def pf(self):
+        return np.array([seg.pf for seg in self.segments])
+    
+    @property
+    def T0(self):
+        return np.array([seg.T0 for seg in self.segments])
+    
+    @property
+    def Tf(self):
+        return np.array([seg.Tf for seg in self.segments])
+    
+    @property
+    def int_angles(self):
+        return np.angle(-np.roll(self.Tf,1)/self.T0) % (2*np.pi)
     
     @property
     def is_contiguous(self):
@@ -748,7 +789,7 @@ class MultiSegment:
         return self._is_closed
         
     def _compute_length(self):
-        return np.sum([seg.len for seg in self.segments])
+        return self.seg_lens.sum()
 
     @property
     def len(self):
@@ -772,58 +813,69 @@ class MultiSegment:
     def bc_types(self):
         return [seg.bc_type for seg in self.segments]
 
-    def pts(self, N, kind='legendre', weights=False):
+    def _broadcast_quad_kwargs(self, kwargs):
+        """Broadcasts scalar quadrature kwargs (e.g. Gauss-Jacobi exponents 'a', 'b') to
+        per-segment arrays, mirroring how N is broadcast for point counts."""
+        n_seg = len(self.segments)
+        return {key: np.full(n_seg, val) if np.isscalar(val) else val for key, val in kwargs.items()}
+
+    def pts(self, N, kind='legendre', weights=False, **kwargs):
         """Places N[i] points on ith segment of the MultiSegment"""
         if isinstance(N, (int, np.integer)):
             N = np.full(len(self.segments), N)
-        return np.sum([self.segments[i].pts(N[i], kind, weights) for i in range(len(self.segments)) if N[i] > 0])
+        kwargs = self._broadcast_quad_kwargs(kwargs)
+        return np.sum([self.segments[i].pts(N[i], kind, weights, **{key: val[i] for key, val in kwargs.items()})
+                       for i in range(len(self.segments)) if N[i] > 0])
 
-    def tangents(self, N, kind='legendre', weights=False):
+    def tangents(self, N, kind='legendre', weights=False, **kwargs):
         """Computes tangent vectors at N[i] points along the ith segment of the MultiSegment"""
         if isinstance(N, (int, np.integer)):
             N = np.full(len(self.segments), N)
-        return np.sum([self.segments[i].tangents(N[i], kind, weights) for i in range(len(self.segments)) if N[i] > 0])
+        kwargs = self._broadcast_quad_kwargs(kwargs)
+        return np.sum([self.segments[i].tangents(N[i], kind, weights, **{key: val[i] for key, val in kwargs.items()})
+                       for i in range(len(self.segments)) if N[i] > 0])
 
-    def normals(self, N, kind='legendre', weights=False):
+    def normals(self, N, kind='legendre', weights=False, **kwargs):
         """Computes normal vectors at N[i] points along the ith segment of the MultiSegment"""
         if isinstance(N, (int, np.integer)):
             N = np.full(len(self.segments), N)
-        return np.sum([self.segments[i].normals(N[i], kind, weights) for i in range(len(self.segments)) if N[i] > 0])
+        kwargs = self._broadcast_quad_kwargs(kwargs)
+        return np.sum([self.segments[i].normals(N[i], kind, weights, **{key: val[i] for key, val in kwargs.items()})
+                       for i in range(len(self.segments)) if N[i] > 0])
     
+    def polyline(self):
+        """Boundary as consecutive sub-segments (b0[k] -> b1[k]) with the owning
+        segment index. LineSegments contribute one sub-segment; curved segments
+        contribute nsamp-1."""
+        b0, b1, owner = [], [], []
+        for j, seg in enumerate(self.segments):
+            if isinstance(seg, LineSegment):
+                pts = np.array([seg.p0, seg.pf])
+            else:
+                pts = seg.p(np.linspace(0, 1, seg.nsamp))
+            b0.append(pts[:-1])
+            b1.append(pts[1:])
+            owner.append(np.full(len(pts) - 1, j))
+        return np.concatenate(b0), np.concatenate(b1), np.concatenate(owner)
+
     def _find_corners(self):
         """Finds corners, i.e. where two boundary segments do not smoothly connect. Computes
         angle wedge there."""
-        segments = self.segments
-        T0 = [seg.T0 for seg in segments]
-        Tf = [seg.Tf for seg in segments]
-        corner_idx = []
-        corner_angle0 = []
-        corner_angle1 = []
-        if len(segments) == 1:
-            if not np.isclose(T0[0],Tf[0]):
-                corner_idx.append(0)
-                corner_angle0.append(np.angle(T0[0]))
-                corner_angle1.append(np.angle(-Tf[0]))
-        else:
-            for i in range(len(segments)):
-                if not np.isclose(T0[i],Tf[i-1]):
-                    corner_idx.append(i)
-                    corner_angle0.append(np.angle(T0[i]))
-                    corner_angle1.append(np.angle(-Tf[i-1]))
-        corners = np.array([seg.p0 for seg in segments])[corner_idx]
-        corner_angle0 = np.array(corner_angle0)
-        corner_angle1 = np.array(corner_angle1)
-        corner_angle0 = corner_angle0 % (2*np.pi)
-        corner_angle1 = corner_angle1 % (2*np.pi)
+        T0, Tf = self.T0, self.Tf
+        turning_angles = np.angle(np.roll(Tf,1)/T0)
+        is_corner = (np.abs(turning_angles) > 1e-10)
+        corners = self.p0[is_corner]
+        corner_idx = np.arange(len(self.segments))[is_corner]
+        corner_angle0 = np.angle(T0)
+        corner_angle1 = np.angle(-np.roll(Tf,1))
         return corners, corner_idx, corner_angle0, corner_angle1
     
     def dist(self, pt, nsamp=100):
         """Returns the (minimum) distance from a given point to the MultiSegment"""
-        tau = np.linspace(0, 1, nsamp)[:-1]
-        pts = np.array([seg.p(tau) for seg in self.segments])
-        dist = np.abs(pts-pt)
-        seg_idx = dist.min(axis=1).argmin()
-
+        b0, b1, owner = self.polyline()
+        d = b1 - b0
+        t = np.clip(((pt - b0) * d.conjugate()).real / np.abs(d) ** 2, 0.0, 1.0)
+        seg_idx = owner[np.abs(pt - (b0 + t * d)).argmin()]
         return self.segments[seg_idx].dist(pt)
     
     @property
@@ -905,7 +957,176 @@ class MultiSegment:
     def __rmul__(self, other):
         return self.__mul__(other)
     
+def corner_branch_cut_rays(domain):
+    """
+    For each corner of domain, return a ray angle (radians) such that the ray
+    c + t*exp(i*theta), t > 0, lies entirely in the exterior of the domain.
 
+    Each boundary sub-segment subtends an angular arc of directions from the
+    corner; any ray in that arc hits it. The set of blocked directions is the
+    union of these arcs over all non-adjacent sub-segments. The exterior sector
+    bisector is returned when free (canonical, exact for convex corners);
+    otherwise the midpoint of the largest free gap (maximal clearance from the
+    boundary). Returns NaN for any corner with no free direction.
+
+    Parameters
+    ----------
+    domain : Domain
+
+    Returns
+    -------
+    branch_angles : ndarray, shape (n_corners,), float
+        Branch cut angle in radians for each corner. NaN if none found.
+    """
+    bdry          = domain.bdry
+    corners       = bdry.corners
+    corner_idx    = bdry.corner_idx
+    phi0, phi1    = bdry.corner_angles   # indexed over all segments
+    n_segs        = len(bdry.segments)
+    b0, b1, owner = bdry.polyline()      # built once
+
+    result = np.full(len(corners), np.nan)
+
+    for i, (c, ci) in enumerate(zip(corners, corner_idx)):
+        phi_in   = phi1[ci]
+        ext_span = (phi0[ci] - phi_in) % (2 * np.pi)
+        if ext_span < 1e-10:
+            continue
+
+        # arcs subtended by non-adjacent sub-segments, in coords relative to phi_in
+        keep = (owner != ci) & (owner != (ci - 1) % n_segs)
+        a0 = np.angle(b0[keep] - c)
+        a1 = np.angle(b1[keep] - c)
+        d  = (a1 - a0 + np.pi) % (2 * np.pi) - np.pi        # signed minor arc, |d| < pi
+        rel0 = (np.where(d >= 0, a0, a1) - phi_in) % (2 * np.pi)
+        rel1 = rel0 + np.abs(d)                              # may exceed 2*pi (wraps)
+
+        def covered(u):   # is relative direction u blocked by any arc? (wrap-aware)
+            return np.any(((rel0 <= u) & (u <= rel1)) |
+                          ((rel0 <= u + 2 * np.pi) & (u + 2 * np.pi <= rel1)))
+
+        # canonical: bisector when free
+        bisect = ext_span / 2.0
+        if not covered(bisect):
+            result[i] = (phi_in + bisect) % (2 * np.pi)
+            continue
+
+        # otherwise: midpoint of the largest free gap in (0, ext_span)
+        eps = 1e-9
+        edges = np.concatenate(([eps, ext_span - eps], rel0, rel1, rel1 - 2 * np.pi))
+        edges = np.unique(edges[(edges > 0) & (edges < ext_span)])
+        edges = np.concatenate(([0.0], edges, [ext_span]))
+        best_w, best_mid = 0.0, np.nan
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            mid = 0.5 * (lo + hi)
+            if (hi - lo) > best_w and not covered(mid):
+                best_w, best_mid = hi - lo, mid
+        if best_w > 0:
+            result[i] = (phi_in + best_mid) % (2 * np.pi)
+
+    return result
+
+def free_ray_from_point(domain, p):
+    """Return a ray angle (radians) such that the ray p + t*exp(i*theta), t > 0, never
+    intersects the domain boundary — i.e. a clear sightline to infinity from the
+    exterior point p. Uses the same angular-subtension idea as corner_branch_cut_rays,
+    but over all boundary sub-segments (no adjacency exclusion) and the full circle.
+    Returns the midpoint of the widest free angular gap, or NaN if p is in a pocket
+    with no sightline."""
+    b0, b1, _ = domain.bdry.polyline()
+    a0 = np.angle(b0 - p)
+    a1 = np.angle(b1 - p)
+    d  = (a1 - a0 + np.pi) % (2 * np.pi) - np.pi   # signed minor arc, |d| < pi
+    lo = np.where(d >= 0, a0, a1) % (2 * np.pi)    # arc start in [0, 2pi)
+    hi = lo + np.abs(d)                            # arc end (may exceed 2pi)
+
+    def covered(u):   # is direction u (in [0,2pi)) blocked by any subtended arc?
+        return np.any(((lo <= u) & (u <= hi)) |
+                      ((lo <= u + 2 * np.pi) & (u + 2 * np.pi <= hi)))
+
+    # candidate gap boundaries: all arc edges mod 2pi, swept around the circle
+    edges = np.unique(np.concatenate((lo % (2 * np.pi), hi % (2 * np.pi))))
+    swept = np.concatenate((edges, edges[:1] + 2 * np.pi))
+    best_w, best_dir = 0.0, np.nan
+    for a, b in zip(swept[:-1], swept[1:]):
+        mid = 0.5 * (a + b) % (2 * np.pi)
+        if (b - a) > best_w and not covered(mid):
+            best_w, best_dir = b - a, mid
+    return best_dir
+
+def _path_crosses_boundary(domain, c, verts, atol=1e-9):
+    """True if any segment of the path [c, *verts] crosses the boundary (touches at the
+    corner c are allowed) or has a midpoint inside the domain."""
+    b0, b1, _ = domain.bdry.polyline()
+    path = np.concatenate(([c], verts))
+    for a, b in zip(path[:-1], path[1:]):
+        for z0, z1 in zip(b0, b1):
+            hit = segment_intersection(a, b, z0, z1)
+            if hit is not None and not np.isclose(hit, c, atol=atol):
+                return True
+    mids = 0.5 * (path[:-1] + path[1:])
+    return bool(np.any(domain.contains(mids)))
+
+def corner_branch_cut_polyline(domain, i, eps=None, max_steps=None):
+    """Heuristic polyline+ray branch cut for the corner at ``domain.corners[i]`` when no
+    straight ray is free (a "surrounded" corner). Wall-follows the outward-offset
+    boundary from the corner until reaching a vertex with a clear sightline to infinity,
+    then attaches that ray. Tries both directions around the boundary and returns the
+    shorter valid cut.
+
+    Returns
+    -------
+    vertices : ndarray of complex
+        Interior polyline vertices [q1, ..., qm] (excluding the corner c and the ray).
+    beta : float
+        Angle of the final ray, emanating from vertices[-1].
+
+    Raises
+    ------
+    RuntimeError if no valid polyline cut is found.
+    """
+    bdry = domain.bdry
+    b0, b1, _ = bdry.polyline()
+    K = len(b0)
+    pts = b0                                   # ordered boundary points (closed loop)
+    c = domain.corners[i]
+    k0 = int(np.abs(pts - c).argmin())
+
+    # outward normals (CCW boundary => outward = -1j * unit tangent)
+    edge = b1 - b0
+    seg_n = -1j * edge / np.abs(edge)
+    vert_n = seg_n + np.roll(seg_n, 1)         # average of the two adjacent sub-seg normals
+    mag = np.abs(vert_n)
+    vert_n = np.where(mag > 1e-12, vert_n / np.where(mag > 1e-12, mag, 1.0), seg_n)
+
+    if eps is None:
+        eps = 0.05 * np.min(np.abs(edge))
+    if max_steps is None:
+        max_steps = K
+    offset = pts + eps * vert_n
+
+    def build(direction):
+        verts = []
+        for j in range(1, max_steps + 1):
+            q = offset[(k0 + direction * j) % K]
+            verts.append(q)
+            beta = free_ray_from_point(domain, q)
+            if not np.isnan(beta):
+                return np.array(verts), float(beta)
+        return None, None
+
+    candidates = []
+    for direction in (+1, -1):
+        verts, beta = build(direction)
+        if verts is not None and not _path_crosses_boundary(domain, c, verts):
+            length = np.abs(np.diff(np.concatenate(([c], verts)))).sum()
+            candidates.append((len(verts), length, verts, beta))
+
+    if not candidates:
+        raise RuntimeError(
+            f"corner_branch_cut_polyline: no valid polyline cut found for corner {i}")
+    candidates.sort(key=lambda t: (t[0], t[1]))
+    return candidates[0][2], candidates[0][3]
 
 # domain class
 class Domain(BaseDomain):
@@ -1072,20 +1293,15 @@ class Domain(BaseDomain):
         pt_x = pts.real
         inside = np.zeros(len(pts), dtype=bool)
 
-        for seg in self.bdry.segments:
-            if isinstance(seg, LineSegment):
-                vertices = np.array([seg.p0, seg.pf])
-            else:
-                vertices = seg.p(np.linspace(0, 1, seg.nsamp + 1))
-
-            for k in range(len(vertices) - 1):
-                x0, y0 = vertices[k].real, vertices[k].imag
-                x1, y1 = vertices[k+1].real, vertices[k+1].imag
-                crosses = ((y0 <= pt_y) & (pt_y < y1)) | ((y1 <= pt_y) & (pt_y < y0))
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    t = np.where(crosses, (pt_y - y0) / (y1 - y0), 0.0)
-                x_cross = x0 + t * (x1 - x0)
-                inside ^= crosses & (x_cross > pt_x)
+        b0, b1, _ = self.bdry.polyline()
+        for z0, z1 in zip(b0, b1):
+            x0, y0 = z0.real, z0.imag
+            x1, y1 = z1.real, z1.imag
+            crosses = ((y0 <= pt_y) & (pt_y < y1)) | ((y1 <= pt_y) & (pt_y < y0))
+            with np.errstate(divide='ignore', invalid='ignore'):
+                t = np.where(crosses, (pt_y - y0) / (y1 - y0), 0.0)
+            x_cross = x0 + t * (x1 - x0)
+            inside ^= crosses & (x_cross > pt_x)
 
         return inside
     
@@ -1153,7 +1369,13 @@ class Domain(BaseDomain):
     
     @property
     def int_angles(self):
-        return (self.corner_angles[1]-self.corner_angles[0]) % (2*np.pi)
+        return self.bdry.int_angles
+
+    def branch_cut_rays(self):
+        """For each corner, a ray angle (radians) whose extension to infinity stays
+        outside the domain — the branch cut placement for corner-centered
+        Fourier-Bessel functions. NaN where no valid direction exists."""
+        return corner_branch_cut_rays(self)
 
     def plot(self, ax=None, showbc=False, **plt_kwargs):
         if 'c' not in plt_kwargs.keys() and 'color' not in plt_kwargs.keys():
@@ -1188,7 +1410,6 @@ class Domain(BaseDomain):
     @property
     def seg_lens(self):
         return self.bdry.seg_lens
-
 
 # polygon class
 class Polygon(Domain):
@@ -1361,6 +1582,20 @@ def reg_ngon(n, bc='dir'):
     theta = np.linspace(0, 2*np.pi, n+1)[:-1]
     vertices = np.exp(1j*theta)
     return Polygon(vertices, bc=bc, val_simple=False)
+
+def spiral(turns=1.5, pitch=1.0, width=0.35, n=12, r0=0.6, bc='dir'):
+    """A polygonal spiral strip. The inner coils surround several corners, leaving them
+    with no straight-ray branch-cut sightline to infinity (see corner_branch_cut_rays /
+    corner_branch_cut_polyline). Vertices are ordered counter-clockwise."""
+    phi = np.linspace(0, 2*np.pi*turns, n)
+    center = (r0 + pitch*phi/(2*np.pi))*np.exp(1j*phi)
+    t = np.gradient(center)
+    t /= np.abs(t)
+    nrm = 1j*t
+    verts = np.concatenate([center + width/2*nrm, (center - width/2*nrm)[::-1]])
+    if polygon_area(verts) < 0:
+        verts = verts[::-1]
+    return Polygon(verts, bc=bc, val_simple=False)
 
 def disk_sector(r=1, theta=np.pi/2, bc='dir', nsamp=100):
     if not (0 < theta < 2*np.pi):

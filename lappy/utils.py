@@ -38,9 +38,7 @@ def interior_angles(vertices):
     """Computes the interior angles of a polygon with given vertices, ordered
     counter-clockwise"""
     e = polygon_edges(vertices)
-    phis = np.angle(np.roll(-e,1)/e)
-    phis[phis<0] += 2*np.pi
-    return phis
+    return np.angle(np.roll(-e,1)/e) % (2*np.pi)
 
 def edge_lengths(vertices):
     """Computes the edge lengths of a polygon with vertices in complex form, ordered
@@ -72,29 +70,6 @@ def singular_corner_check(angles,tol=1e-15):
 def edge_midpoints(vertices):
     vertices = complex_form(vertices)
     return 0.5*(np.roll(vertices,-1)+vertices)
-
-def segment_intersection(a0, a1, b0, b1):
-    """Computes the intersection of two line segments, if it exists."""
-    # segment vectors
-    d1 = a1 - a0
-    d2 = b1 - b0
-    
-    # Cross product in 2D: d1 × d2
-    cross = d1.real * d2.imag - d1.imag * d2.real
-    
-    # Solve for parameters s and t
-    delta = b0 - a0
-    if cross == 0:
-        s,t = np.inf, np.inf
-    else:
-        s = (delta.real * d2.imag - delta.imag * d2.real) / cross
-        t = (delta.real * d1.imag - delta.imag * d1.real) / cross
-    
-    # Check if intersection is within both segments
-    if 0 <= s <= 1 and 0 <= t <= 1:
-        return a0 + s*d1
-    
-    else: return None
 
 def boundary_pts_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     from .quad import boundary_nodes_polygon

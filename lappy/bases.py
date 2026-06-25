@@ -11,6 +11,21 @@ from abc import ABC, abstractmethod
 
 import mpmath as mp
 
+def _points_in_polygon(pts, poly):
+    """Vectorized even-odd point-in-polygon test. pts, poly are complex arrays."""
+    x, y = pts.real, pts.imag
+    inside = np.zeros(len(pts), dtype=bool)
+    n = len(poly)
+    for k in range(n):
+        x0, y0 = poly[k].real, poly[k].imag
+        x1, y1 = poly[(k+1) % n].real, poly[(k+1) % n].imag
+        crosses = ((y0 <= y) & (y < y1)) | ((y1 <= y) & (y < y0))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            t = np.where(crosses, (y - y0)/(y1 - y0), 0.0)
+        x_cross = x0 + t*(x1 - x0)
+        inside ^= crosses & (x_cross > x)
+    return inside
+
 def make_default_basis(domain, n_basis, fs_bdry_order=1, fs_d=1.0, fs_corner_order=2, fs_sigma=1.0, fs_C=1.0):
     """Make the default basis for a domain of size n_basis"""
     # smooth domains: pure boundary fundamental solutions
@@ -331,7 +346,7 @@ class FourierBesselBasis(ParticularBasis):
         branch_cuts : list or ndarray
             The angles of the branch cut rays for the trigonometric parts of the basis functions.
         """
-    def __init__(self, sources, phi0, phi1, orders, branch_cuts, kind='sin'):
+    def __init__(self, sources, phi0, phi1, orders, branch_cuts, kind='sin', branch_polylines=None):
         if kind not in ['cos','sin','sincos']:
             raise ValueError("'kind' must be one of 'sin', 'cos', or 'sincos'")
         if isinstance(orders, (int, np.integer)):
@@ -348,13 +363,29 @@ class FourierBesselBasis(ParticularBasis):
         self.orders = orders[mask]
         self._phi0 = phi0[mask]
         self._phi1 = phi1[mask]
-        self.branch_cuts = branch_cuts[mask]
+        self.branch_cuts = np.array(branch_cuts, dtype=float)[mask]
+
+        # optional polyline+ray branch cuts, aligned with sources (None = plain ray).
+        # Each entry is a tuple (vertices, beta): exterior polyline vertices [q1,...,qm]
+        # and the final ray angle. For these sources the wrapping ray is the initial
+        # polyline direction arg(q1 - c).
+        keep = np.nonzero(mask)[0]
+        if branch_polylines is None:
+            self._polylines = [None]*self.n_sources
+        else:
+            self._polylines = [branch_polylines[j] for j in keep]
+        for i, pl in enumerate(self._polylines):
+            if pl is not None:
+                verts, _beta = pl
+                self.branch_cuts[i] = np.angle(complex_form(np.asarray(verts))[0] - self.sources[i])
         self.branch_rays = np.exp(1j*self.branch_cuts)
 
         if self.orders.shape[0] != self.n_sources:
             raise ValueError('orders must match length of vertices')
-        
+
         self._set_alphak()
+        self._build_index_maps()
+        self._setup_polyline_cuts()
 
     def __str__(self):
         return f"FourierBesselBasis(n_sources={self.n_sources}, n_func={len(self)}, kind={self.kind})"
@@ -365,47 +396,61 @@ class FourierBesselBasis(ParticularBasis):
         elif self.kind == 'sincos':
             return 2*self.orders.sum()
     
+    @staticmethod
+    def _corner_branch_data(dom, polyline_cuts):
+        """Branch cut data for corner sources: validated free rays where possible, and
+        polyline+ray cuts for any "surrounded" corner with no straight-ray sightline.
+        Returns (branch_cuts, branch_polylines), the latter None when all cuts are plain."""
+        from .geometry import corner_branch_cut_polyline
+        branch_cuts = dom.branch_cut_rays()
+        nan_idx = np.where(np.isnan(branch_cuts))[0]
+        if len(nan_idx) == 0:
+            return branch_cuts, None
+        if not polyline_cuts:
+            raise ValueError(
+                f"corners {nan_idx.tolist()} have no straight-ray branch cut to infinity; "
+                "pass polyline_cuts=True to auto-generate polyline+ray cuts")
+        branch_polylines = [None]*len(dom.corners)
+        for i in nan_idx:
+            verts, beta = corner_branch_cut_polyline(dom, int(i))
+            branch_polylines[i] = (verts, beta)
+            branch_cuts[i] = np.angle(verts[0] - dom.corners[i])   # finite placeholder
+        return branch_cuts, branch_polylines
+
     @classmethod
-    def from_domain(cls, dom, orders):
-        """Builds a Fourier-Bessel basis with source points at the corners of the given domain."""
+    def from_domain(cls, dom, orders, polyline_cuts=True):
+        """Builds a Fourier-Bessel basis with source points at the corners of the given
+        domain. Branch cuts are placed by `dom.branch_cut_rays()`; corners with no
+        straight-ray sightline get an auto-generated polyline+ray cut (set
+        `polyline_cuts=False` to instead raise on such corners)."""
         if not isinstance(dom, BaseDomain):
             raise TypeError("'dom' must be a valid Domain object")
-        
+
         orders = np.asarray(orders, dtype='int')
         sources = dom.corners
         phi0, phi1 = dom.corner_angles
-
-        # set branch cuts to bisect the exterior angle at each corner
-        psi = np.angle(np.exp(phi0*1j)/np.exp(phi1*1j))
-        psi[psi < 0] += 2*np.pi
-        branch_cuts = phi1 + psi/2
-        branch_cuts[branch_cuts >= 2*np.pi] -= 2*np.pi
+        branch_cuts, branch_polylines = cls._corner_branch_data(dom, polyline_cuts)
 
         # determine kind of basis
         if dom.bc_type == 'dir': kind = 'sin'
         elif dom.bc_type == 'neu': kind = 'cos'
         else: kind = 'sincos'
-        return cls(sources, phi0, phi1, orders, branch_cuts, kind)
-    
+        return cls(sources, phi0, phi1, orders, branch_cuts, kind, branch_polylines=branch_polylines)
+
     @classmethod
-    def at_corners(cls, domain, orders):
+    def at_corners(cls, domain, orders, polyline_cuts=True):
         """Builds a corner-adapted Fourier-Bessel basis for the given domain.
         """
         orders = np.asarray(orders, dtype='int')
         sources = domain.corners
         phi0, phi1 = domain.corner_angles
-
-        # set branch cuts to bisect the exterior angle at each corner
-        psi = np.angle(np.exp(phi0*1j)/np.exp(phi1*1j))
-        psi[psi < 0] += 2*np.pi
-        branch_cuts = phi1 + psi/2
-        branch_cuts[branch_cuts >= 2*np.pi] -= 2*np.pi
+        branch_cuts, branch_polylines = cls._corner_branch_data(domain, polyline_cuts)
 
         # determine kind of basis
         if domain.bc_type == 'dir': kind = 'sin'
         elif domain.bc_type == 'neu': kind = 'cos'
         else: kind = 'sincos'
-        return cls(sources, phi0, phi1, orders, branch_cuts, kind)
+        return cls(sources, phi0, phi1, orders, branch_cuts, kind, branch_polylines=branch_polylines)
     
     @classmethod
     def on_boundary(cls, domain, n_per_seg, order=1, spacing='even'):
@@ -414,8 +459,10 @@ class FourierBesselBasis(ParticularBasis):
         
         sources = domain.bdry_pts(n_per_seg, kind=spacing).pts
         tangents = domain.bdry_tangents(n_per_seg, kind=spacing).pts
-        phi0 = np.angle(tangents) % (2*np.pi)
-        phi1 = (phi0 + np.pi) % (2*np.pi)
+        phi0 = np.angle(tangents)
+        phi0[phi0 <= 0] += 2*np.pi
+        phi1 = phi0 + np.pi
+        phi1[phi1 > 2*np.pi] -= 2*np.pi
         branch_cuts = phi0
 
         # determine kind of basis
@@ -432,26 +479,85 @@ class FourierBesselBasis(ParticularBasis):
     @property
     def alpha(self):
         phi = np.angle(self._ray1/self._ray0)
-        phi[phi < 0] += 2*np.pi
+        phi[phi <= 0] += 2*np.pi
         return np.pi/phi
-    
+
     def _set_alphak(self):
         # write angles as complex rays
         self._ray0 = np.exp(1j*self._phi0)
         self._ray1 = np.exp(1j*self._phi1)
 
-        # rewrite in standard form (for later!)
-        self._phi0 = np.angle(self._ray0)
-        self._phi0[self._phi0 < 0] += 2*np.pi
-        self._phi1 = np.angle(self._ray1)
-        self._phi1[self._phi1 < 0] += 2*np.pi
-
         # compute alpha[i]*k for k in [1,...,orders[i]] for the ith source point
+        # wedge angle must lie in (0, 2*pi], since 0 would mean ray1 coincides
+        # with ray0 (a degenerate wedge of full angle 2*pi)
         phi = np.angle(self._ray1/self._ray0)
-        phi[phi < 0] += 2*np.pi
+        phi[phi <= 0] += 2*np.pi
         alpha = np.pi/phi
         self.alphak = [alphai*np.arange(1,ki+1) for alphai,ki in zip(alpha,self.orders)]
         self.alphak_vec = np.concatenate(self.alphak)[np.newaxis]
+
+        # branch cut offset relative to ray0, also in (0, 2*pi]
+        self._phi_hat = np.angle(self.branch_rays/self._ray0)
+        self._phi_hat[self._phi_hat <= 0] += 2*np.pi
+
+        del self._phi0, self._phi1
+
+    def _build_index_maps(self):
+        """Build arrays mapping each basis column to its source index and alpha*k value."""
+        src_indices, alphak_vals = [], []
+        for i, aks in enumerate(self.alphak):
+            for ak in aks:
+                src_indices.append(i)
+                alphak_vals.append(ak)
+        self._src_idx = np.array(src_indices, dtype=int)
+        self._alphak_col = np.array(alphak_vals)
+
+    def _setup_polyline_cuts(self):
+        """Precompute, for each source with a polyline+ray branch cut, the data needed to
+        relocate the 2pi sheet discontinuity from the initial ray onto the polyline.
+        Sources with plain ray cuts incur no setup and no per-eval cost."""
+        self._polyline_srcs = [i for i, pl in enumerate(self._polylines) if pl is not None]
+        self._poly_data = {}
+        for i in self._polyline_srcs:
+            verts, beta = self._polylines[i]
+            verts = complex_form(np.asarray(verts))
+            c = self.sources[i]
+            theta0 = self.branch_cuts[i]
+            sign = self._polyline_sign(i, c, verts, theta0, float(beta))
+            self._poly_data[i] = (c, verts, float(beta), float(theta0), sign)
+
+    def _wrapped_theta(self, i, z_rel):
+        """The plain wrapped angle of complex offsets z_rel (= z - source_i) for source i,
+        matching the vectorized formula in _theta."""
+        th = np.angle(z_rel/self._ray0[i])
+        th = np.where(th <= 0, th + 2*np.pi, th)
+        th = np.where(th > self._phi_hat[i], th - 2*np.pi, th)
+        return th
+
+    def _correction_polygon(self, c, verts, theta0, beta, L):
+        """Polygon [q1,...,qm, B, A] enclosing the region between the initial ray (beyond
+        q1) and the polyline+ray cut, capped at radius L."""
+        A = verts[0] + L*np.exp(1j*theta0)
+        B = verts[-1] + L*np.exp(1j*beta)
+        return np.concatenate((verts, [B, A]))
+
+    def _polyline_sign(self, i, c, verts, theta0, beta):
+        """Determine the +/-1 sheet-correction sign by enforcing continuity of the
+        corrected angle across the initial ray just beyond q1."""
+        scale = np.abs(verts[0] - c)
+        nu, delta, L = 0.5*scale, 1e-3*scale, 1e3*scale + np.abs(verts - c).max()
+        M = verts[0] + nu*np.exp(1j*theta0)            # on the initial ray, beyond q1
+        n_hat = 1j*np.exp(1j*theta0)                   # unit normal to the ray
+        zp, zm = M + delta*n_hat, M - delta*n_hat
+        thp = self._wrapped_theta(i, np.array([zp]) - c)[0]
+        thm = self._wrapped_theta(i, np.array([zm]) - c)[0]
+        P = self._correction_polygon(c, verts, theta0, beta, L)
+        mp_ = _points_in_polygon(np.array([zp]), P)[0]
+        mm_ = _points_in_polygon(np.array([zm]), P)[0]
+        dmask = int(mp_) - int(mm_)
+        if dmask == 0:
+            return 1   # degenerate; correction region not separated here
+        return int(np.round((thp - thm)/(2*np.pi*dmask)))
 
     @instance_cache
     def _z(self, pts):
@@ -465,14 +571,24 @@ class FourierBesselBasis(ParticularBasis):
         # evaluation points relative to source points
         z = self._z(pts)
 
-        # angles relative to phi0/ray0 for each source point
+        # angles relative to phi0/ray0 for each source point, in (0, 2*pi]
         theta = np.angle(z/self._ray0)
-        theta[theta < 0] += 2*np.pi # make all angles nonnegative
+        theta[theta <= 0] += 2*np.pi
 
-        # wrap angles relative to branch cut
-        phi_hat = np.angle(self.branch_rays/self._ray0) # angle of branch cuts relative to wedge starts
-        phi_hat[phi_hat < 0] += 2*np.pi # make nonnegative
-        theta[theta > phi_hat] -= 2*np.pi # angles past branch cut wrapped-down
+        # wrap angles relative to precomputed branch cut offset
+        theta[theta > self._phi_hat] -= 2*np.pi # angles past branch cut wrapped-down
+
+        # polyline+ray cuts: relocate the 2pi discontinuity off the initial ray onto the
+        # polyline by a +/-2pi sheet correction inside the enclosed region. Skipped
+        # entirely when there are no polyline cuts (the common case).
+        if self._polyline_srcs:
+            zpts = pts.pts
+            for i in self._polyline_srcs:
+                c, verts, beta, theta0, sign = self._poly_data[i]
+                L = 2*np.abs(zpts - c).max() + 2*np.abs(verts - c).max() + 1.0
+                P = self._correction_polygon(c, verts, theta0, beta, L)
+                mask = _points_in_polygon(zpts, P)
+                theta[:, i] -= sign*2*np.pi*mask
 
         return theta
     
@@ -486,29 +602,21 @@ class FourierBesselBasis(ParticularBasis):
 
     @instance_cache
     def _r_rep(self, pts):
-        r = self._r(pts)
-        r_rep = np.repeat(r,self.orders,axis=1)
-        return r_rep
+        return self._r(pts)[:, self._src_idx]
 
     @instance_cache
     def _sin(self, pts):
         """Computes the sine terms of Fourier-Bessel functions on the given PointSet pts"""
         theta = self._theta(pts)
-        sin = np.empty((len(pts),self.orders.sum()))
-        cumk = np.concatenate(([0],np.cumsum(self.orders)))
-        for i in range(self.n_sources):
-            sin[:,cumk[i]:cumk[i+1]] = np.sin(np.outer(theta[:,i],self.alphak[i]))
-        return sin
-    
+        theta_cols = theta[:, self._src_idx]
+        return np.sin(theta_cols * self._alphak_col)
+
     @instance_cache
     def _cos(self, pts):
         """Computes the cosine terms of Fourier-Bessel functions on the given PointSet pts"""
         theta = self._theta(pts)
-        cos = np.empty((len(pts),self.orders.sum()))
-        cumk = np.concatenate(([0],np.cumsum(self.orders)))
-        for i in range(self.n_sources):
-            cos[:,cumk[i]:cumk[i+1]] = np.cos(np.outer(theta[:,i],self.alphak[i]))
-        return cos
+        theta_cols = theta[:, self._src_idx]
+        return np.cos(theta_cols * self._alphak_col)
     
 
     def _bessel(self, lam, pts):
@@ -887,29 +995,25 @@ class ExPrecFBBasis(FourierBesselBasis):
         """Computes the sine terms of Fourier-Bessel functions on the given PointSet ps"""
         mp.mp.dps = self.dps
         theta = self._theta(pts)
-        sin = mp.matrix(pts.pts.shape[0], int(self.orders.sum()))
-        cumk = np.concatenate(([0],np.cumsum(self.orders)))
-        for i in range(self.n_sources):
-            alphak_theta = np.outer(theta[:,i],self.alphak[i])
-            for j in range(pts.pts.shape[0]):
-                for k in range(cumk[i],cumk[i+1]):
-                    kk = k-cumk[i]
-                    sin[j,k] = mp.sin(alphak_theta[j,kk])
+        alphak_theta = theta[:, self._src_idx] * self._alphak_col
+        n_pts, n_basis = alphak_theta.shape
+        sin = mp.matrix(n_pts, n_basis)
+        for j in range(n_pts):
+            for k in range(n_basis):
+                sin[j,k] = mp.sin(alphak_theta[j,k])
         return sin
-    
+
     @instance_cache
     def _cos(self, pts):
         """Computes the sine terms of Fourier-Bessel functions on the given PointSet ps"""
         mp.mp.dps = self.dps
         theta = self._theta(pts)
-        cos = mp.matrix(pts.pts.shape[0],int(self.orders.sum()))
-        cumk = np.concatenate(([0],np.cumsum(self.orders)))
-        for i in range(self.n_sources):
-            alphak_theta = np.outer(theta[:,i],self.alphak[i])
-            for j in range(pts.pts.shape[0]):
-                for k in range(cumk[i],cumk[i+1]):
-                    kk = k-cumk[i]
-                    cos[j,k] = mp.cos(alphak_theta[j,kk])
+        alphak_theta = theta[:, self._src_idx] * self._alphak_col
+        n_pts, n_basis = alphak_theta.shape
+        cos = mp.matrix(n_pts, n_basis)
+        for j in range(n_pts):
+            for k in range(n_basis):
+                cos[j,k] = mp.cos(alphak_theta[j,k])
         return cos
     
 

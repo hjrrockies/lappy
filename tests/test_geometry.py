@@ -6,6 +6,8 @@ from lappy.geometry import SplineSegment
 from lappy.geometry import (
     rect, disk, L_shape, GWW1, GWW2, H_shape, reg_ngon,
     disk_sector, iso_right_tri, iso_tri, mushroom, cut_square, chevron,
+    corner_branch_cut_rays, segment_intersection, spiral,
+    free_ray_from_point, corner_branch_cut_polyline,
 )
 
 
@@ -147,6 +149,26 @@ class TestLineSegment:
         ps = seg.pts(10, weights=True)
         assert hasattr(ps, 'wts')
         assert len(ps.wts) == 10
+
+    def test_pts_jacobi_default_exponents(self):
+        # a=b=0 reduces to a non-singular weight; should still behave like a valid quadrature rule
+        seg = LineSegment(0, 1)
+        ps = seg.pts(8, kind='jacobi')
+        assert len(ps) == 8
+
+    def test_pts_jacobi_integral_accuracy(self):
+        # Gauss-Jacobi quadrature integrates tau^a*(1-tau)^b exactly (it's the weight
+        # function itself): int_0^1 tau^-0.5 (1-tau)^0 dtau = B(0.5, 1) = 2
+        seg = LineSegment(0, 1)
+        ps = seg.pts(20, kind='jacobi', weights=True, a=-0.5, b=0)
+        tau = ps.x
+        integral = np.sum(ps.wts * tau**(-0.5))
+        assert np.isclose(integral, 2.0, rtol=1e-10)
+
+    def test_tangents_normals_jacobi_kind(self):
+        seg = LineSegment(0, 1)
+        assert len(seg.tangents(5, kind='jacobi', a=0.5, b=-0.5)) == 5
+        assert len(seg.normals(5, kind='jacobi', a=0.5, b=-0.5)) == 5
 
     def test_tangents_normals_length(self):
         seg = LineSegment(0, 1)
@@ -320,6 +342,23 @@ class TestMultiSegment:
     def test_pts_with_weights(self, unit_square_domain):
         ps = unit_square_domain.bdry.pts(5, weights=True)
         assert hasattr(ps, 'wts')
+
+    def test_pts_jacobi_scalar_exponents_broadcast(self, unit_square_domain):
+        # scalar a, b should broadcast to every segment, same as scalar N
+        ps = unit_square_domain.bdry.pts(5, kind='jacobi', weights=True, a=-0.5, b=0)
+        assert len(ps) == 4 * 5
+
+    def test_pts_jacobi_per_segment_exponents(self, unit_square_domain):
+        bdry = unit_square_domain.bdry
+        n_seg = len(bdry.segments)
+        a = np.zeros(n_seg)
+        a[0] = -0.5  # only the first segment gets a singular left endpoint
+        ps_mixed = bdry.pts(6, kind='jacobi', weights=True, a=a, b=0)
+        ps_uniform = bdry.pts(6, kind='jacobi', weights=True, a=0, b=0)
+        # weights on the first segment should differ from the uniform (a=0) case,
+        # while later segments (unaffected by 'a') should match
+        assert not np.allclose(ps_mixed.wts[:6], ps_uniform.wts[:6])
+        assert np.allclose(ps_mixed.wts[6:], ps_uniform.wts[6:])
 
     def test_dist_from_interior_point(self, unit_square_domain):
         assert np.isclose(unit_square_domain.bdry.dist(0.5+0.5j), 0.5, rtol=1e-3)
@@ -544,6 +583,30 @@ class TestPolygon:
 # ---------------------------------------------------------------------------
 
 class TestMultiSegmentNew:
+    # --- polyline ---
+
+    def test_polyline_polygon_subseg_count(self):
+        ms = MultiSegment.from_vertices([0, 1, 1+1j, 1j])
+        b0, b1, owner = ms.polyline()
+        # LineSegments contribute one sub-segment each
+        assert len(b0) == len(ms.segments)
+        assert len(b1) == len(b0) == len(owner)
+
+    def test_polyline_curved_subseg_count(self):
+        seg = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
+                                0, 2*np.pi, 'dir', nsamp=20)
+        ms = MultiSegment([seg], val_simple=False)
+        b0, b1, owner = ms.polyline()
+        assert len(b0) == seg.nsamp - 1
+        assert np.all(owner == 0)
+
+    def test_polyline_contiguous_within_segment(self):
+        ms = MultiSegment.from_vertices([0, 1, 1+1j, 1j])
+        b0, b1, owner = ms.polyline()
+        for j in range(len(ms.segments)):
+            mask = owner == j
+            assert np.allclose(b1[mask][:-1], b0[mask][1:])
+
     # --- contiguity validation ---
 
     def test_contiguous_segments_ok(self):
@@ -879,3 +942,236 @@ class TestFactoryFunctions:
     def test_disk_neumann_bc(self):
         c = disk(bc='neu')
         assert all(seg.bc == 1.0 for seg in c.bdry.segments)
+
+
+class TestSegmentIntersects:
+    # LineSegment.intersects agrees with .intersection existence
+
+    def test_line_line_crossing(self):
+        a = LineSegment(0, 2+2j)
+        b = LineSegment(0+2j, 2+0j)
+        assert a.intersects(b)
+        assert b.intersects(a)
+
+    def test_line_line_disjoint(self):
+        a = LineSegment(0, 1)
+        b = LineSegment(0+1j, 1+1j)
+        assert not a.intersects(b)
+
+    def test_line_self_is_true(self):
+        a = LineSegment(0, 1+1j)
+        assert a.intersects(a)
+
+    def test_line_parametric_crossing(self):
+        # a unit-circle arc crosses a chord through the disk
+        arc = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
+                                0, np.pi, 'dir', nsamp=50)
+        chord = LineSegment(-2, 2)            # x-axis, crosses the arc endpoints region
+        assert chord.intersects(arc)
+        assert arc.intersects(chord)
+
+    def test_line_parametric_disjoint(self):
+        arc = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
+                                0, np.pi/2, 'dir', nsamp=50)
+        far = LineSegment(5, 5+1j)
+        assert not far.intersects(arc)
+        assert not arc.intersects(far)
+
+    def test_parametric_parametric_crossing(self):
+        arc1 = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
+                                 0, np.pi, 'dir', nsamp=50)
+        arc2 = ParametricSegment(lambda t: 1 + np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
+                                 0, np.pi, 'dir', nsamp=50)
+        assert arc1.intersects(arc2)
+
+    def test_intersects_matches_intersection_existence(self):
+        # boolean must agree with whether .intersection() found points
+        a = LineSegment(0, 2+2j)
+        for other, expect in [(LineSegment(0+2j, 2+0j), True),
+                              (LineSegment(0+3j, 1+3j), False)]:
+            assert a.intersects(other) == (len(a.intersection(other)) > 0) == expect
+
+
+class TestCornerBranchCutRays:
+
+    def test_returns_float_array_correct_shape(self):
+        dom = Polygon([0, 1, 1+1j, 1j])
+        result = corner_branch_cut_rays(dom)
+        assert result.shape == (4,)
+        assert result.dtype == float
+
+    def test_no_nans_convex_square(self):
+        dom = Polygon([0, 1, 1+1j, 1j])
+        assert not np.any(np.isnan(corner_branch_cut_rays(dom)))
+
+    def test_no_nans_convex_triangle(self):
+        dom = Polygon([0, 2, 1j])
+        assert not np.any(np.isnan(corner_branch_cut_rays(dom)))
+
+    def test_no_nans_regular_hexagon(self):
+        dom = reg_ngon(6)
+        assert not np.any(np.isnan(corner_branch_cut_rays(dom)))
+
+    def test_no_nans_L_shape(self):
+        dom = L_shape()
+        assert not np.any(np.isnan(corner_branch_cut_rays(dom)))
+
+    def test_no_nans_H_shape(self):
+        dom = H_shape()
+        assert not np.any(np.isnan(corner_branch_cut_rays(dom)))
+
+    def test_ray_does_not_cross_boundary_L_shape(self):
+        dom = L_shape()
+        angles = corner_branch_cut_rays(dom)
+        R = 10 * dom.diameter
+        bdry = dom.bdry
+        n_segs = len(bdry.segments)
+        corner_idx = bdry.corner_idx
+        b0, b1, owner = bdry.polyline()
+
+        for i, (c, ci, theta) in enumerate(zip(bdry.corners, corner_idx, angles)):
+            adj = {ci, (ci - 1) % n_segs}
+            ray_end = c + R * np.exp(1j * theta)
+            for z0, z1, o in zip(b0, b1, owner):
+                if o in adj:
+                    continue
+                hit = segment_intersection(c, ray_end, z0, z1)
+                assert hit is None, (
+                    f"corner {i}: ray at theta={theta:.4f} rad hits segment {o}"
+                )
+
+    def test_angle_in_exterior_sector(self):
+        dom = L_shape()
+        angles = corner_branch_cut_rays(dom)
+        phi0, phi1 = dom.bdry.corner_angles
+        corner_idx = dom.bdry.corner_idx
+
+        for i, (ci, theta) in enumerate(zip(corner_idx, angles)):
+            angle_out    = phi0[ci]
+            angle_in_rev = phi1[ci]
+            ext_span = (angle_out - angle_in_rev) % (2 * np.pi)
+            dist = (theta - angle_in_rev) % (2 * np.pi)
+            assert 0 < dist < ext_span, (
+                f"corner {i}: theta={theta:.4f} not in exterior sector "
+                f"[{angle_in_rev:.4f}, {angle_in_rev+ext_span:.4f}]"
+            )
+
+    def test_bisector_returned_for_convex_square(self):
+        dom = Polygon([0, 1, 1+1j, 1j])
+        angles = corner_branch_cut_rays(dom)
+        phi0, phi1 = dom.bdry.corner_angles
+        corner_idx = dom.bdry.corner_idx
+
+        for ci, theta in zip(corner_idx, angles):
+            ext_span = (phi0[ci] - phi1[ci]) % (2 * np.pi)
+            theta_bisect = (phi1[ci] + ext_span / 2.0) % (2 * np.pi)
+            assert np.isclose(theta, theta_bisect, atol=1e-12), (
+                f"segment {ci}: expected bisector {theta_bisect:.6f}, got {theta:.6f}"
+            )
+
+    def test_empty_result_for_smooth_disk(self):
+        dom = disk()
+        result = corner_branch_cut_rays(dom)
+        assert result.shape == (0,)
+
+    def test_mixed_boundary_cut_square(self):
+        dom = cut_square()
+        result = corner_branch_cut_rays(dom)
+        assert not np.any(np.isnan(result))
+
+    def test_deterministic_and_exact(self):
+        dom = L_shape()
+        a1 = corner_branch_cut_rays(dom)
+        a2 = corner_branch_cut_rays(dom)
+        np.testing.assert_array_equal(a1, a2)
+
+    def test_domain_branch_cut_rays_method(self):
+        dom = L_shape()
+        np.testing.assert_array_equal(dom.branch_cut_rays(), corner_branch_cut_rays(dom))
+
+    def test_max_clearance_on_reflex_corner(self):
+        # the chosen ray should sit in the interior of a free gap, with appreciable
+        # angular clearance from every subtended arc (not hugging the boundary)
+        dom = L_shape()
+        angles = corner_branch_cut_rays(dom)
+        bdry = dom.bdry
+        n_segs = len(bdry.segments)
+        b0, b1, owner = bdry.polyline()
+        corner_idx = bdry.corner_idx
+        int_angles = dom.int_angles
+
+        reflex = np.where(int_angles[corner_idx] > np.pi)[0]
+        assert len(reflex) > 0, "L_shape should have at least one reflex corner"
+
+        for i in reflex:
+            c, ci, theta = bdry.corners[i], corner_idx[i], angles[i]
+            keep = (owner != ci) & (owner != (ci - 1) % n_segs)
+            a0 = np.angle(b0[keep] - c)
+            a1 = np.angle(b1[keep] - c)
+            d = (a1 - a0 + np.pi) % (2 * np.pi) - np.pi
+            lo = np.where(d >= 0, a0, a1)
+            hi = lo + np.abs(d)
+            # signed angular distance from theta to each arc edge
+            edges = np.concatenate([lo, hi])
+            gaps = np.abs((theta - edges + np.pi) % (2 * np.pi) - np.pi)
+            assert gaps.min() > 1e-3, (
+                f"reflex corner {i}: ray hugs an arc edge (clearance {gaps.min():.2e})"
+            )
+
+
+class TestPolylineBranchCuts:
+
+    def test_spiral_is_ccw_simple_with_surrounded_corners(self):
+        sp = spiral()
+        assert sp.area > 0                      # CCW
+        rays = corner_branch_cut_rays(sp)
+        assert np.any(np.isnan(rays))           # has surrounded corners (no straight ray)
+
+    def test_free_ray_from_exterior_point(self):
+        sp = spiral()
+        # a point far outside the spiral always has a clear sightline
+        p = 100 + 100j
+        beta = free_ray_from_point(sp, p)
+        assert not np.isnan(beta)
+        R = 10*sp.diameter
+        b0, b1, _ = sp.bdry.polyline()
+        ray_end = p + R*np.exp(1j*beta)
+        for z0, z1 in zip(b0, b1):
+            assert segment_intersection(p, ray_end, z0, z1) is None
+
+    def test_free_ray_returns_nan_in_pocket(self):
+        # center of a near-closed C: surrounded, no ray to infinity
+        # build a thick C (annulus with a small mouth) via spiral with >1 turn
+        sp = spiral(turns=1.2, width=0.5)
+        # the geometric center is enclosed by the coil
+        p = 0 + 0j
+        # may or may not be NaN depending on mouth; assert it is consistent with contains
+        beta = free_ray_from_point(sp, p)
+        if not sp.contains(np.array([p]))[0]:
+            # exterior pocket point: if NaN, no sightline; if not, ray must be clear
+            if not np.isnan(beta):
+                R = 10*sp.diameter
+                b0, b1, _ = sp.bdry.polyline()
+                end = p + R*np.exp(1j*beta)
+                for z0, z1 in zip(b0, b1):
+                    assert segment_intersection(p, end, z0, z1) is None
+
+    def test_polyline_cut_valid_for_all_surrounded_corners(self):
+        sp = spiral()
+        rays = corner_branch_cut_rays(sp)
+        b0, b1, _ = sp.bdry.polyline()
+        R = 10*sp.diameter
+        for i in np.where(np.isnan(rays))[0]:
+            verts, beta = corner_branch_cut_polyline(sp, int(i))
+            c = sp.corners[i]
+            path = np.concatenate(([c], verts, [verts[-1] + R*np.exp(1j*beta)]))
+            # no segment of the cut crosses the boundary (touches at the corner allowed)
+            for a, b in zip(path[:-1], path[1:]):
+                for z0, z1 in zip(b0, b1):
+                    hit = segment_intersection(a, b, z0, z1)
+                    assert hit is None or np.isclose(hit, c, atol=1e-9), (
+                        f"corner {i}: cut crosses boundary"
+                    )
+            # cut interior samples are outside the domain
+            samp = np.concatenate([np.linspace(a, b, 15)[1:] for a, b in zip(path[:-1], path[1:])])
+            assert not np.any(sp.contains(samp))

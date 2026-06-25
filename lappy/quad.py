@@ -2,6 +2,7 @@ import numpy as np
 from .utils import complex_form, real_form, polygon_edges, edge_lengths
 from numpy.polynomial.chebyshev import chebgauss
 from numpy.polynomial.legendre import leggauss
+from scipy.special import roots_jacobi
 from scipy.interpolate import BSpline
 from functools import cache
 
@@ -9,19 +10,28 @@ from functools import cache
 ### Quadrature rules for domain boundaries
 @cache
 def cached_leggauss(order):
-    nodes,weights = leggauss(order)
-    nodes = (nodes+1)/2 #adjust nodes to interval [0,1]
-    weights = weights/2 #adjust weights to interval of unit length
+    x, w = leggauss(order)
+    nodes = (x+1)/2 #adjust nodes to interval [0,1]
+    weights = w/2 #adjust weights to interval of unit length
     return nodes, weights
 
 @cache
 def cached_chebgauss(order):
-    nodes,weights = chebgauss(order)
+    x, w = chebgauss(order)
     # adjust the weights to cancel-out the Gauss-Cheb weighting function
-    weights = weights*np.sqrt(1-nodes**2)
-    nodes = (nodes+1)/2 # adjust nodes to interval [0,1]
+    weights = w*np.sqrt(1-x**2)
+    nodes = (x+1)/2 # adjust nodes to interval [0,1]
     weights = weights/2 # adjust weights to interval of unit length
     return nodes[::-1], weights[::-1]
+
+def jacgauss(order, a=0, b=0):
+    # reverse order so a is the singular exponent for the left, and b is the singular exponent for the right
+    x, w = roots_jacobi(order, b, a)
+    # adjust the weights to cancel out the Gauss-Jacobi weighting function
+    weights = w/(((1+x)**a)*((1-x)**b))
+    nodes = (x+1)/2 # adjust nodes to interval [0,1]
+    weights = weights/2 # adjust weights to interval of unit length
+    return nodes, weights
 
 def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre

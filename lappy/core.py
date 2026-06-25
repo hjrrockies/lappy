@@ -108,15 +108,15 @@ class BaseSegment(ABC):
         pass
 
     @abstractmethod
-    def pts(self, n, kind='legendre', weights=False):
+    def pts(self, n, kind='legendre', weights=False, **kwargs):
         pass
-    
+
     @abstractmethod
-    def tangents(self, n, kind='legendre', weights=False):
+    def tangents(self, n, kind='legendre', weights=False, **kwargs):
         pass
-        
+
     @abstractmethod
-    def normals(self, n, kind='legendre', weights=False):
+    def normals(self, n, kind='legendre', weights=False, **kwargs):
         pass
 
     def plot(self, nsamp=None, ax=None, showbc=False, **plot_kwargs):
@@ -174,20 +174,20 @@ class BaseDomain(ABC):
     def perimeter(self):
         pass
 
-    @property
-    @abstractmethod
-    def corner_idx(self):
-        pass
+    # @property
+    # @abstractmethod
+    # def corner_idx(self):
+    #     pass
 
-    @property
-    @abstractmethod
-    def corners(self):
-        pass
+    # @property
+    # @abstractmethod
+    # def corners(self):
+    #     pass
 
-    @property
-    @abstractmethod
-    def corner_angles(self):
-        pass
+    # @property
+    # @abstractmethod
+    # def corner_angles(self):
+    #     pass
     
     @abstractmethod
     def int_pts(self):
