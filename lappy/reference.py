@@ -382,3 +382,100 @@ def iso_tri_eigs(k, h=1.0):
     else:
         raise ValueError("eigenvalues not available for this value of h")
 
+
+# ── Closed-form eigenfunctions and exact L² norms ────────────────────────────────
+# Each *_eigfun returns (u, norm2), where u(z) is a vectorized callable taking
+# complex coordinates z = x + iy and norm2 = ∫_Ω |u|² dA is the exact squared L²
+# norm. These are used to verify that a cubature rule reproduces eigenfunction L²
+# norms (diagonal Gram entries) and orthogonality (off-diagonal entries) to the
+# requested precision. Conventions match the corresponding *_eig functions and the
+# geometry factory placement (e.g. rect() has a corner at the origin).
+
+def rect_eigfun(m, n, L, H, bc='dir'):
+    """Eigenfunction and exact squared L² norm for the L×H rectangle [0,L]×[0,H].
+
+    Matches ``lappy.geometry.rect(L, H)`` (corner at the origin).
+
+    Dirichlet (m, n ≥ 1): u = sin(mπx/L) sin(nπy/H).
+    Neumann   (m, n ≥ 0): u = cos(mπx/L) cos(nπy/H).
+
+    Returns
+    -------
+    (u, norm2) : callable, float
+    """
+    if bc == 'dir':
+        if m < 1 or n < 1:
+            raise ValueError("Dirichlet rectangle modes require m, n ≥ 1")
+        def u(z):
+            return np.sin(m*np.pi*np.real(z)/L) * np.sin(n*np.pi*np.imag(z)/H)
+        norm2 = (L/2) * (H/2)
+    elif bc == 'neu':
+        if m < 0 or n < 0:
+            raise ValueError("Neumann rectangle modes require m, n ≥ 0")
+        def u(z):
+            return np.cos(m*np.pi*np.real(z)/L) * np.cos(n*np.pi*np.imag(z)/H)
+        # ∫cos²(mπx/L)dx = L/2 for m≥1, L for m=0
+        norm2 = (L if m == 0 else L/2) * (H if n == 0 else H/2)
+    else:
+        raise ValueError(f"bc must be 'dir' or 'neu', got {bc!r}")
+    return u, norm2
+
+
+def disk_eigfun(m, n, R, parity='cos'):
+    """Dirichlet eigenfunction and exact squared L² norm for a disk of radius R.
+
+    Matches ``lappy.geometry.disk(R)`` (centered at the origin).
+
+    u = J_m(k r) · trig(m θ), with k = j_{m,n}/R, r = |z|, θ = arg(z).
+    ``parity`` selects cos(mθ) or sin(mθ); for m = 0 only 'cos' is valid.
+
+    Radial norm: ∫₀ᴿ J_m(k r)² r dr = (R²/2) J_{m+1}(j_{m,n})².
+    Angular norm: ∫₀²π cos²(mθ)dθ = π (m≥1) or 2π (m=0); sin² = π (m≥1).
+
+    Returns
+    -------
+    (u, norm2) : callable, float
+    """
+    if m < 0 or n < 1:
+        raise ValueError("disk modes require m ≥ 0, n ≥ 1")
+    if m == 0 and parity == 'sin':
+        raise ValueError("parity='sin' is trivially zero for m=0")
+    j_mn = jn_zeros(m, n)[-1]
+    k = j_mn / R
+    trig = np.cos if parity == 'cos' else np.sin
+    def u(z):
+        r = np.abs(z)
+        theta = np.angle(z)
+        return jv(m, k*r) * trig(m*theta)
+    radial = (R**2 / 2) * jv(m+1, j_mn)**2
+    angular = (2*np.pi if m == 0 else np.pi)
+    return u, angular * radial
+
+
+def sector_eigfun(m, n, R, alpha):
+    """Dirichlet eigenfunction and exact squared L² norm for a circular sector.
+
+    Matches ``lappy.geometry.disk_sector(R, alpha)`` (apex at the origin, angular
+    extent [0, alpha]).
+
+    u = J_ν(k r) sin(ν θ), with ν = mπ/alpha, k = j_{ν,n}/R, θ = arg(z) mod 2π.
+
+    Radial norm: (R²/2) J_{ν+1}(j_{ν,n})²; angular norm: ∫₀^alpha sin²(νθ)dθ = alpha/2.
+
+    Returns
+    -------
+    (u, norm2) : callable, float
+    """
+    if m < 1 or n < 1:
+        raise ValueError("sector modes require m ≥ 1, n ≥ 1")
+    nu = m * np.pi / alpha
+    j_nu_n = _bessel_zero(nu, n)
+    k = j_nu_n / R
+    def u(z):
+        r = np.abs(z)
+        theta = np.mod(np.angle(z), 2*np.pi)
+        return jv(nu, k*r) * np.sin(nu*theta)
+    radial = (R**2 / 2) * jv(nu+1, j_nu_n)**2
+    angular = alpha / 2
+    return u, angular * radial
+
