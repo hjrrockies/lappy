@@ -10,8 +10,7 @@ from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh,
 from typing import Callable
 import copy
 import numpy as np
-from scipy.integrate import cumulative_simpson, quad
-from scipy.interpolate import make_interp_spline, BSpline
+from scipy.interpolate import make_interp_spline, BSpline, PchipInterpolator
 from scipy.optimize import minimize, minimize_scalar, linprog
 import matplotlib.pyplot as plt
 from pygmsh.geo import Geometry
@@ -110,6 +109,214 @@ def pts_per_seg(domain, fb_basis, mult=2, min_per_seg=0):
     return n_per_seg
     
 # segment classes
+# --- Adaptive curve sampling -------------------------------------------------
+# Gauss-Legendre nodes/weights on [-1, 1] for the 5-point rule used by the
+# adaptive arc-length quadrature below.
+_GL5_X = np.array([-0.9061798459386640, -0.5384693101056831, 0.0,
+                   0.5384693101056831, 0.9061798459386640])
+_GL5_W = np.array([0.2369268850561891, 0.4786286704993665, 0.5688888888888889,
+                   0.4786286704993665, 0.2369268850561891])
+
+
+def _estimate_length(p, t0, t1, n_init=64):
+    """Cheap chord-sum estimate of the arc length of the complex curve ``p``."""
+    t = np.linspace(t0, t1, n_init + 1)
+    return np.sum(np.abs(np.diff(p(t))))
+
+
+def _gl5(speed, lefts, rights):
+    """5-point Gauss-Legendre arc-length integral of ``speed`` on each
+    ``[lefts[i], rights[i]]`` (vectorized over intervals)."""
+    hl = 0.5 * (rights - lefts)
+    centers = 0.5 * (lefts + rights)
+    nodes = centers[:, None] + hl[:, None] * _GL5_X[None, :]
+    return hl * (speed(nodes.ravel()).reshape(-1, 5) @ _GL5_W)
+
+
+def _lagrange4(xs, ys, xq):
+    """Evaluate the cubic through the four points (xs[k], ys[k]) at ``xq``.
+    All arguments are (4, N) / (N,) arrays; vectorized over the N intervals."""
+    out = np.zeros_like(xq)
+    for i in range(4):
+        term = ys[i].astype(float).copy()
+        for j in range(4):
+            if j != i:
+                term = term * (xq - xs[j]) / (xs[i] - xs[j])
+        out = out + term
+    return out
+
+
+def adaptive_arclength_table(speed, t0, t1, eps, eps_abs, max_depth=50):
+    """Build an adaptive arc-length table for a curve with the given ``speed``.
+
+    The table is used to build the inverse map ``t(s)`` by monotone cubic (PCHIP)
+    interpolation, so the refinement criterion must resolve *that inverse map* --
+    not merely the value of the arc-length integral. A quadrature-error test fails
+    here: a linear/low-degree speed is integrated exactly by Gauss-Legendre with
+    no subdivision, yet its cumulative ``s(t)`` is curved and needs many nodes to
+    invert (a zero-speed cusp, where ``t(s) ~ sqrt(s)``, is the extreme case). A
+    piecewise-*linear* inverse test, on the other hand, over-refines every curved
+    region by orders of magnitude relative to what the cubic interpolant needs.
+
+    So each interval ``[l, r]`` is split into quarters and the arc length of each
+    quarter is computed with a 5-point Gauss-Legendre rule, giving five inverse
+    samples ``(s_k, t_k)``. The interval is accepted when both
+
+    * the cubic through the four points ``(s_k, t_k)`` for ``k != 2`` predicts the
+      arc-length-midpoint parameter to ``< eps * (t1 - t0)`` -- i.e. a cubic
+      already represents ``t(s)`` here, matching the PCHIP interpolant, and
+    * ``|G - G_full| / (G_full + eps_abs) < eps`` -- the composite (4x5-point) and
+      single (5-point) quadratures agree, bounding the arc-length error,
+
+    where ``G`` is the total arc length of the interval. Accepted intervals
+    contribute all three interior quarter points as nodes, so ``t(s)`` is sampled
+    wherever it curves. The ``eps_abs`` guard keeps the quadrature test
+    well-behaved as a subinterval's arc length shrinks toward zero near a cusp.
+
+    Parameters
+    ----------
+    speed : callable (t_array,) -> (N,)
+        Real-valued speed ``|p'(t)|`` of the curve.
+    t0, t1 : float
+        Parameter interval.
+    eps : float
+        Relative tolerance.
+    eps_abs : float
+        Absolute tolerance (``eps * L_estimate``).
+    max_depth : int
+        Hard subdivision cap.
+
+    Returns
+    -------
+    t_nodes : (M,) array  -- sorted parameter values
+    s_nodes : (M,) array  -- cumulative arc lengths at ``t_nodes``
+    """
+    span = float(t1 - t0)
+    lefts = np.array([float(t0)])
+    rights = np.array([float(t1)])
+    depths = np.array([0], dtype=int)
+
+    accepted_lefts, accepted_rights, accepted_ds = [], [], []
+
+    while len(lefts):
+        h = rights - lefts
+        q1 = lefts + 0.25 * h
+        q2 = lefts + 0.50 * h            # arc-length test point (parameter midpoint)
+        q3 = lefts + 0.75 * h
+
+        g0 = _gl5(speed, lefts, q1)
+        g1 = _gl5(speed, q1, q2)
+        g2 = _gl5(speed, q2, q3)
+        g3 = _gl5(speed, q3, rights)
+        # cumulative arc length from the left endpoint at [l, q1, q2, q3, r]
+        s0 = np.zeros_like(lefts)
+        s1 = g0
+        s2 = g0 + g1
+        s3 = g0 + g1 + g2
+        s4 = s3 + g3
+        G = s4
+        G_full = _gl5(speed, lefts, rights)
+
+        # cubic through the four points off the midpoint, predicting t at s2
+        t_pred = _lagrange4([s0, s1, s3, s4], [lefts, q1, q3, rights], s2)
+        err_inv = np.abs(t_pred - q2) / span
+        err_quad = np.abs(G - G_full) / (G_full + eps_abs)
+        ok = ((err_inv < eps) & (err_quad < eps)) | (depths >= max_depth)
+
+        if ok.any():
+            # record all four quarter pieces so the interior points become nodes
+            for a, b, ds in ((lefts, q1, g0), (q1, q2, g1),
+                             (q2, q3, g2), (q3, rights, g3)):
+                accepted_lefts.append(a[ok])
+                accepted_rights.append(b[ok])
+                accepted_ds.append(ds[ok])
+
+        if (~ok).any():
+            l_sub, r_sub = lefts[~ok], rights[~ok]
+            d_sub = depths[~ok] + 1
+            m_sub = q2[~ok]
+            lefts = np.concatenate([l_sub, m_sub])
+            rights = np.concatenate([m_sub, r_sub])
+            depths = np.concatenate([d_sub, d_sub])
+        else:
+            break
+
+    all_lefts = np.concatenate(accepted_lefts)
+    all_rights = np.concatenate(accepted_rights)
+    all_ds = np.concatenate(accepted_ds)
+
+    order = np.argsort(all_lefts)
+    t_nodes = np.concatenate([[all_lefts[order[0]]], all_rights[order]])
+    s_nodes = np.concatenate([[0.0], np.cumsum(all_ds[order])])
+    return t_nodes, s_nodes
+
+
+def adaptive_polyline(p, t0, t1, eps_abs, max_depth=60, chord_factor=100.0):
+    """Adaptively sample the complex curve ``p`` so the resulting polyline stays
+    within ``eps_abs`` of the curve.
+
+    A chord is accepted when the midpoint and tercile deviations are all within
+    ``eps_abs`` and the chord length is below ``chord_factor * eps_abs`` (the
+    latter guards near-inflection regions where the deviation is accidentally
+    small but the chord is still long). Endpoint evaluations are threaded
+    through the loop so a midpoint becomes a child endpoint with no re-eval.
+
+    Returns
+    -------
+    t_sample : (M,) sorted array of parameter values.
+    """
+    lefts = np.array([float(t0)])
+    rights = np.array([float(t1)])
+    depths = np.array([0], dtype=int)
+
+    p_left = p(lefts)
+    p_right = p(rights)
+
+    accepted_t = [np.array([float(t0)])]
+
+    while len(lefts):
+        mids = 0.5 * (lefts + rights)
+        thirds = lefts + (rights - lefts) / 3.0
+        twothirds = lefts + 2.0 * (rights - lefts) / 3.0
+
+        N = len(lefts)
+        pts_all = p(np.concatenate([mids, thirds, twothirds]))
+        p_mid = pts_all[:N]
+        p_3rd = pts_all[N:2 * N]
+        p_23rd = pts_all[2 * N:]
+
+        dev_mid = np.abs(p_mid - 0.5 * (p_left + p_right))
+        dev_3rd = np.abs(p_3rd - (p_left + (p_right - p_left) / 3.0))
+        dev_23rd = np.abs(p_23rd - (p_left + 2.0 * (p_right - p_left) / 3.0))
+        chord_len = np.abs(p_right - p_left)
+
+        ok = (
+            (dev_mid <= eps_abs)
+            & (dev_3rd <= eps_abs)
+            & (dev_23rd <= eps_abs)
+            & (chord_len <= chord_factor * eps_abs)
+        ) | (depths >= max_depth)
+
+        if ok.any():
+            accepted_t.append(rights[ok])
+
+        if (~ok).any():
+            l_sub, r_sub = lefts[~ok], rights[~ok]
+            d_sub = depths[~ok] + 1
+            m_sub = mids[~ok]
+            pl_sub, pm_sub, pr_sub = p_left[~ok], p_mid[~ok], p_right[~ok]
+
+            lefts = np.concatenate([l_sub, m_sub])
+            rights = np.concatenate([m_sub, r_sub])
+            depths = np.concatenate([d_sub, d_sub])
+            p_left = np.concatenate([pl_sub, pm_sub])
+            p_right = np.concatenate([pm_sub, pr_sub])
+        else:
+            break
+
+    return np.sort(np.concatenate(accepted_t))
+
+
 def get_quadfunc(kind, **kwargs):
     if kind == 'legendre': return cached_leggauss
     elif kind == 'chebyshev': return cached_chebgauss
@@ -153,13 +360,13 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
     """Class for boundary segments (lines, curves) given in terms of a differentiable function p(t). 
     Handles boundary point placement, boundary tangents and normals.
     All segments are automatically re-parameterized by tau in [0,1]"""
-    def __init__(self, p, dp, t0, tf, bc='dir', nsamp=100, val_simple=False, val_closed=False):
+    def __init__(self, p, dp, t0, tf, bc='dir', tol=1e-4, val_simple=False, val_closed=False):
         super().__init__(bc)
         if tf <= t0:
             raise ValueError(f"tf ({tf}) must be greater than t0 ({t0})")
-        if nsamp < 2: 
-            raise ValueError(f"nsamp ({nsamp}) must be at least 2")
-            
+        if tol <= 0:
+            raise ValueError(f"tol ({tol}) must be positive")
+
         # convert to complex vectorized form and store
         self.t0 = t0
         self.tf = tf
@@ -167,10 +374,10 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         self._dp = self._complex_vectorize(dp, t0, tf)
         self._len = None
         self._speed = lambda t: np.abs(self._dp(t))
-        self.nsamp = nsamp
+        self.tol = tol
 
-        # reparameterize
-        self._reparameterize(nsamp)
+        # adaptive arc-length reparameterization + polyline sampling
+        self._reparameterize()
 
         # validation for simple and closed curve properties
         if val_simple:
@@ -190,13 +397,21 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
     def __str__(self):
         return f"ParametricSegment({self.p0},{self.pf})"
     
-    def to_splineseg(self, spline_bc_type='natural', nsamp=None):
+    def to_splineseg(self, spline_bc_type='natural'):
         """Returns a SplineSegment with the same geometry as this segment"""
-        if nsamp is None:
-            nsamp = self.nsamp
-        tau = np.linspace(0, 1, nsamp)
-        pts = self.p(tau)
-        return SplineSegment.interp_from_pts(pts, self.bc, spline_bc_type, nsamp)
+        pts = self.polyline_pts
+        return SplineSegment.interp_from_pts(pts, self.bc, spline_bc_type, self.tol)
+
+    @property
+    def polyline_tau(self):
+        """Adaptively chosen parameter values (in [0,1]) whose chords approximate
+        the curve to the segment's tolerance."""
+        return self._poly_tau
+
+    @property
+    def polyline_pts(self):
+        """Curve points at the adaptive polyline nodes."""
+        return self.p(self._poly_tau)
     
     @property
     def is_simple(self):
@@ -205,8 +420,7 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         return self._is_simple
 
     def _validate_simple(self):
-        t = np.linspace(self.t0, self.tf, self.nsamp)
-        p = self._p(t)
+        p = self.polyline_pts
         for i in range(len(p)-1):
             for j in range(i+2,len(p)-1):
                 pt = segment_intersection(p[i], p[i+1], p[j], p[j+1])
@@ -225,13 +439,9 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
     
     @property
     def len(self):
-        if self._len is None:
-            self._len = self._compute_length()
+        # set eagerly from the adaptive arc-length table in _reparameterize()
         return self._len
-    
-    def _compute_length(self):
-        return quad(self._speed, self.t0, self.tf)[0]
-    
+
     @property
     def p0(self):
         return self._p(self.t0)
@@ -290,13 +500,19 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
 
         return wrapped
     
-    def _reparameterize(self, nsamp):
-        self.nsamp = nsamp
-        t_samp = np.linspace(self.t0, self.tf, nsamp)
-        speeds = self._speed(t_samp)
-        s_samp = np.concatenate([[0], cumulative_simpson(speeds, x=t_samp)])
-        self._s_of_t = make_interp_spline(t_samp, s_samp)
-        self._t_of_s = make_interp_spline(s_samp, t_samp)
+    def _reparameterize(self):
+        # adaptive arc-length table: t <-> s maps accurate to tol * L
+        L0 = _estimate_length(self._p, self.t0, self.tf)
+        eps_abs = self.tol * L0
+        t_nodes, s_nodes = adaptive_arclength_table(self._speed, self.t0, self.tf,
+                                                    self.tol, eps_abs)
+        self._len = s_nodes[-1]
+        self._s_of_t = PchipInterpolator(t_nodes, s_nodes)
+        self._t_of_s = PchipInterpolator(s_nodes, t_nodes)
+
+        # adaptive polyline nodes (in tau-space, on the constant-speed curve)
+        self._poly_tau = adaptive_polyline(self.p, 0.0, 1.0,
+                                           eps_abs=self.tol * self._len)
 
     def _p_of_s(self, s):
         return self._p(self._t_of_s(s))
@@ -351,8 +567,8 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
             return other.intersection(self)
         elif isinstance(other, ParametricSegment):
             # get points
-            tau1 = np.linspace(0, 1, self.nsamp)
-            tau2 = np.linspace(0, 1, other.nsamp)
+            tau1 = self.polyline_tau
+            tau2 = other.polyline_tau
             p1 = self.p(tau1)
             p2 = other.p(tau2)
 
@@ -390,14 +606,14 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         elif isinstance(other, LineSegment):
             return other.intersects(self)
         elif isinstance(other, ParametricSegment):
-            p1 = self.p(np.linspace(0, 1, self.nsamp))
-            p2 = other.p(np.linspace(0, 1, other.nsamp))
+            p1 = self.polyline_pts
+            p2 = other.polyline_pts
             return any(segment_intersection(p1[i], p1[i+1], p2[j], p2[j+1]) is not None
                        for i in range(len(p1)-1) for j in range(len(p2)-1))
 
     def dist(self, pt):
         """Computes the (minimum) distance from the given point to the segment"""
-        tau = np.linspace(0, 1, self.nsamp)
+        tau = self.polyline_tau
         pts = self.p(tau)
         dists = np.abs(pts-pt)
         idx = dists.argmin()
@@ -405,7 +621,7 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         if idx == 0:
             tau0 = tau[idx]
             tau1 = tau[idx+1]
-        elif idx == self.nsamp-1:
+        elif idx == len(tau)-1:
             tau0 = tau[idx-1]
             tau1 = tau[idx]
         else:
@@ -424,7 +640,7 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
             raise ValueError("non-segment operand must be a scalar")
         p_new = lambda t: other*self._p(t)
         dp_new = lambda t: other*self._dp(t)
-        return ParametricSegment(p_new, dp_new, self.t0, self.tf, self.bc, self.nsamp)
+        return ParametricSegment(p_new, dp_new, self.t0, self.tf, self.bc, self.tol)
 
     def __rmul__(self, other):
         return self.__mul__(other)
@@ -435,7 +651,7 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         elif np.isscalar(other):
             p_new = lambda t: self._p(t) + other
             dp_new = self._dp
-            return ParametricSegment(p_new, dp_new, self.t0, self.tf, self.bc, self.nsamp)
+            return ParametricSegment(p_new, dp_new, self.t0, self.tf, self.bc, self.tol)
         else:
             raise TypeError("__add__ with Segment must be another Segment or complex scalar")
             
@@ -448,7 +664,7 @@ class LineSegment(SegmentQuadratureMixin, BaseSegment):
     b : complex
         end point of segment
     """
-    def __init__(self, p0, pf, bc='dir', nsamp=100):
+    def __init__(self, p0, pf, bc='dir', tol=1e-4):
         if np.isclose(p0, pf):
             raise ValueError("'p0' and 'pf' are too close together to form a line segment")
         super().__init__(bc)
@@ -457,7 +673,16 @@ class LineSegment(SegmentQuadratureMixin, BaseSegment):
         self._len = np.abs(self._pf-self._p0)
         self._tangent = (self._pf-self._p0)/self._len
         self._normal = self._tangent.imag - 1j*self._tangent.real
-        self.nsamp = nsamp
+        self.tol = tol
+
+    @property
+    def polyline_tau(self):
+        """A straight segment is exactly its two endpoints."""
+        return np.array([0.0, 1.0])
+
+    @property
+    def polyline_pts(self):
+        return np.array([self._p0, self._pf])
 
     def __str__(self):
         return f"LineSegment({self.p0},{self.pf})"
@@ -510,7 +735,7 @@ class LineSegment(SegmentQuadratureMixin, BaseSegment):
                 p = other.p(tau)
                 d = p - self.p0
                 return d.real*self._normal.real + d.imag*self._normal.imag
-            roots = find_all_roots(signed_distance, 0, 1, other.nsamp)
+            roots = find_all_roots(signed_distance, 0, 1, len(other.polyline_tau))
             intersections = []
             for tau1 in roots:
                 p = other.p(tau1)
@@ -527,16 +752,14 @@ class LineSegment(SegmentQuadratureMixin, BaseSegment):
         elif isinstance(other, LineSegment):
             return segment_intersection(self.p0, self.pf, other.p0, other.pf) is not None
         elif isinstance(other, ParametricSegment):
-            q = other.p(np.linspace(0, 1, other.nsamp))
+            q = other.polyline_pts
             return any(segment_intersection(self.p0, self.pf, q[k], q[k+1]) is not None
                        for k in range(len(q) - 1))
 
-    def to_splineseg(self, spline_bc_type='natural', nsamp=None):
+    def to_splineseg(self, spline_bc_type='natural'):
         """Returns a SplineSegment with the same geometry as this segment"""
-        if nsamp is None:
-            nsamp = self.nsamp
         pts = np.array([self.p0, self.pf])
-        return SplineSegment.interp_from_pts(pts, self.bc, spline_bc_type, nsamp)
+        return SplineSegment.interp_from_pts(pts, self.bc, spline_bc_type, self.tol)
     
     @property
     def p0(self):
@@ -565,7 +788,7 @@ class LineSegment(SegmentQuadratureMixin, BaseSegment):
     def __mul__(self, other):
         if not np.isscalar(other):
             raise ValueError("non-segment operand must be a scalar")
-        return LineSegment(other*self.p0, other*self.pf, self.bc, self.nsamp)
+        return LineSegment(other*self.p0, other*self.pf, self.bc, self.tol)
 
     def __rmul__(self, other):
         return self.__mul__(other)
@@ -574,13 +797,13 @@ class LineSegment(SegmentQuadratureMixin, BaseSegment):
         if isinstance(other, BaseSegment):
             return MultiSegment([self, other])
         elif np.isscalar(other):
-            return LineSegment(self.p0 + other, self.pf + other, self.bc, self.nsamp)
+            return LineSegment(self.p0 + other, self.pf + other, self.bc, self.tol)
         else:
             raise TypeError("__add__ with Segment must be another Segment or complex scalar")
 
 class SplineSegment(ParametricSegment):
     """Segments with spline boundary"""
-    def __init__(self, spline, t0=None, tf=None, bc='dir', nsamp=100, val_simple=False, val_closed=False):
+    def __init__(self, spline, t0=None, tf=None, bc='dir', tol=1e-4, val_simple=False, val_closed=False):
         if not isinstance(spline, BSpline):
             raise TypeError("'spline' must be an instance of BSpline")
         if spline.c.ndim == 2 and spline.c.shape[1] == 2:
@@ -595,27 +818,16 @@ class SplineSegment(ParametricSegment):
         if tf is None:
             tf_idx = len(self.spline.t)-spline.k-1
             tf = self.spline.t[tf_idx]
-        super().__init__(p, dp, t0, tf, bc, nsamp, val_simple, val_closed)
-    
+        super().__init__(p, dp, t0, tf, bc, tol, val_simple, val_closed)
+
     @classmethod
     def interp_from_pts(cls, pts, bc='dir', spline_bc_type='natural',
-                        nsamp=100, val_simple=False, val_closed=False):
+                        tol=1e-4, val_simple=False, val_closed=False):
         """Builds a BSpline segment interpolating the given points."""
         t = np.linspace(0, 1, len(pts))
         spline = make_interp_spline(t, pts, bc_type=spline_bc_type)
-        return cls(spline, 0, 1, bc, nsamp, val_simple, val_closed)
-    
-    def _compute_length(self):
-        # Get unique internal knots (excluding boundary repeats)
-        T = np.unique(np.concatenate([[self.t0, self.tf], self.spline.t]))
-        knots = np.sort(T[(T >= self.t0) & (T <= self.tf)])
-        total_length = 0
-        for i in range(len(knots) - 1):
-            length, _ = quad(self._speed, knots[i], knots[i+1])
-            total_length += length
-        
-        return total_length
-    
+        return cls(spline, 0, 1, bc, tol, val_simple, val_closed)
+
     def to_splineseg(self):
         return self
     
@@ -625,13 +837,13 @@ class SplineSegment(ParametricSegment):
         else:
             spline = self.spline
             newspline = BSpline(spline.t, other*spline.c, spline.k, spline.extrapolate, spline.axis)
-            return SplineSegment(newspline, self.t0, self.tf, self.bc, self.nsamp)
-        
+            return SplineSegment(newspline, self.t0, self.tf, self.bc, self.tol)
+
     def __add__(self, other):
         if np.isscalar(other):
             spline = self.spline
             newspline = BSpline(spline.t, spline.c + other, spline.k, spline.extrapolate, spline.axis)
-            return SplineSegment(newspline, self.t0, self.tf, self.bc, self.nsamp)
+            return SplineSegment(newspline, self.t0, self.tf, self.bc, self.tol)
         else:
             return super().__add__(other)
 
@@ -686,11 +898,11 @@ class MultiSegment:
         return f"MultiSegment([{','.join(str(seg) for seg in self.segments)}])"
 
     @classmethod
-    def from_vertices(cls, vertices, bc='dir', make_closed=True, val_simple=False, nsamp=100):
+    def from_vertices(cls, vertices, bc='dir', make_closed=True, val_simple=False, tol=1e-4):
         """Builds a polygonal MultiSegment from the given vertices"""
-        segments = [LineSegment(vertices[i], vertices[i+1], bc, nsamp) for i in range(len(vertices)-1)]
+        segments = [LineSegment(vertices[i], vertices[i+1], bc, tol) for i in range(len(vertices)-1)]
         if make_closed:
-            segments += [LineSegment(vertices[-1], vertices[0], bc, nsamp)]
+            segments += [LineSegment(vertices[-1], vertices[0], bc, tol)]
         multiseg = cls(segments, val_simple, val_contiguous=False)
         multiseg._is_contiguous = True
         if make_closed: multiseg._is_closed = True
@@ -846,13 +1058,10 @@ class MultiSegment:
     def polyline(self):
         """Boundary as consecutive sub-segments (b0[k] -> b1[k]) with the owning
         segment index. LineSegments contribute one sub-segment; curved segments
-        contribute nsamp-1."""
+        contribute len(seg.polyline_tau)-1, the adaptively chosen node count."""
         b0, b1, owner = [], [], []
         for j, seg in enumerate(self.segments):
-            if isinstance(seg, LineSegment):
-                pts = np.array([seg.p0, seg.pf])
-            else:
-                pts = seg.p(np.linspace(0, 1, seg.nsamp))
+            pts = seg.polyline_pts
             b0.append(pts[:-1])
             b1.append(pts[1:])
             owner.append(np.full(len(pts) - 1, j))
@@ -870,7 +1079,7 @@ class MultiSegment:
         corner_angle1 = np.angle(-np.roll(Tf,1))
         return corners, corner_idx, corner_angle0, corner_angle1
     
-    def dist(self, pt, nsamp=100):
+    def dist(self, pt):
         """Returns the (minimum) distance from a given point to the MultiSegment"""
         b0, b1, owner = self.polyline()
         d = b1 - b0
@@ -1538,12 +1747,12 @@ def GWW2(bc='dir'):
     vertices = vx + 1j*vy
     return Polygon(vertices, bc=bc, val_simple=False)
 
-def disk(r=1, bc='dir', nsamp=100):
+def disk(r=1, bc='dir', tol=1e-4):
     """circle of radius r"""
     seg = ParametricSegment(
         lambda t: r*np.exp(1j*t),
         lambda t: 1j*r*np.exp(1j*t),
-        0, 2*np.pi, bc, nsamp
+        0, 2*np.pi, bc, tol
     )
     bdry = MultiSegment([seg])
     return Domain(bdry, val_simple=False, val_closed=False)
@@ -1558,7 +1767,7 @@ def chevron(h1=1, h2=2, bc='dir'):
     vertices = np.array([-1, 1j*h1, 1, 1j*h2])
     return Polygon(vertices, bc=bc, val_simple=False)
 
-def cut_square(r=0.5, bc='dir', nsamp=100):
+def cut_square(r=0.5, bc='dir', tol=1e-4):
     """cut square domain"""
     if not (0 < r < 1):
         raise ValueError("r must be between 0 and 1 (strictly)")
@@ -1566,7 +1775,7 @@ def cut_square(r=0.5, bc='dir', nsamp=100):
     seg2 = LineSegment(1, 1 + (1-r)*1j, bc=bc)
     seg3 = ParametricSegment(lambda t: 1+1j+r*np.exp(-1j*t),
                              lambda t: -1j*r*np.exp(-1j*t),
-                             np.pi/2, np.pi, bc, nsamp)
+                             np.pi/2, np.pi, bc, tol)
     seg4 = LineSegment((1-r)+1j, 1j, bc=bc)
     seg5 = LineSegment(1j, 0, bc=bc)
     bdry = MultiSegment([seg1, seg2, seg3, seg4, seg5])
@@ -1597,14 +1806,14 @@ def spiral(turns=1.5, pitch=1.0, width=0.35, n=12, r0=0.6, bc='dir'):
         verts = verts[::-1]
     return Polygon(verts, bc=bc, val_simple=False)
 
-def disk_sector(r=1, theta=np.pi/2, bc='dir', nsamp=100):
+def disk_sector(r=1, theta=np.pi/2, bc='dir', tol=1e-4):
     if not (0 < theta < 2*np.pi):
         raise ValueError("theta must be between 0 and 2pi (strictly)")
     seg1 = LineSegment(0, r, bc=bc)
     seg2 = ParametricSegment(
         lambda t: r*np.exp(1j*t),
         lambda t: 1j*r*np.exp(1j*t),
-        0, theta, bc, nsamp,
+        0, theta, bc, tol,
         val_simple=False
     )
     seg3 = LineSegment(r*np.exp(1j*theta), 0, bc=bc)
@@ -1620,7 +1829,7 @@ def iso_right_tri(l=1, bc='dir'):
 def iso_tri(h=1, bc='dir'):
     return Polygon([1,1j*h,-1], bc=bc, val_simple=False)
 
-def mushroom(a=1, b=1, r=1.5, bc='dir', nsamp=100):
+def mushroom(a=1, b=1, r=1.5, bc='dir', tol=1e-4):
     if r <= b:
         raise ValueError('b must be less than r')
     vert = np.array([-r, -b/2, -b/2 - 1j*a, b/2 - 1j*a, b/2, r])
@@ -1628,7 +1837,7 @@ def mushroom(a=1, b=1, r=1.5, bc='dir', nsamp=100):
     seg2 = ParametricSegment(
         lambda t: r*np.exp(1j*t),
         lambda t: 1j*r*np.exp(1j*t),
-        0, np.pi, bc, nsamp
+        0, np.pi, bc, tol
     )
     bdry = MultiSegment([seg1, seg2])
     return Domain(bdry, val_simple=False, val_closed=False)
@@ -1642,26 +1851,26 @@ def parallelogram(b=1, h=1, alpha=np.pi/3, bc='dir'):
     vertices = np.array([0, b, b + h/np.tan(alpha) + 1j*h, h/np.tan(alpha) + 1j*h])
     return Polygon(vertices, bc=bc, val_simple=False)
 
-def stadium(L=1, H=1, bc='dir', nsamp=100):
+def stadium(L=1, H=1, bc='dir', tol=1e-4):
     """Bunimovich stadium"""
     seg1 = LineSegment(0-1j*(H/2), L-1j*(H/2), bc=bc)
     seg2 = ParametricSegment(
         lambda t: L + (H/2)*np.exp(1j*t),
         lambda t: 1j*(H/2)*np.exp(1j*t),
-        -np.pi/2, np.pi/2, bc, nsamp
+        -np.pi/2, np.pi/2, bc, tol
     )
     seg3 = LineSegment(L+1j*(H/2), 1j*(H/2))
     seg4 = ParametricSegment(
         lambda t: (H/2)*np.exp(1j*t),
         lambda t: 1j*(H/2)*np.exp(1j*t),
-        np.pi/2, 3*np.pi/2, bc, nsamp
+        np.pi/2, 3*np.pi/2, bc, tol
     )
     bdry = MultiSegment([seg1, seg2, seg3, seg4], val_contiguous=False)
     return Domain(bdry, val_simple=False, val_closed=False)
 
-def ellipse(a=2, b=1, bc='dir', nsamp=100):
+def ellipse(a=2, b=1, bc='dir', tol=1e-4):
     def p(t): return a*np.cos(t) + 1j*b*np.sin(t)
     def dp(t): return -a*np.sin(t) + 1j*b*np.cos(t)
-    seg = ParametricSegment(p, dp, 0, 2*np.pi, bc, nsamp)
+    seg = ParametricSegment(p, dp, 0, 2*np.pi, bc, tol)
     bdry = MultiSegment([seg], val_simple=False)
     return Domain(bdry, val_simple=False, val_closed=False)

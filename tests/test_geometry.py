@@ -8,6 +8,7 @@ from lappy.geometry import (
     disk_sector, iso_right_tri, iso_tri, mushroom, cut_square, chevron,
     corner_branch_cut_rays, segment_intersection, spiral,
     free_ray_from_point, corner_branch_cut_polyline,
+    ellipse, adaptive_arclength_table, adaptive_polyline, _estimate_length,
 )
 
 
@@ -594,10 +595,10 @@ class TestMultiSegmentNew:
 
     def test_polyline_curved_subseg_count(self):
         seg = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
-                                0, 2*np.pi, 'dir', nsamp=20)
+                                0, 2*np.pi, 'dir', tol=1e-3)
         ms = MultiSegment([seg], val_simple=False)
         b0, b1, owner = ms.polyline()
-        assert len(b0) == seg.nsamp - 1
+        assert len(b0) == len(seg.polyline_tau) - 1
         assert np.all(owner == 0)
 
     def test_polyline_contiguous_within_segment(self):
@@ -965,23 +966,23 @@ class TestSegmentIntersects:
     def test_line_parametric_crossing(self):
         # a unit-circle arc crosses a chord through the disk
         arc = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
-                                0, np.pi, 'dir', nsamp=50)
+                                0, np.pi, 'dir', tol=1e-3)
         chord = LineSegment(-2, 2)            # x-axis, crosses the arc endpoints region
         assert chord.intersects(arc)
         assert arc.intersects(chord)
 
     def test_line_parametric_disjoint(self):
         arc = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
-                                0, np.pi/2, 'dir', nsamp=50)
+                                0, np.pi/2, 'dir', tol=1e-3)
         far = LineSegment(5, 5+1j)
         assert not far.intersects(arc)
         assert not arc.intersects(far)
 
     def test_parametric_parametric_crossing(self):
         arc1 = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
-                                 0, np.pi, 'dir', nsamp=50)
+                                 0, np.pi, 'dir', tol=1e-3)
         arc2 = ParametricSegment(lambda t: 1 + np.exp(1j*t), lambda t: 1j*np.exp(1j*t),
-                                 0, np.pi, 'dir', nsamp=50)
+                                 0, np.pi, 'dir', tol=1e-3)
         assert arc1.intersects(arc2)
 
     def test_intersects_matches_intersection_existence(self):
@@ -1175,3 +1176,119 @@ class TestPolylineBranchCuts:
             # cut interior samples are outside the domain
             samp = np.concatenate([np.linspace(a, b, 15)[1:] for a, b in zip(path[:-1], path[1:])])
             assert not np.any(sp.contains(samp))
+
+
+# ---------------------------------------------------------------------------
+# TestAdaptiveSampling -- the adaptive curve-sampling helpers
+# ---------------------------------------------------------------------------
+
+class TestAdaptiveSampling:
+
+    def _circle(self, r=1.0):
+        p = lambda t: r * np.exp(1j * t)
+        dp = lambda t: 1j * r * np.exp(1j * t)
+        speed = lambda t: np.abs(dp(t))
+        return p, dp, speed
+
+    def test_estimate_length_circle(self):
+        p, dp, speed = self._circle(2.0)
+        L0 = _estimate_length(p, 0, 2 * np.pi)
+        # chord-sum slightly under-estimates the true 2*pi*r = 4*pi
+        assert L0 == pytest.approx(4 * np.pi, rel=2e-3)
+
+    def test_arclength_table_length_accurate(self):
+        p, dp, speed = self._circle(1.0)
+        eps = 1e-6
+        t_nodes, s_nodes = adaptive_arclength_table(speed, 0, 2 * np.pi, eps,
+                                                    eps * 2 * np.pi)
+        assert s_nodes[-1] == pytest.approx(2 * np.pi, rel=eps)
+
+    def test_arclength_table_monotone(self):
+        p, dp, speed = self._circle(1.0)
+        eps = 1e-5
+        t_nodes, s_nodes = adaptive_arclength_table(speed, 0, 2 * np.pi, eps,
+                                                    eps * 2 * np.pi)
+        assert np.all(np.diff(t_nodes) > 0)
+        assert np.all(np.diff(s_nodes) > 0)
+
+    def test_arclength_table_nonuniform_speed(self):
+        # ellipse: arc length matches the analytic perimeter
+        from scipy.special import ellipe
+        a, b = 2.0, 1.0
+        dp = lambda t: -a * np.sin(t) + 1j * b * np.cos(t)
+        speed = lambda t: np.abs(dp(t))
+        eps = 1e-7
+        _, s_nodes = adaptive_arclength_table(speed, 0, 2 * np.pi, eps, eps * 12)
+        exact = 4 * a * ellipe(1 - (b / a) ** 2)
+        assert s_nodes[-1] == pytest.approx(exact, rel=1e-5)
+
+    def test_polyline_within_tolerance(self):
+        # every chord midpoint stays within eps_abs of the circle
+        p, dp, speed = self._circle(1.0)
+        eps_abs = 1e-4
+        t = adaptive_polyline(p, 0, 2 * np.pi, eps_abs=eps_abs)
+        mids = p(0.5 * (t[:-1] + t[1:]))
+        chord_mid = 0.5 * (p(t[:-1]) + p(t[1:]))
+        assert np.max(np.abs(mids - chord_mid)) <= eps_abs
+
+    def test_polyline_sorted_and_spans_interval(self):
+        p, dp, speed = self._circle(1.0)
+        t = adaptive_polyline(p, 0, 2 * np.pi, eps_abs=1e-3)
+        assert np.all(np.diff(t) > 0)
+        assert t[0] == pytest.approx(0.0)
+        assert t[-1] == pytest.approx(2 * np.pi)
+
+    def test_tighter_tol_more_nodes(self):
+        p, dp, speed = self._circle(1.0)
+        coarse = adaptive_polyline(p, 0, 2 * np.pi, eps_abs=1e-2)
+        fine = adaptive_polyline(p, 0, 2 * np.pi, eps_abs=1e-4)
+        assert len(fine) > len(coarse)
+
+    def test_segment_len_matches_analytic(self):
+        # ParametricSegment.len uses the adaptive table
+        seg = disk(1.0).bdry.segments[0]
+        assert seg.len == pytest.approx(2 * np.pi, rel=1e-4)
+        es = ellipse(2, 1).bdry.segments[0]
+        from scipy.special import ellipe
+        exact = 4 * 2 * ellipe(1 - (1 / 2) ** 2)
+        assert es.len == pytest.approx(exact, rel=1e-4)
+
+    def test_segment_tighter_tol_more_polyline_nodes(self):
+        coarse = ParametricSegment(lambda t: np.exp(1j * t),
+                                   lambda t: 1j * np.exp(1j * t),
+                                   0, 2 * np.pi, 'dir', tol=1e-2)
+        fine = ParametricSegment(lambda t: np.exp(1j * t),
+                                 lambda t: 1j * np.exp(1j * t),
+                                 0, 2 * np.pi, 'dir', tol=1e-4)
+        assert len(fine.polyline_tau) > len(coarse.polyline_tau)
+
+    def test_constant_speed_table_is_small(self):
+        # constant/low-degree speed is integrated exactly by Gauss-Legendre; the
+        # table must NOT explode (regression: a quadrature-error or piecewise-
+        # linear criterion gives 2 or ~1e4 nodes respectively)
+        _, s_nodes = adaptive_arclength_table(
+            lambda t: np.full_like(np.asarray(t, float), 2.0),
+            0, 1, 1e-4, 1e-4)
+        assert 2 < len(s_nodes) < 50
+        assert s_nodes[-1] == pytest.approx(2.0, rel=1e-6)
+
+    def test_smooth_curve_table_is_modest(self):
+        # a smooth ellipse should need only a handful of table nodes, not 1e4
+        dp = lambda t: -2 * np.sin(t) + 1j * np.cos(t)
+        t_nodes, _ = adaptive_arclength_table(lambda t: np.abs(dp(t)),
+                                              0, 2 * np.pi, 1e-4, 1e-4 * 9.69)
+        assert len(t_nodes) < 500
+
+    def test_zero_speed_cusp_reparam_uniform(self):
+        # p(t) = exp(i*pi*t^2) has |p'| = 2*pi*t, a zero-speed point at t=0.
+        # After arc-length reparameterization, equal tau steps must map to equal
+        # arc length (regression: a quadrature-only table left t(s) linear).
+        seg = ParametricSegment(lambda t: np.exp(1j * np.pi * t ** 2),
+                                lambda t: 2j * np.pi * t * np.exp(1j * np.pi * t ** 2),
+                                0, 1, 'dir', tol=1e-4)
+        assert seg.len == pytest.approx(np.pi, rel=1e-4)
+        tau = np.linspace(0, 1, 17)
+        ang = np.unwrap(np.angle(seg.p(tau)))     # radius 1, so arc length == angle
+        darc = np.diff(ang)
+        assert np.allclose(darc, darc.mean(), rtol=5e-3)
+        assert not np.any(np.isnan(seg.T(tau)))

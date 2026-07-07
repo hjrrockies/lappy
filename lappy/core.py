@@ -119,11 +119,13 @@ class BaseSegment(ABC):
     def normals(self, n, kind='legendre', weights=False, **kwargs):
         pass
 
-    def plot(self, nsamp=None, ax=None, showbc=False, **plot_kwargs):
+    def plot(self, n=None, ax=None, showbc=False, **plot_kwargs):
         import matplotlib.pyplot as plt
-        if nsamp is None:
-            nsamp = self.nsamp
-        pts = self.p(np.linspace(0,1,nsamp))
+        # use the adaptive polyline nodes by default; honor an explicit count
+        if n is None:
+            pts = self.polyline_pts
+        else:
+            pts = self.p(np.linspace(0, 1, n))
         if ax is None:
             fig, ax = plt.subplots()
             ax.set_aspect('equal')
@@ -133,23 +135,21 @@ class BaseSegment(ABC):
             else: plot_kwargs['linestyle'] = '-.'
         return ax.plot(pts.real, pts.imag, **plot_kwargs)
 
-    def plot_tangents(self, nsamp=None, ax=None, **plot_kwargs):
+    def plot_tangents(self, n=None, ax=None, **plot_kwargs):
         import matplotlib.pyplot as plt
-        if nsamp is None:
-            nsamp = int(np.ceil(self.nsamp/10))
-        pts = self.pts(nsamp, kind='even', weights=False)
-        tangents = self.tangents(nsamp, kind='even', weights=False)
+        tau = self.polyline_tau if n is None else np.linspace(0, 1, n)
+        pts = self.p(tau)
+        tangents = self.T(tau)
         if ax is None:
             fig, ax = plt.subplots()
             ax.set_aspect('equal')
         return ax.quiver(pts.real, pts.imag, tangents.real, tangents.imag, angles='xy', **plot_kwargs)
 
-    def plot_normals(self, nsamp=None, ax=None, **plot_kwargs):
+    def plot_normals(self, n=None, ax=None, **plot_kwargs):
         import matplotlib.pyplot as plt
-        if nsamp is None:
-            nsamp = int(np.ceil(self.nsamp/10))
-        pts = self.pts(nsamp, kind='even', weights=False)
-        normals = self.normals(nsamp, kind='even', weights=False)
+        tau = self.polyline_tau if n is None else np.linspace(0, 1, n)
+        pts = self.p(tau)
+        normals = self.N(tau)
         if ax is None:
             fig, ax = plt.subplots()
             ax.set_aspect('equal')

@@ -58,7 +58,7 @@ def make_default_basis(domain, n_basis, fs_bdry_order=1, fs_d=1.0, fs_corner_ord
             orders = fb_corner_orders(domain, n_basis)
             basis = FourierBesselBasis.from_domain(domain, orders)
         # one singular corner: pure Fourier-Bessel at singular corner
-        if is_singular.sum() == 1:
+        elif is_singular.sum() == 1:
             orders = fb_corner_orders(domain, n_basis)
             basis = FourierBesselBasis.from_domain(domain, orders)
         # multiple singular corners: 50-50 split of Fourier-Bessel at singular corners, FS near corners
