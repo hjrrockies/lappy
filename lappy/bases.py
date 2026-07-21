@@ -26,7 +26,8 @@ def _points_in_polygon(pts, poly):
         inside ^= crosses & (x_cross > x)
     return inside
 
-def make_default_basis(domain, n_basis, fs_bdry_order=1, fs_d=1.0, fs_corner_order=2, fs_sigma=1.0, fs_C=1.0):
+def make_default_basis(domain, n_basis, fs_frac=0.5, fs_bdry_order=1, fs_d=1.0, 
+                       fs_corner_order=2, fs_sigma=1.0, fs_C=10.0):
     """Make the default basis for a domain of size n_basis"""
     # smooth domains: pure boundary fundamental solutions
     if len(domain.corners) == 0:
@@ -63,15 +64,16 @@ def make_default_basis(domain, n_basis, fs_bdry_order=1, fs_d=1.0, fs_corner_ord
             basis = FourierBesselBasis.from_domain(domain, orders)
         # multiple singular corners: 50-50 split of Fourier-Bessel at singular corners, FS near corners
         else:
-            n_fb = np.round(n_basis/2).astype(int)
-            n_fs = n_basis - n_fb
+            n_fs = np.round(fs_frac*n_basis).astype(int)
+            n_fb = n_basis - n_fs
             # Fourier-Bessel terms
             fb_orders = fb_corner_orders(domain, n_fb)
             fb_basis = FourierBesselBasis.from_domain(domain, fb_orders)
 
             # Fundamental solution terms
             sources_per_corner = fs_corner_orders(domain, n_fs, order=fs_corner_order)
-            fs_basis = FundamentalBasis.by_corners(domain, sources_per_corner, fs_C, fs_sigma, fs_corner_order)
+            diam = domain.diameter
+            fs_basis = FundamentalBasis.by_corners(domain, sources_per_corner, fs_C*diam, fs_sigma, fs_corner_order)
 
             # combine
             basis = fb_basis + fs_basis

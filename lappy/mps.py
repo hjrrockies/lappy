@@ -2,8 +2,10 @@
 from .core import BaseEigensolver, BaseDomain
 from .utils import invert_permutation, complex_form
 from .opt import bracket_mins, minimize_on_bracket
-from .geometry import PointSet
+from .geometry import PointSet, Polygon
 from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBasis, FourierBesselBasis
+from .cubature import polygon_cubature
+from .asymp import weyl_est
 
 from .cache import instance_lru_cache
 import numpy as np
@@ -47,27 +49,35 @@ def regularize_pencil(A1, A2, reg_type='svd', rtol=rtol_default):
         R11 = R[:cutoff,:cutoff]
         return A[:m], A[m:], R11, P
     
-    else: 
-        raise ValueError(f"regularization method {reg_type} not one of 'svd' or 'qrp'")
-    
+    else:
+        raise ValueError(f"regularization method {reg_type} not one of 'svd', 'qrp', or 'implicit'")
+
 def tensions(A1, A2, reg_type='svd', rtol=rtol_default):
     # regularize
-    if reg_type:
+    tola = tolb = None
+    if reg_type == 'implicit':
+        tola = np.max(A1.shape)*la.norm(A1, ord=1)*rtol
+        tolb = np.max(A2.shape)*la.norm(A2, ord=1)*rtol
+    elif reg_type:
         A1, A2 = regularize_pencil(A1, A2, reg_type, rtol)[:2]
 
     # compute generalized cosines and sines
-    c, s = gsvdvals(A1, A2)
+    c, s = gsvdvals(A1, A2, tola=tola, tolb=tolb)
     return np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))[::-1]
 
 def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_default):
     # regularize
-    if reg_type:
+    tola = tolb = None
+    if reg_type == 'implicit':
+        tola = np.max(A1.shape)*la.norm(A1, ord=1)*rtol
+        tolb = np.max(A2.shape)*la.norm(A2, ord=1)*rtol
+    elif reg_type:
         A1, A2, M, v = regularize_pencil(A1, A2, reg_type, rtol)
         if reg_type == 'svd': Y1, s1 = M, v
         elif reg_type == 'qrp': R11, Pinv = M, invert_permutation(v)
 
     # compute GSVD (LAPACK-style)
-    D1, D2, R, Q = gsvd(A1, A2, mode='separate', compute_u=False, compute_v=False)[:-2]
+    D1, D2, R, Q = gsvd(A1, A2, mode='separate', compute_u=False, compute_v=False, tola=tola, tolb=tolb)[:-2]
     c, s = np.max(D1, axis=0), np.max(D2, axis=0)
     idx = np.lexsort((s,-c))[-mult:][::-1]
 
@@ -79,10 +89,11 @@ def nullspace_coef(A1, A2, mult=1, reg_type='svd', rtol=rtol_default, ttol=ttol_
     Er = np.eye(R.shape[0])[:,idx]
     Xr = Q[:,-R.shape[1]:]@la.solve_triangular(R, Er)
 
-    # post-process if regularization was used
-    if not reg_type: coef = Xr
+    # post-process if pre-regularization was used (svd/qrp truncate the pencil before the
+    # GSVD; implicit/none truncate inside the GSVD itself, so Xr is already in original coords)
+    if reg_type not in ('svd', 'qrp'): coef = Xr
     else:
-        if reg_type == 'svd': 
+        if reg_type == 'svd':
             coef = Y1@(Xr/(s1.reshape(-1,1)))
         elif reg_type == 'qrp':
             coef = np.zeros((A1.shape[1],mult))
@@ -96,11 +107,15 @@ def nullspace_eval(A1, A2, mult=1, A_extra=None, reg_type='svd', rtol=rtol_defau
         A2 = np.vstack([A2, A_extra])
 
     # regularize
-    if reg_type:
+    tola = tolb = None
+    if reg_type == 'implicit':
+        tola = np.max(A1.shape)*la.norm(A1, ord=1)*rtol
+        tolb = np.max(A2.shape)*la.norm(A2, ord=1)*rtol
+    elif reg_type:
         A1, A2, _, _ = regularize_pencil(A1, A2, reg_type, rtol)
 
     # compute GSVD
-    U, V, C, S = gsvd(A1, A2, mode='econ', compute_right=False)
+    U, V, C, S = gsvd(A1, A2, mode='econ', compute_right=False, tola=tola, tolb=tolb)
     c, s = np.sqrt(np.diag(C.T@C)), np.sqrt(np.diag(S.T@S))
     sigmas = np.divide(c, s, out=np.full(c.shape, np.inf), where=(s!=0))
 
@@ -194,7 +209,7 @@ def make_ddiff_vander(basis, pts, vecs, wts=None):
     return A
 
 class MPSEigensolver(BaseEigensolver):
-    def __init__(self, basis, bdry_pts, int_pts, bdry_normals=None, bc_param=0, 
+    def __init__(self, basis, bdry_pts, int_pts, bdry_normals=None, bc_param=0,
                  reg_type='svd', rtol=rtol_default, ttol=ttol_default, ltol=ltol_default):
 
         self.basis = basis
@@ -229,32 +244,31 @@ class MPSEigensolver(BaseEigensolver):
         pass
 
     @classmethod
-    def from_domain(cls, domain, basis=None, use_mesh=False, use_weights=False, cubature_kind='dunavant', 
-                    cubature_deg=4, mesh_kwargs={}, reg_type='svd', rtol=rtol_default, 
-                    ltol=ltol_default, ttol=ttol_default):
-
+    def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False, 
+                    reg_type='svd', rtol=rtol_default, ttol=ttol_default):
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
+        if lam_max is None:
+            lam_max = weyl_est(6, domain)
+
         # make basis for the domain
         if basis is None:
-            basis = make_default_basis(domain, ltol=ltol)
+            raise NotImplementedError
         elif not isinstance(basis, ParticularBasis):
             raise TypeError("'basis' must be a ParticularBasis object")
 
         # boundary data
         n_per_seg = pts_per_seg(domain, basis)
-        bdry_pts, bdry_normals, bc_param = domain.bdry_data(n_per_seg, weights=use_weights)
+        bdry_pts, bdry_normals, bc_param = make_default_bdry_data(domain, basis, weights)
 
         # interior points
-        if not use_mesh:
-            int_pts = domain.int_pts('random', npts_rand=2*len(basis), weights=use_weights)
-        else:
-            int_pts = domain.int_pts('mesh', use_weights, cubature_kind, cubature_deg, mesh_kwargs)
+        kind = 'mesh' if mesh else 'random'
+        int_pts = make_default_int_pts(domain, kind, weights, len(basis), lam_max, prec)
 
         # normalize basis
         basis = basis.to_normalized((bdry_pts, int_pts))
 
-        return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, ltol)
+        return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec)
         
     def _get_params(self, reg_type=None, rtol=None, ttol=None, ltol=None):
         """Helper to resolve parameters against instance defaults"""
@@ -405,16 +419,20 @@ class MPSEigensolver(BaseEigensolver):
     def _tension_diagnostics(self, lam, reg_type=None, rtol=None):
         """computes diagnostics for tension error estimation"""
         reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
-        reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
         A1, A2 = self.A_B(lam), self.A_I(lam)
-        if reg_type:
+        tola = tolb = None
+        if reg_type == 'implicit':
+            tola = np.max(A1.shape)*la.norm(A1, ord=1)*rtol
+            tolb = np.max(A2.shape)*la.norm(A2, ord=1)*rtol
+            A1_reg, A2_reg = A1, A2
+        elif reg_type:
             A1_reg, A2_reg = regularize_pencil(A1, A2, reg_type, rtol)[:2]
         else:
             rtol = 0
             A1_reg, A2_reg = A1, A2
 
         # compute GSVD (LAPACK-style)
-        D1, D2, R, Q, k, l = gsvd(A1_reg, A2_reg, mode='separate', compute_u=False, compute_v=False)
+        D1, D2, R, Q, k, l = gsvd(A1_reg, A2_reg, mode='separate', compute_u=False, compute_v=False, tola=tola, tolb=tolb)
         c, s = np.max(D1, axis=0), np.max(D2, axis=0)
         idx = np.lexsort((s,-c))[-1]
 
@@ -459,10 +477,14 @@ class MPSEigensolver(BaseEigensolver):
         to detect the accuracy floor."""
         reg_type, rtol, _, _ = self._get_params(reg_type, rtol)
         A1, A2 = self.A_B(lam), self.A_I(lam)
-        if reg_type:
+        tola = tolb = None
+        if reg_type == 'implicit':
+            tola = np.max(A1.shape)*la.norm(A1, ord=1)*rtol
+            tolb = np.max(A2.shape)*la.norm(A2, ord=1)*rtol
+        elif reg_type:
             A1, A2 = regularize_pencil(A1, A2, reg_type, rtol)[:2]
         # compute GSVD (LAPACK-style)
-        D1, D2, R, Q = gsvd(A1, A2, mode='separate', compute_u=False, compute_v=False)[:-2]
+        D1, D2, R, Q = gsvd(A1, A2, mode='separate', compute_u=False, compute_v=False, tola=tola, tolb=tolb)[:-2]
         c, s = np.max(D1, axis=0), np.max(D2, axis=0)
         idx = np.lexsort((s,-c))[-mult:][::-1]
 
@@ -705,5 +727,71 @@ def pts_per_seg(domain, basis, mult=2, min_per_seg=0):
     else:
         # place points proportional to segmenth length
         seg_lens = domain.seg_lens
-        pps = np.round(len(basis)*seg_lens/seg_lens.sum()).astype(int)
+        pps = np.round(mult*len(basis)*seg_lens/seg_lens.sum()).astype(int)
         return np.maximum(pps, min_per_seg).astype('int')
+
+def bdry_jacobi_exponents(domain, order=0):
+    """Per-segment Gauss-Jacobi exponents (a, b) from corner angles
+    (a/b = pi/angle at the segment's p0/pf corner), shifted down by `order`
+    (scalar, or a length-n_segments array for per-segment control).
+
+    order=0 (default) gives the primary eigenfunction exponent. order=1 gives
+    the exponent for the eigenfunction's outward-normal derivative -- e.g. for
+    Hadamard shape-derivative boundary integrals, which need this regardless
+    of the PDE's own boundary condition. Higher/fractional order shifts are
+    accepted for other known-quantity integrals (e.g. order=2 for a squared
+    normal derivative, as in the classical Dirichlet shape-derivative
+    integral integrand (du/dn)^2).
+
+    Note: Gauss-Jacobi quadrature requires each resulting exponent > -1
+    (unenforced here, per the same "leave uncapped" choice as the primary
+    exponent -- scipy will raise if violated)."""
+    int_angles = domain.int_angles
+    a = np.pi/int_angles
+    b = np.roll(a, -1)   # segment i's pf == segment (i+1)%n's p0
+
+    order = np.broadcast_to(order, len(domain.bdry.segments))
+    a = a - order
+    b = b - order
+    return a, b
+
+def make_default_bdry_data(domain, basis, weights=False, mult=2, min_per_seg=0):
+    """Default boundary collocation data for MPSEigensolver.from_domain.
+
+    Plain Gauss-Legendre points, with point counts from pts_per_seg. MPS
+    collocation is a pointwise-residual task, not an integration task: the
+    GSVD searches over coefficient vectors that are (except at the located
+    eigenvalue) not the true eigenfunction, so there's no fixed singular
+    exponent to grade a quadrature rule to -- what matters is sample density
+    relative to the boundary function's variation, which pts_per_seg already
+    handles (it's also basis-aware: a corner's own adjacent segments are
+    skipped, since Fourier-Bessel terms centered there vanish identically on
+    those two edges by construction and so provide no collocation constraint).
+
+    For accurate integration of a *known* boundary quantity with known corner
+    singular behavior (e.g. the L2 norm of an eigenfunction's outward-normal
+    derivative, or a shape-derivative sensitivity integral) use
+    bdry_jacobi_exponents with domain.bdry_pts(..., kind='jacobi', a=a, b=b)
+    directly instead -- a different task from collocation, deliberately kept
+    separate here."""
+    n_per_seg = pts_per_seg(domain, basis, mult, min_per_seg)
+    bdry_pts = domain.bdry_pts(n_per_seg, kind='legendre', weights=weights)
+    bdry_normals = domain.bdry_normals(n_per_seg, kind='legendre', weights=weights)
+    bc_param = np.concatenate([np.full(n, seg.bc, 'float') for seg, n in zip(domain.bdry.segments, n_per_seg)])
+    return bdry_pts, bdry_normals, bc_param
+
+def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam_max=None, prec=1e-8):
+    if isinstance(domain, Polygon):
+        if kind == 'random':
+            return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand)
+        elif kind == 'mesh':
+            if lam_max is None:
+                lam_max = weyl_est(6, domain)
+            nodes, weights = polygon_cubature(domain, lam_max, prec)
+            if weights:
+                int_pts = PointSet(nodes, weights)
+            else:
+                int_pts = PointSet(nodes)
+            return int_pts
+    else:
+        raise NotImplementedError

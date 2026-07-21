@@ -161,6 +161,78 @@ def polygon_triangular_mesh(vertices, mesh_size, mesh_size_min=0.05, mesh_size_m
         mesh = geom.generate_mesh()
     return mesh
 
+def graded_polygon_mesh(vertices, h_smooth, corner_pts, h_corners, R0s,
+                        mesh_size_min=None, mesh_size_max=None):
+    """Triangular mesh on a polygon, geometrically graded toward reentrant corners.
+
+    Element size grows linearly with distance from each corner (which yields geometric
+    element layering), from ``h_corners[i]`` at ``corner_pts[i]`` up to ``h_smooth`` at
+    radius ``R0s[i]``. Sizing is driven entirely by a gmsh background field so it is
+    independent of the polygon's vertex spacing.
+
+    Parameters
+    ----------
+    vertices : array
+        Polygon vertices (complex or (N,2) real).
+    h_smooth : float
+        Target element edge length in the smooth interior.
+    corner_pts : array
+        Reentrant corner locations (complex or (M,2) real).
+    h_corners : array
+        Smallest element edge length at each corner.
+    R0s : array
+        Transition radius for each corner (size reaches h_smooth at this distance).
+    """
+    import gmsh
+    from pygmsh.geo import Geometry
+    vertices = np.asarray(vertices)
+    if vertices.dtype == 'complex128':
+        vertices = real_form(vertices)
+    if vertices.shape[0] == 2:
+        vertices = vertices.T
+    if vertices.shape[1] != 2 or vertices.ndim != 2:
+        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
+
+    corner_pts = np.asarray(corner_pts)
+    if corner_pts.dtype == 'complex128':
+        corner_pts = real_form(corner_pts)
+    corner_pts = corner_pts.reshape(-1, 2)
+    h_corners = np.atleast_1d(np.asarray(h_corners, dtype=float))
+    R0s = np.atleast_1d(np.asarray(R0s, dtype=float))
+
+    if mesh_size_min is None:
+        mesh_size_min = float(np.min(h_corners)) / 2
+    if mesh_size_max is None:
+        mesh_size_max = h_smooth
+
+    with Geometry() as geom:
+        geom.add_polygon(vertices, h_smooth)
+
+        # One MathEval size field per corner: size = min(h_smooth, h_corner + slope*dist).
+        # Linear growth in distance => geometric layering of elements toward the corner.
+        field_tags = []
+        for (x0, y0), hc, R0 in zip(corner_pts, h_corners, R0s):
+            slope = (h_smooth - hc) / R0
+            tag = gmsh.model.mesh.field.add("MathEval")
+            expr = (f"min({h_smooth}, {hc} + {slope}"
+                    f"*sqrt((x-({x0}))^2 + (y-({y0}))^2))")
+            gmsh.model.mesh.field.setString(tag, "F", expr)
+            field_tags.append(tag)
+
+        min_tag = gmsh.model.mesh.field.add("Min")
+        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", field_tags)
+        gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
+
+        # Let the background field fully control element sizing.
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+        gmsh.option.setNumber("Mesh.MeshSizeMin", mesh_size_min)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size_max)
+        gmsh.option.setNumber("Mesh.Algorithm", 6)  # Frontal-Delaunay
+        mesh = geom.generate_mesh()
+    return mesh
+
 def curvature_sampling(spline, t0, tf, pts_per_2pi=20):
     """Gets samples from a SciPy BSpline with density based on curvature."""
     if not isinstance(spline, BSpline):

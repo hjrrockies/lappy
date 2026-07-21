@@ -6,6 +6,7 @@ name = "lappy"
 from . import mps
 from . import bases
 from . import quad
+from . import cubature
 from . import utils
 from . import geometry
 from . import reference

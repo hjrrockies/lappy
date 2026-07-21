@@ -16,9 +16,9 @@ dependencies = [
     "matplotlib >= 3.9",
     "pygmsh >= 7.1",
     "shapely >= 2.0",
-    "gsvd4py>=0.2.1",
+    "gsvd4py>=0.2.2",
     "jupyter>=1.1.1",
     "pytest>=8.4.1",
     "mpmath>=1.0",
-    "tqdm>=4.0"
+    "tqdm>=4.0",
 ]

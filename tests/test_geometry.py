@@ -580,6 +580,137 @@ class TestPolygon:
 
 
 # ---------------------------------------------------------------------------
+# TestGeometryFixes -- design-spec review follow-up fixes
+# ---------------------------------------------------------------------------
+
+class TestGeometryFixes:
+    # --- Polygon(vertices=..., val_simple=True) validation ---
+
+    def test_bowtie_vertices_raises_with_val_simple(self):
+        # self-intersecting "bowtie" quadrilateral
+        bowtie = np.array([0, 1, 1j, 1+1j])
+        with pytest.raises(ValueError):
+            Polygon(bowtie, val_simple=True)
+
+    def test_bowtie_vertices_allowed_without_val_simple(self):
+        bowtie = np.array([0, 1, 1j, 1+1j])
+        p = Polygon(bowtie, val_simple=False, val_orientation=False)
+        assert isinstance(p, Polygon)
+
+    def test_bowtie_bdry_raises_with_val_simple(self):
+        bowtie = np.array([0, 1, 1j, 1+1j])
+        bdry = MultiSegment.from_vertices(bowtie)
+        with pytest.raises(ValueError):
+            Polygon(bdry=bdry, val_simple=True)
+
+    # --- CCW / positive orientation validation ---
+
+    def test_cw_polygon_vertices_raises(self):
+        cw_square = np.array([0, -1j, -1-1j, -1])
+        with pytest.raises(ValueError):
+            Polygon(cw_square)
+
+    def test_cw_polygon_val_orientation_false_bypasses(self):
+        cw_square = np.array([0, -1j, -1-1j, -1])
+        p = Polygon(cw_square, val_orientation=False)
+        assert p.area == pytest.approx(1.0)
+
+    def test_cw_domain_raises(self):
+        cw_square = np.array([0, -1j, -1-1j, -1])
+        bdry = MultiSegment.from_vertices(cw_square)
+        with pytest.raises(ValueError):
+            Domain(bdry)
+
+    def test_cw_domain_val_orientation_false_bypasses(self):
+        cw_square = np.array([0, -1j, -1-1j, -1])
+        bdry = MultiSegment.from_vertices(cw_square)
+        d = Domain(bdry, val_orientation=False)
+        assert isinstance(d, Domain)
+
+    def test_polyline_signed_area_matches_gl_sign(self, disk_domain, sector_domain):
+        # sign of the cheap adaptive-polyline shoelace estimate must agree with
+        # the composite-quadrature integral used for .area
+        for d in (disk_domain, sector_domain):
+            assert np.sign(d._polyline_signed_area()) == np.sign(d._signed_area())
+
+    def test_signed_area_composite_quadrature_resolves_oscillation(self):
+        # a boundary with far more oscillations than a single fixed-order GL
+        # rule per segment can resolve. _signed_area uses composite 5-point
+        # GL quadrature over the adaptive polyline partition (rather than one
+        # rule spanning the whole segment), so it should stay accurate
+        # regardless of oscillation frequency -- unlike the old flat-order
+        # rule, which was off by >2x on this exact case (see git history).
+        # The polyline/shoelace estimate (linear between polyline nodes,
+        # ignoring curvature within each panel) is a cruder, cheaper
+        # approximation -- accurate enough for a sign check, not for .area.
+        k, amp = 39, 0.95
+        r = lambda t: 1 + amp*np.cos(k*t)
+        dr = lambda t: -amp*k*np.sin(k*t)
+        p = lambda t: r(t)*np.exp(1j*t)
+        dp = lambda t: (dr(t) + 1j*r(t))*np.exp(1j*t)
+        seg = ParametricSegment(p, dp, 0, 2*np.pi, val_closed=True)
+        d = Domain(MultiSegment([seg], val_simple=False), val_simple=False, val_orientation=False)
+
+        # analytic area of a polar curve r(theta): (1/2) int r(theta)^2 dtheta
+        analytic_area = np.pi*(1 + amp**2/2)
+        composite_area = abs(d._signed_area())
+        poly_area = abs(d._polyline_signed_area())
+
+        assert abs(composite_area - analytic_area)/analytic_area < 1e-2
+        assert abs(poly_area - analytic_area)/analytic_area > 5e-2
+
+    def test_polygon_area_always_positive(self):
+        # Polygon._compute_area must not leak a negative (signed) shoelace area
+        cw_square = np.array([0, -1j, -1-1j, -1])
+        p = Polygon(cw_square, val_orientation=False)
+        assert p.area > 0
+
+    # --- Domain.bdry_data weights propagation ---
+
+    def test_bdry_data_weights_propagate_to_normals(self, unit_square_domain):
+        bdry_pts, bdry_normals, bc_param = unit_square_domain.bdry_data(10, weights=True)
+        assert hasattr(bdry_pts, 'wts') and bdry_pts.wts is not None
+        assert hasattr(bdry_normals, 'wts') and bdry_normals.wts is not None
+
+    def test_bdry_data_weights_false_by_default(self, unit_square_domain):
+        bdry_pts, bdry_normals, bc_param = unit_square_domain.bdry_data(10)
+        assert not hasattr(bdry_pts, 'wts')
+        assert not hasattr(bdry_normals, 'wts')
+
+    # --- ParametricSegment laziness ---
+
+    def test_parametric_segment_construction_is_lazy(self):
+        seg = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t), 0, 2*np.pi)
+        assert seg._len is None
+
+    def test_parametric_segment_len_populates_lazily(self):
+        seg = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t), 0, 2*np.pi)
+        assert seg.len == pytest.approx(2*np.pi, rel=1e-4)
+        assert seg._len is not None
+
+    def test_parametric_segment_polyline_populates_lazily(self):
+        seg = ParametricSegment(lambda t: np.exp(1j*t), lambda t: 1j*np.exp(1j*t), 0, 2*np.pi)
+        assert seg._len is None
+        pts = seg.polyline_pts
+        assert seg._len is not None
+        assert len(pts) > 2
+
+    # --- MultiSegment.to_splinesegs ---
+
+    def test_to_splinesegs_all_spline(self, unit_square_domain):
+        splinesegs = unit_square_domain.bdry.to_splinesegs()
+        assert isinstance(splinesegs, MultiSegment)
+        assert all(isinstance(seg, SplineSegment) for seg in splinesegs.segments)
+        assert len(splinesegs.segments) == len(unit_square_domain.bdry.segments)
+
+    def test_to_splinesegs_matches_geometry(self, unit_square_domain):
+        splinesegs = unit_square_domain.bdry.to_splinesegs()
+        tau = np.linspace(0, 1, 9)
+        for orig, spline in zip(unit_square_domain.bdry.segments, splinesegs.segments):
+            assert np.allclose(orig.p(tau), spline.p(tau), atol=1e-8)
+
+
+# ---------------------------------------------------------------------------
 # New TestMultiSegment tests
 # ---------------------------------------------------------------------------
 
@@ -1292,3 +1423,38 @@ class TestAdaptiveSampling:
         darc = np.diff(ang)
         assert np.allclose(darc, darc.mean(), rtol=5e-3)
         assert not np.any(np.isnan(seg.T(tau)))
+
+    def test_polyline_chord_guard_scales_with_tolerance(self):
+        # regression: the chord-length guard in adaptive_polyline used to be
+        # linear in eps_abs, which shrinks faster than the legitimate
+        # sqrt(eps_abs) sagitta scaling and became the sole binding constraint
+        # at tight tol, forcing node count to blow up ~100x for a 100x tighter
+        # tol instead of the expected ~10x (sqrt(100)).
+        p, dp, speed = self._circle(1.0)
+        coarse = adaptive_polyline(p, 0, 2 * np.pi, eps_abs=1e-4 * 2 * np.pi,
+                                   L=2 * np.pi)
+        fine = adaptive_polyline(p, 0, 2 * np.pi, eps_abs=1e-6 * 2 * np.pi,
+                                 L=2 * np.pi)
+        assert len(fine) / len(coarse) < 20
+
+    def test_polyline_chord_guard_catches_aliased_chord(self):
+        # adversarial curve: sin(6*pi*t) is exactly zero at t=0, 1/3, 1/2,
+        # 2/3, 1, so the top-level chord's midpoint/tercile deviation tests
+        # are all exactly zero even though the curve bulges by amplitude A
+        # in between -- exactly the case the chord-length guard exists for.
+        A = 0.05
+        p = lambda t: t + 1j * A * np.sin(6 * np.pi * t)
+        t_dense = np.linspace(0, 1, 20000)
+        L = np.sum(np.abs(np.diff(p(t_dense))))
+        eps_abs = 1e-4 * L
+        t = adaptive_polyline(p, 0, 1, eps_abs=eps_abs, L=L)
+
+        # true deviation of the curve from the resulting polyline, checked
+        # densely (not just at the same sample points used to build it)
+        t_check = np.linspace(0, 1, 20000)
+        idx = np.clip(np.searchsorted(t, t_check, side='right') - 1, 0, len(t) - 2)
+        t_l, t_r = t[idx], t[idx + 1]
+        frac = (t_check - t_l) / (t_r - t_l)
+        chord_pt = p(t_l) + frac * (p(t_r) - p(t_l))
+        max_dev = np.max(np.abs(p(t_check) - chord_pt))
+        assert max_dev < 3 * eps_abs

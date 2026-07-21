@@ -251,20 +251,34 @@ def adaptive_arclength_table(speed, t0, t1, eps, eps_abs, max_depth=50):
     return t_nodes, s_nodes
 
 
-def adaptive_polyline(p, t0, t1, eps_abs, max_depth=60, chord_factor=100.0):
+def adaptive_polyline(p, t0, t1, eps_abs, L=None, max_depth=60, chord_factor=2.0):
     """Adaptively sample the complex curve ``p`` so the resulting polyline stays
     within ``eps_abs`` of the curve.
 
     A chord is accepted when the midpoint and tercile deviations are all within
-    ``eps_abs`` and the chord length is below ``chord_factor * eps_abs`` (the
-    latter guards near-inflection regions where the deviation is accidentally
-    small but the chord is still long). Endpoint evaluations are threaded
-    through the loop so a midpoint becomes a child endpoint with no re-eval.
+    ``eps_abs`` and the chord length is below ``chord_factor * sqrt(eps_abs * L)``
+    (the latter guards near-inflection/aliased regions where the 3-point
+    deviation test is accidentally fooled despite a long chord -- e.g. a chord
+    whose endpoints and tercile points all happen to land on the curve while it
+    bulges out in between). The guard is scaled by ``sqrt(eps_abs * L)`` rather
+    than ``eps_abs`` directly because the legitimate (non-aliased) chord length
+    needed to hit a given deviation tolerance is itself ``O(sqrt(eps_abs * R))``
+    by the usual sagitta estimate (``R`` = local radius of curvature, bounded
+    here by the curve's total length ``L``); a guard linear in ``eps_abs``
+    shrinks faster than that as ``eps_abs -> 0`` and becomes the sole binding
+    constraint, forcing uniform bisection far beyond what curvature requires.
+    ``L`` defaults to a cheap chord-sum estimate when not supplied. Endpoint
+    evaluations are threaded through the loop so a midpoint becomes a child
+    endpoint with no re-eval.
 
     Returns
     -------
     t_sample : (M,) sorted array of parameter values.
     """
+    if L is None:
+        L = _estimate_length(p, t0, t1)
+    chord_cap = chord_factor * np.sqrt(eps_abs * L)
+
     lefts = np.array([float(t0)])
     rights = np.array([float(t1)])
     depths = np.array([0], dtype=int)
@@ -294,7 +308,7 @@ def adaptive_polyline(p, t0, t1, eps_abs, max_depth=60, chord_factor=100.0):
             (dev_mid <= eps_abs)
             & (dev_3rd <= eps_abs)
             & (dev_23rd <= eps_abs)
-            & (chord_len <= chord_factor * eps_abs)
+            & (chord_len <= chord_cap)
         ) | (depths >= max_depth)
 
         if ok.any():
@@ -376,9 +390,6 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         self._speed = lambda t: np.abs(self._dp(t))
         self.tol = tol
 
-        # adaptive arc-length reparameterization + polyline sampling
-        self._reparameterize()
-
         # validation for simple and closed curve properties
         if val_simple:
             if not self._validate_simple():
@@ -402,16 +413,23 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         pts = self.polyline_pts
         return SplineSegment.interp_from_pts(pts, self.bc, spline_bc_type, self.tol)
 
+    def _ensure_reparam(self):
+        """Lazily runs the adaptive arc-length reparameterization + polyline
+        sampling on first access of a quantity that depends on it."""
+        if self._len is None:
+            self._reparameterize()
+
     @property
     def polyline_tau(self):
         """Adaptively chosen parameter values (in [0,1]) whose chords approximate
         the curve to the segment's tolerance."""
+        self._ensure_reparam()
         return self._poly_tau
 
     @property
     def polyline_pts(self):
         """Curve points at the adaptive polyline nodes."""
-        return self.p(self._poly_tau)
+        return self.p(self.polyline_tau)
     
     @property
     def is_simple(self):
@@ -439,7 +457,8 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
     
     @property
     def len(self):
-        # set eagerly from the adaptive arc-length table in _reparameterize()
+        # lazily set from the adaptive arc-length table in _reparameterize()
+        self._ensure_reparam()
         return self._len
 
     @property
@@ -512,7 +531,7 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
 
         # adaptive polyline nodes (in tau-space, on the constant-speed curve)
         self._poly_tau = adaptive_polyline(self.p, 0.0, 1.0,
-                                           eps_abs=self.tol * self._len)
+                                           eps_abs=self.tol * self._len, L=self._len)
 
     def _p_of_s(self, s):
         return self._p(self._t_of_s(s))
@@ -828,7 +847,7 @@ class SplineSegment(ParametricSegment):
         spline = make_interp_spline(t, pts, bc_type=spline_bc_type)
         return cls(spline, 0, 1, bc, tol, val_simple, val_closed)
 
-    def to_splineseg(self):
+    def to_splineseg(self, spline_bc_type='natural'):
         return self
     
     def __mul__(self, other):
@@ -1066,6 +1085,12 @@ class MultiSegment:
             b1.append(pts[1:])
             owner.append(np.full(len(pts) - 1, j))
         return np.concatenate(b0), np.concatenate(b1), np.concatenate(owner)
+
+    def to_splinesegs(self, spline_bc_type='natural'):
+        """Returns a new MultiSegment with each segment converted to a
+        SplineSegment (not a single SplineSegment for the whole boundary)."""
+        segs = [seg.to_splineseg(spline_bc_type) for seg in self.segments]
+        return MultiSegment(segs, val_simple=False, val_contiguous=False)
 
     def _find_corners(self):
         """Finds corners, i.e. where two boundary segments do not smoothly connect. Computes
@@ -1354,8 +1379,12 @@ class Domain(BaseDomain):
         If True, raise ValueError unless the boundary is a simple curve.
     val_closed : bool, optional
         If True, raise ValueError unless the boundary is a closed curve.
+    val_orientation : bool, optional
+        If True, raise ValueError unless the boundary is in CCW (positive)
+        orientation. Only checked when the boundary is simple and closed,
+        since orientation is meaningless otherwise.
     """
-    def __init__(self, bdry, val_simple=True, val_closed=True):
+    def __init__(self, bdry, val_simple=True, val_closed=True, val_orientation=True):
         if not isinstance(bdry, MultiSegment):
             raise TypeError("'bdry' must be an instance of MultiSegment")
         if val_simple:
@@ -1370,6 +1399,10 @@ class Domain(BaseDomain):
         self._diameter = None
         self._inradius = None
         super().__init__()
+
+        if val_orientation and bdry.is_simple and bdry.is_closed:
+            if self._polyline_signed_area() < 0:
+                raise ValueError("boundary must be in CCW (positive) orientation")
 
     @property
     def bc_type(self):
@@ -1393,13 +1426,41 @@ class Domain(BaseDomain):
             self._area = self._compute_area()
         return self._area
             
-    def _compute_area(self, n=20):
-        tau, wts = cached_leggauss(n)
-        P = np.array([seg.p(tau) for seg in self.bdry.segments])
-        dP = np.array([seg.dp(tau) for seg in self.bdry.segments])
-        # Green's formula
-        I = ((P.real*dP.imag - P.imag*dP.real)@wts).sum()
-        return np.abs(I)/2
+    def _signed_area(self):
+        """Composite 5-point Gauss-Legendre integral of Green's formula, with
+        each segment's adaptive polyline partition as the quadrature panels.
+
+        Reusing the polyline partition (rather than a single fixed-order rule
+        spanning the whole segment) means segments needing more resolution
+        automatically get proportionally more, better-placed panels: a single
+        large-order rule still bets on the whole integrand being well fit by
+        one polynomial across the entire segment, which can fail badly on a
+        highly oscillatory curve even at large orders (see the aliasing case
+        in test_polyline_signed_area_robust_to_gl_aliasing)."""
+        I = 0.0
+        for seg in self.bdry.segments:
+            tau = seg.polyline_tau
+            def integrand(t, seg=seg):
+                Pt, dPt = seg.p(t), seg.dp(t)
+                return Pt.real*dPt.imag - Pt.imag*dPt.real
+            I += _gl5(integrand, tau[:-1], tau[1:]).sum()
+        return I/2
+
+    def _polyline_signed_area(self):
+        """Shoelace-formula signed area on the boundary's adaptive polyline.
+
+        Used only for the (sign-only) orientation check: each segment's
+        polyline is already resolved to that segment's own ``tol``, so this
+        tracks curve wiggliness adaptively rather than relying on a fixed
+        quadrature order, and it's free -- the polyline is already built for
+        intersection/containment checks. (Cheaper but lower-order than
+        ``_signed_area``, which additionally accounts for curvature within
+        each polyline panel via composite Gauss-Legendre.)"""
+        b0, b1, _ = self.bdry.polyline()
+        return np.sum(b0.real*b1.imag - b0.imag*b1.real)/2
+
+    def _compute_area(self):
+        return np.abs(self._signed_area())
     
     @property
     def diameter(self):
@@ -1514,20 +1575,20 @@ class Domain(BaseDomain):
 
         return inside
     
-    def bdry_pts(self, n_per_seg, kind='legendre', weights=False):
-        return self.bdry.pts(n_per_seg, kind=kind, weights=weights)
-    
-    def bdry_tangents(self, n_per_seg, kind='legendre', weights=False):
-        return self.bdry.tangents(n_per_seg, kind=kind, weights=weights)
-    
-    def bdry_normals(self, n_per_seg, kind='legendre', weights=False):
-        return self.bdry.normals(n_per_seg, kind=kind, weights=weights)
-    
-    def bdry_data(self, n_per_seg, kind='legendre', weights=False):
+    def bdry_pts(self, n_per_seg, kind='legendre', weights=False, **kwargs):
+        return self.bdry.pts(n_per_seg, kind=kind, weights=weights, **kwargs)
+
+    def bdry_tangents(self, n_per_seg, kind='legendre', weights=False, **kwargs):
+        return self.bdry.tangents(n_per_seg, kind=kind, weights=weights, **kwargs)
+
+    def bdry_normals(self, n_per_seg, kind='legendre', weights=False, **kwargs):
+        return self.bdry.normals(n_per_seg, kind=kind, weights=weights, **kwargs)
+
+    def bdry_data(self, n_per_seg, kind='legendre', weights=False, **kwargs):
         if isinstance(n_per_seg, (int, np.integer)):
             n_per_seg = np.full(len(self.bdry.segments), n_per_seg)
-        bdry_pts = self.bdry_pts(n_per_seg, kind=kind, weights=weights)
-        bdry_normals = self.bdry_normals(n_per_seg, kind=kind, weights=False)
+        bdry_pts = self.bdry_pts(n_per_seg, kind=kind, weights=weights, **kwargs)
+        bdry_normals = self.bdry_normals(n_per_seg, kind=kind, weights=weights, **kwargs)
         bc_param = np.concatenate([np.full(n, seg.bc, 'float') for seg, n in zip(self.bdry.segments, n_per_seg)])
         return bdry_pts, bdry_normals, bc_param
     
@@ -1557,7 +1618,7 @@ class Domain(BaseDomain):
             wts = np.full(npts_rand, self.area / npts_rand)
 
         elif method == 'mesh':
-            splinesegs = [seg.to_splineseg() for seg in self.bdry.segments]
+            splinesegs = self.bdry.to_splinesegs().segments
             mesh = spline_mesh_with_curvature(splinesegs, **mesh_kwargs)
             int_pts, wts = tri_quad(mesh, kind, deg)
 
@@ -1623,35 +1684,36 @@ class Domain(BaseDomain):
 # polygon class
 class Polygon(Domain):
     """Class for polygonal domains"""
-    def __init__(self, vertices=None, bdry=None, bc='dir', val_simple=True):
+    def __init__(self, vertices=None, bdry=None, bc='dir', val_simple=True, val_orientation=True):
         if not ((vertices is None)^(bdry is None)):
             raise ValueError("exactly one of 'vertices' and 'bdry' must be provided")
         elif vertices is not None:
             vertices = complex_form(vertices)
-            bdry = MultiSegment.from_vertices(vertices, bc)
+            bdry = MultiSegment.from_vertices(vertices, bc)   # always closed by construction
+            if val_simple and not bdry.is_simple:
+                raise ValueError("'bdry' must be simple")
             self.vertices = vertices
         elif bdry is not None:
             if not isinstance(bdry, MultiSegment) or not bdry.is_polyline:
-                    raise TypeError("'bdry' must be a polyline MultiSegment")
-            elif val_simple:
-                if not bdry.is_simple:
-                    raise ValueError("'bdry' must be simple")
-                self.vertices = np.array([seg.p0 for seg in bdry.segments])
-            elif not bdry.is_closed:
+                raise TypeError("'bdry' must be a polyline MultiSegment")
+            if not bdry.is_closed:
                 raise ValueError("'bdry' must be closed")
-            else:
-                self.vertices = np.array([seg.p0 for seg in bdry.segments])
-        super().__init__(bdry, val_simple=False, val_closed=False)
+            if val_simple and not bdry.is_simple:
+                raise ValueError("'bdry' must be simple")
+            self.vertices = np.array([seg.p0 for seg in bdry.segments])
+        if val_orientation and polygon_area(self.vertices) < 0:
+            raise ValueError("'vertices' must be in CCW (positive) orientation")
+        super().__init__(bdry, val_simple=False, val_closed=False, val_orientation=False)
 
     def _compute_area(self):
-        return polygon_area(self.vertices)
+        return np.abs(polygon_area(self.vertices))
 
     def _compute_diameter(self):
         return polygon_diameter(self.vertices)
 
     def _compute_inradius(self):
         """Computes inradius exactly for convex polygons via LP; falls back to parent for non-convex."""
-        if not np.all(self.int_angles <= np.pi + 1e-10):
+        if not np.all(self.int_angles <= np.pi):
             return super()._compute_inradius()
 
         # LP: maximize r  s.t.  dist(center, edge_k) >= r  for all k
