@@ -1,6 +1,6 @@
 {
   "kind": "gatermann",
-  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/rules_triangle.html",
+  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/gatermann/C/set_gatermann_C_barycentric.m",
   "rules": {
     "7": {
       "npts": 12,

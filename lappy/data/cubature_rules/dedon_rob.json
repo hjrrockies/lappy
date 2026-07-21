@@ -1,6 +1,6 @@
 {
   "kind": "dedon_rob",
-  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/rules_triangle.html",
+  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/dedoncker_robinson/C/set_dedoncker_robinson_C_barycentric.m",
   "rules": {
     "9": {
       "npts": 19,

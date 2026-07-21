@@ -1,6 +1,6 @@
 {
   "kind": "bern_esp1",
-  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/rules_triangle.html",
+  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/berntsen_espelid_I/I_C/set_berntsen_espelid_I_C_barycentric.m",
   "rules": {
     "13": {
       "npts": 37,

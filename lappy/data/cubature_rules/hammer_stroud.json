@@ -1,0 +1,38 @@
+{
+  "kind": "hammer_stroud",
+  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/hammer_stroud/set_hammer_stroud_barycentric.m",
+  "rules": {
+    "2": {
+      "npts": 3,
+      "nodes": [
+        [
+          0.16666666666666666,
+          0.16666666666666666,
+          0.6666666666666667
+        ],
+        [
+          0.16666666666666666,
+          0.6666666666666667,
+          0.16666666666666666
+        ],
+        [
+          0.6666666666666667,
+          0.16666666666666666,
+          0.16666666666666666
+        ]
+      ],
+      "weights": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "positive": true,
+      "inside_triangle": true,
+      "min_weight": 0.3333333333333333,
+      "max_weight": 0.3333333333333333,
+      "weight_ratio": 1.0,
+      "verified_degree": 2,
+      "verified_tol": 2.7755575615628914e-17
+    }
+  }
+}

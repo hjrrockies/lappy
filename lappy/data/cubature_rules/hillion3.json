@@ -1,0 +1,38 @@
+{
+  "kind": "hillion3",
+  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/hillion/III/set_hillion_III_barycentric.m",
+  "rules": {
+    "2": {
+      "npts": 3,
+      "nodes": [
+        [
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.5915063509461096,
+          0.15849364905389035,
+          0.25000000000000006
+        ],
+        [
+          0.15849364905389035,
+          0.5915063509461096,
+          0.25
+        ]
+      ],
+      "weights": [
+        0.1111111111111111,
+        0.4444444444444444,
+        0.4444444444444444
+      ],
+      "positive": true,
+      "inside_triangle": true,
+      "min_weight": 0.1111111111111111,
+      "max_weight": 0.4444444444444444,
+      "weight_ratio": 4.0,
+      "verified_degree": 2,
+      "verified_tol": 2.7755575615628914e-17
+    }
+  }
+}

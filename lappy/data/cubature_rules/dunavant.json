@@ -1,6 +1,6 @@
 {
   "kind": "dunavant",
-  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/rules_triangle.html",
+  "source": "https://www.math.unipd.it/~alvise/SETS_CUBATURE_TRIANGLE/dunavant/C/set_dunavant_C_barycentric.m",
   "rules": {
     "1": {
       "npts": 1,
