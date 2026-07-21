@@ -57,6 +57,19 @@ def get_cubature_rule(kind, deg):
     return _arrays[key]
 
 
+def get_capacity_curve(kind, deg):
+    """Returns (grid_version, E_grid ndarray) if the registry has a precomputed
+    plane-wave capacity calibration for this rule (see lappy.cubature), else None."""
+    registry = load_registry()
+    try:
+        entry = registry[kind]['rules'][str(deg)]
+    except KeyError:
+        return None
+    if 'capacity_grid_version' not in entry or 'capacity_E' not in entry:
+        return None
+    return entry['capacity_grid_version'], np.asarray(entry['capacity_E'], dtype=np.float64)
+
+
 def iter_rules(positive_only=False, min_degree=None, max_degree=None):
     """Yields diagnostic dicts for every rule in the registry, without decoding
     nodes/weights: {kind, deg, npts, positive, min_weight, max_weight, weight_ratio,

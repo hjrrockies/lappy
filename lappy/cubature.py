@@ -27,7 +27,7 @@ from functools import lru_cache
 
 from .quad import (get_cubature_rule, tri_quad,
                    polygon_triangular_mesh, graded_polygon_mesh)
-from .cubature_registry import iter_rules
+from .cubature_registry import iter_rules, get_capacity_curve as _registry_capacity_curve
 
 # Reference equilateral triangle (edge length 1) used for calibration.
 _REF_VERTS = np.array([[0.0, 0.0], [1.0, 0.0], [0.5, np.sqrt(3) / 2]])
@@ -118,9 +118,15 @@ def _planewave_exact(kx, ky):
     return 2 * _REF_AREA * _dd_exp(a)
 
 
-@lru_cache(maxsize=None)
-def _capacity_curve(kind, deg):
-    """(s_grid, E_grid): worst-case relative error E(s) of a rule integrating a unit
+# Plane-wave calibration grid (fixed; a rule's persisted capacity_E in the registry is
+# only trusted if CAPACITY_GRID_VERSION matches -- bump this if these parameters change.
+CAPACITY_GRID_VERSION = 1
+_CAPACITY_THETAS = np.linspace(0.0, np.pi, 17)[:-1] + 0.123   # generic directions
+_CAPACITY_S_GRID = np.geomspace(0.1, 90.0, 240)
+
+
+def _compute_capacity_curve(kind, deg):
+    """Computes E_grid fresh: worst-case relative error E(s) of a rule integrating a unit
     plane wave over a triangle, as a function of s = K·h (nondimensional resolution).
 
     E is measured relative to the triangle area (the natural O(1) scale of a
@@ -130,19 +136,27 @@ def _capacity_curve(kind, deg):
     bc, bw = get_cubature_rule(kind, deg)
     nodes = bc @ _REF_VERTS
     wts = bw * _REF_AREA
-    # generic directions (avoid axis alignment / vertex-phase confluence)
-    thetas = np.linspace(0.0, np.pi, 17)[:-1] + 0.123
-    s_grid = np.geomspace(0.1, 90.0, 240)
-    E = np.empty_like(s_grid)
-    for i, s in enumerate(s_grid):
+    E = np.empty_like(_CAPACITY_S_GRID)
+    for i, s in enumerate(_CAPACITY_S_GRID):
         worst = 0.0
-        for th in thetas:
+        for th in _CAPACITY_THETAS:
             kx, ky = s * np.cos(th), s * np.sin(th)
             est = (wts * np.exp(1j * (kx * nodes[:, 0] + ky * nodes[:, 1]))).sum()
             err = abs(est - _planewave_exact(kx, ky)) / _REF_AREA
             worst = max(worst, err)
         E[i] = worst
-    return s_grid, E
+    return E
+
+
+@lru_cache(maxsize=None)
+def _capacity_curve(kind, deg):
+    """(s_grid, E_grid), preferring a registry-persisted E_grid over recomputing it."""
+    cached = _registry_capacity_curve(kind, deg)
+    if cached is not None:
+        version, E = cached
+        if version == CAPACITY_GRID_VERSION and len(E) == len(_CAPACITY_S_GRID):
+            return _CAPACITY_S_GRID, E
+    return _CAPACITY_S_GRID, _compute_capacity_curve(kind, deg)
 
 
 def capacity(kind, deg, eps):
