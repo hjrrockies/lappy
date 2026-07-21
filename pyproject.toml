@@ -22,3 +22,6 @@ dependencies = [
     "mpmath>=1.0",
     "tqdm>=4.0",
 ]
+
+[tool.setuptools.package-data]
+lappy = ["data/cubature_rules/*.json"]

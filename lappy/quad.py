@@ -5,6 +5,7 @@ from numpy.polynomial.legendre import leggauss
 from scipy.special import roots_jacobi
 from scipy.interpolate import BSpline
 from functools import cache
+from .cubature_registry import get_cubature_rule
 
 
 ### Quadrature rules for domain boundaries
@@ -78,38 +79,6 @@ def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     return nodes, weights
 
 ### Triangular meshes and cubature rules
-def load_cubature_rules(path='.cubature_rules/'):
-    kinds = ['7pts','alb_col','bern_esp1','bern_esp2','bern_esp4','cowper','day_taylor',
-             'dedon_rob','dunavant','vior_rok','xiao_gim','lether','stroud']
-    rules = {}
-    for kind in kinds:
-        try:
-            arrs = dict(np.load(path+kind+'.npz'))
-            rules[kind] = {int(deg):arr for deg,arr in arrs.items()}
-        except:
-            from .cubature_rules import build_cubature_rules, save_cubature_rules
-            save_cubature_rules(build_cubature_rules(),path)
-            arrs = dict(np.load(path+kind+'.npz'))
-            rules[kind] = {int(deg):arr for deg,arr in arrs.items()}
-    return rules
-
-_rules = None
-
-def _get_rules():
-    global _rules
-    if _rules is None:
-        _rules = load_cubature_rules()
-    return _rules
-
-def get_cubature_rule(kind,deg):
-    """Returns a cubature rule of a specified kind and degree in barycentric form"""
-    rules = _get_rules()
-    try: arr = rules[kind][deg]
-    except: raise ValueError(f"rule of kind '{kind}' and degree {deg} is not defined")
-    bary_coords = arr[:,:3]
-    bary_weights = arr[:,3]
-    return bary_coords, bary_weights
-
 def triangle_areas(mesh_vertices,triangles):
     """Computes the areas of triangles in a triangular mesh"""
     v = mesh_vertices[triangles]

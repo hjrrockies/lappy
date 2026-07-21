@@ -25,8 +25,9 @@ a one-shot a-posteriori surrogate check.
 import numpy as np
 from functools import lru_cache
 
-from .quad import (get_cubature_rule, _get_rules, tri_quad,
+from .quad import (get_cubature_rule, tri_quad,
                    polygon_triangular_mesh, graded_polygon_mesh)
+from .cubature_registry import iter_rules
 
 # Reference equilateral triangle (edge length 1) used for calibration.
 _REF_VERTS = np.array([[0.0, 0.0], [1.0, 0.0], [0.5, np.sqrt(3) / 2]])
@@ -44,13 +45,7 @@ def _rule_ladder():
     Returns a tuple of (kind, deg, npts), sorted by degree. Only positive-weight rules
     are used so the generated cubature always satisfies the positivity requirement.
     """
-    rules = _get_rules()
-    ladder = []
-    for kind in rules:
-        for deg, arr in rules[kind].items():
-            w = arr[:, 3]
-            if (w > 0).all():
-                ladder.append((kind, int(deg), int(len(w))))
+    ladder = [(r['kind'], r['deg'], r['npts']) for r in iter_rules(positive_only=True)]
     # sort by degree, then by fewest points (prefer the leaner rule at equal degree)
     ladder.sort(key=lambda t: (t[1], t[2]))
     # keep, for each degree, only the rule with the fewest points
