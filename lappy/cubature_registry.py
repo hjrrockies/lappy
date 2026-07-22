@@ -70,6 +70,22 @@ def get_capacity_curve(kind, deg):
     return entry['capacity_grid_version'], np.asarray(entry['capacity_E'], dtype=np.float64)
 
 
+def get_singular_curve(kind, deg):
+    """Returns (grid_version, beta_grid ndarray, E_grid ndarray) if the registry has a
+    precomputed singular-corner-integrand calibration for this rule (see
+    lappy.cubature._choose_corner_rule), else None."""
+    registry = load_registry()
+    try:
+        entry = registry[kind]['rules'][str(deg)]
+    except KeyError:
+        return None
+    if 'singular_grid_version' not in entry or 'singular_E' not in entry:
+        return None
+    return (entry['singular_grid_version'],
+            np.asarray(entry['singular_beta_grid'], dtype=np.float64),
+            np.asarray(entry['singular_E'], dtype=np.float64))
+
+
 def iter_rules(positive_only=False, min_degree=None, max_degree=None):
     """Yields diagnostic dicts for every rule in the registry, without decoding
     nodes/weights: {kind, deg, npts, positive, min_weight, max_weight, weight_ratio,

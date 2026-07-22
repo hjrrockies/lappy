@@ -84,15 +84,13 @@ def triangle_areas(mesh_vertices,triangles):
     v = mesh_vertices[triangles]
     return 0.5*np.abs((v[:,0,0]-v[:,2,0])*(v[:,1,1]-v[:,0,1])-(v[:,0,0]-v[:,1,0])*(v[:,2,1]-v[:,0,1]))
 
-def tri_quad(mesh, kind='dunavant', deg=4):
-    """"Sets up a cubature rule for a given mesh, in complex form"""
-    # extract mesh vertices and triangle-to-vertex array
-    mesh_vertices = mesh.points[:,:2]
-    triangles = mesh.cells[1].data
-
+def tri_quad_rule(mesh_vertices, triangles, kind, deg):
+    """Applies one cubature rule to a given set of triangles (rows of vertex indices
+    into mesh_vertices), in complex form. Core of tri_quad, factored out so callers
+    (e.g. lappy.cubature's per-triangle rule assignment) can apply different rules
+    to different subsets of the same mesh and concatenate the results."""
     # get triangle vertices in complex form
     tri_vertices = mesh_vertices[triangles]
-    # tri_vertices_complex = tri_vertices[:,:,0] + 1j*tri_vertices[:,:,1]
 
     # get cubature nodes and weights in barycentric form
     # convert to array of nodes in complex form
@@ -103,6 +101,13 @@ def tri_quad(mesh, kind='dunavant', deg=4):
     areas = triangle_areas(mesh_vertices,triangles)
     weights = np.outer(areas,bary_weights).flatten()
     return nodes, weights
+
+def tri_quad(mesh, kind='dunavant', deg=4):
+    """"Sets up a cubature rule for a given mesh, in complex form"""
+    # extract mesh vertices and triangle-to-vertex array
+    mesh_vertices = mesh.points[:,:2]
+    triangles = mesh.cells[1].data
+    return tri_quad_rule(mesh_vertices, triangles, kind, deg)
 
 # mesh building
 def polygon_triangular_mesh(vertices, mesh_size, mesh_size_min=0.05, mesh_size_max=0.5):
@@ -130,77 +135,60 @@ def polygon_triangular_mesh(vertices, mesh_size, mesh_size_min=0.05, mesh_size_m
         mesh = geom.generate_mesh()
     return mesh
 
-def graded_polygon_mesh(vertices, h_smooth, corner_pts, h_corners, R0s,
-                        mesh_size_min=None, mesh_size_max=None):
-    """Triangular mesh on a polygon, geometrically graded toward reentrant corners.
+def corner_fan_triangles(z0, theta0, omega, R0, L=2, n_theta=8, sigma=0.17):
+    """Explicit (non-gmsh) triangulation of a wedge at a reentrant corner, geometrically
+    graded toward the corner point, in complex form.
 
-    Element size grows linearly with distance from each corner (which yields geometric
-    element layering), from ``h_corners[i]`` at ``corner_pts[i]`` up to ``h_smooth`` at
-    radius ``R0s[i]``. Sizing is driven entirely by a gmsh background field so it is
-    independent of the polygon's vertex spacing.
+    gmsh's background-field meshing does not reliably realize an extreme geometric size
+    field near a single point (verified empirically: even when a size field demands
+    elements ~1e-4 in size at a corner, the realized mesh's smallest edge stays ~0.2-0.4),
+    which caps achievable accuracy on singular corner integrands at ~1e-11 regardless of
+    requested precision. Building the graded layers directly, with exact straight-sided
+    geometry matching the polygon's real local edges (no circular-arc approximation),
+    removes that ceiling -- see lappy.cubature._choose_corner_rule for how the per-layer
+    cubature rule degree is chosen based on target precision.
 
     Parameters
     ----------
-    vertices : array
-        Polygon vertices (complex or (N,2) real).
-    h_smooth : float
-        Target element edge length in the smooth interior.
-    corner_pts : array
-        Reentrant corner locations (complex or (M,2) real).
-    h_corners : array
-        Smallest element edge length at each corner.
-    R0s : array
-        Transition radius for each corner (size reaches h_smooth at this distance).
+    z0 : complex
+        Corner vertex location.
+    theta0 : float
+        Direction (radians) of the wedge's starting edge from z0.
+    omega : float
+        Interior angle of the wedge (the corner's reentrant interior angle).
+    R0 : float
+        Outer radius of the fan (transition to the rest of the domain).
+    L : int, optional
+        Number of geometric radial layers (default 2; accuracy is governed by the
+        cubature rule's degree, not by L -- see module docstring in lappy.cubature).
+    n_theta : int, optional
+        Angular subdivisions of the wedge.
+    sigma : float, optional
+        Geometric grading ratio between successive layers.
+
+    Returns
+    -------
+    (n, 3, 2) ndarray
+        Triangle vertices in real (x, y) coordinates, corner-relative offsets added to z0.
     """
-    import gmsh
-    from pygmsh.geo import Geometry
-    vertices = np.asarray(vertices)
-    if vertices.dtype == 'complex128':
-        vertices = real_form(vertices)
-    if vertices.shape[0] == 2:
-        vertices = vertices.T
-    if vertices.shape[1] != 2 or vertices.ndim != 2:
-        raise ValueError('vertices must be a 2-dimensional array of x & y coordinates')
+    thetas = theta0 + np.linspace(0.0, omega, n_theta + 1)
+    radii = R0 * sigma**np.arange(L + 1)   # radii[0]=R0 (outer) ... radii[L] (innermost ring)
 
-    corner_pts = np.asarray(corner_pts)
-    if corner_pts.dtype == 'complex128':
-        corner_pts = real_form(corner_pts)
-    corner_pts = corner_pts.reshape(-1, 2)
-    h_corners = np.atleast_1d(np.asarray(h_corners, dtype=float))
-    R0s = np.atleast_1d(np.asarray(R0s, dtype=float))
+    ring_pts = radii[:, None] * np.exp(1j * thetas)[None, :]   # (L+1, n_theta+1) complex, corner-relative
 
-    if mesh_size_min is None:
-        mesh_size_min = float(np.min(h_corners)) / 2
-    if mesh_size_max is None:
-        mesh_size_max = h_smooth
+    tris = []
+    for k in range(L):
+        p_out, p_in = ring_pts[k], ring_pts[k + 1]
+        for j in range(n_theta):
+            tris.append((p_out[j], p_out[j + 1], p_in[j]))
+            tris.append((p_out[j + 1], p_in[j + 1], p_in[j]))
+    # apex fan: innermost ring down to the corner point itself
+    p_in = ring_pts[-1]
+    for j in range(n_theta):
+        tris.append((0.0 + 0.0j, p_in[j], p_in[j + 1]))
 
-    with Geometry() as geom:
-        geom.add_polygon(vertices, h_smooth)
-
-        # One MathEval size field per corner: size = min(h_smooth, h_corner + slope*dist).
-        # Linear growth in distance => geometric layering of elements toward the corner.
-        field_tags = []
-        for (x0, y0), hc, R0 in zip(corner_pts, h_corners, R0s):
-            slope = (h_smooth - hc) / R0
-            tag = gmsh.model.mesh.field.add("MathEval")
-            expr = (f"min({h_smooth}, {hc} + {slope}"
-                    f"*sqrt((x-({x0}))^2 + (y-({y0}))^2))")
-            gmsh.model.mesh.field.setString(tag, "F", expr)
-            field_tags.append(tag)
-
-        min_tag = gmsh.model.mesh.field.add("Min")
-        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", field_tags)
-        gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
-
-        # Let the background field fully control element sizing.
-        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeMin", mesh_size_min)
-        gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size_max)
-        gmsh.option.setNumber("Mesh.Algorithm", 6)  # Frontal-Delaunay
-        mesh = geom.generate_mesh()
-    return mesh
+    tris = np.array(tris) + z0   # (n, 3) complex
+    return np.stack([tris.real, tris.imag], axis=-1)   # (n, 3, 2) real
 
 def curvature_sampling(spline, t0, tf, pts_per_2pi=20):
     """Gets samples from a SciPy BSpline with density based on curvature."""

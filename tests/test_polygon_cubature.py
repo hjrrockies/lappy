@@ -122,6 +122,80 @@ def test_verify_flag_passes(request, fixture):
     cub.polygon_cubature(dom, lam_max=120.0, precision=1e-5, verify=True)
 
 
+@pytest.mark.parametrize('precision', [1e-3, 1e-5, 1e-6, 1e-8, 1e-10, 1e-12])
+def test_verify_flag_passes_reentrant_across_precisions(precision):
+    """Regression test: per-triangle rule assignment (lappy.cubature._mixed_tri_quad)
+    must not downgrade the rule on triangles inside a reentrant corner's grading
+    radius -- their integrand is the singular factor itself, not a band-limited wave,
+    so plane-wave capacity alone is the wrong criterion there and previously caused
+    verify=True to fail at tight precision on corner-graded meshes. Also regression-
+    guards the explicit corner fan's rule choice (_choose_corner_rule): a rule picked
+    for singular-integrand accuracy alone can have far too little plane-wave capacity
+    for the fan's own outer-ring oscillation requirement (s = K*R0).
+    """
+    dom = geo.L_shape()
+    cub.polygon_cubature(dom, lam_max=400.0, precision=precision, verify=True)
+
+
+def _analytic_corner_singular_value(poly, corner_idx, dps=40):
+    """Exact int |z-z0|^{2*beta} dA over poly via mpmath, fan-triangulated from the
+    corner vertex z0 (closed form per triangle via polar coordinates centered at z0) --
+    independent ground truth, no mesh or cubature rule involved."""
+    import mpmath as mp
+    with mp.workdps(dps):
+        verts = poly.vertices
+        n = len(verts)
+        z0 = mp.mpc(verts[corner_idx].real, verts[corner_idx].imag)
+        beta = mp.pi / mp.mpf(poly.int_angles[corner_idx])
+        twobeta = 2 * beta
+        total = mp.mpf(0)
+        for k in range(n):
+            if k == corner_idx or (k + 1) % n == corner_idx:
+                continue
+            a = mp.mpc(verts[k].real, verts[k].imag) - z0
+            b = mp.mpc(verts[(k + 1) % n].real, verts[(k + 1) % n].imag) - z0
+            ra, ta = mp.fabs(a), mp.arg(a)
+            rb, tb = mp.fabs(b), mp.arg(b)
+            dt = tb - ta
+            if dt > mp.pi:
+                dt -= 2 * mp.pi
+            if dt < -mp.pi:
+                dt += 2 * mp.pi
+
+            def rmax(theta, ra=ra, ta=ta, rb=rb, tb=tb):
+                return ra * rb * mp.sin(tb - ta) / (rb * mp.sin(theta - ta) - ra * mp.sin(theta - tb))
+
+            def integrand(theta, ra=ra, ta=ta, rb=rb, tb=tb):
+                return rmax(theta, ra, ta, rb, tb)**(twobeta + 2) / (twobeta + 2)
+
+            total += mp.fabs(mp.quad(integrand, [ta, ta + dt]))
+        return float(total)
+
+
+@pytest.mark.parametrize('precision', [1e-3, 1e-6, 1e-8, 1e-10, 1e-12])
+def test_reentrant_corner_reaches_requested_precision(precision):
+    """The explicit corner-fan construction must actually deliver the requested
+    precision on a genuinely singular quantity, not just avoid raising under
+    verify=True -- certified against an independent mpmath analytic ground truth
+    (no mesh, no cubature rule), reaching machine precision at tight requests where
+    the old gmsh-graded-mesh construction plateaued at a fixed ~1e-11 floor
+    regardless of how tightly precision was requested.
+    """
+    dom = geo.L_shape()
+    reentrant = np.nonzero(dom.int_angles > np.pi + 1e-9)[0]
+    corner_idx = int(reentrant[0])
+    beta = np.pi / dom.int_angles[corner_idx]
+    z0 = dom.vertices[corner_idx]
+    f = lambda zz: np.abs(zz - z0)**(2 * beta)
+
+    true_val = _analytic_corner_singular_value(dom, corner_idx)
+    z, w = cub.polygon_cubature(dom, lam_max=400.0, precision=precision)
+    est = (w * f(z)).sum()
+    rel_err = abs(est - true_val) / true_val
+    assert rel_err <= precision, (
+        f"precision={precision:.0e}: actual relative error {rel_err:.3e} exceeds request")
+
+
 def test_verify_flag_catches_bad_rule():
     dom = geo.rect(2.0, 1.0)
     K = 2 * np.sqrt(120.0)
@@ -157,7 +231,8 @@ def test_minimality_high_degree_beats_low_degree():
 
 
 def test_minimality_grading_beats_uniform_refinement():
-    """Graded corner refinement uses far fewer nodes than uniform h_corner refinement."""
+    """Chamfered corner-fan treatment uses far fewer nodes than naive uniform mesh
+    refinement to the fan's finest scale, applied over the whole domain."""
     dom = geo.L_shape()
     lam_max, precision = 100.0, 1e-6
     z, w = cub.polygon_cubature(dom, lam_max, precision)
@@ -165,12 +240,14 @@ def test_minimality_grading_beats_uniform_refinement():
     eps = precision / 4
     K = 2 * np.sqrt(lam_max)
     kind, deg, npts, rho, h = cub.choose_rule(K, eps, dom.area)
-    _, h_corner, _ = cub._corner_grading(dom, np.array([0]), h, eps)
-    # nodes a uniform mesh at h_corner would need over the whole domain
-    uniform_tris = dom.area / ((np.sqrt(3) / 4) * h_corner[0] ** 2)
+    reentrant = np.nonzero(dom.int_angles > np.pi + 1e-9)[0]
+    R0s = cub._corner_R0s(dom, reentrant, h)
+    h_finest = R0s[0] * (0.17 ** cub._CORNER_L)   # finest scale in the corner fan
+    # nodes a uniform mesh at h_finest would need over the whole domain
+    uniform_tris = dom.area / ((np.sqrt(3) / 4) * h_finest ** 2)
     uniform_nodes = uniform_tris * npts
     assert len(z) < 0.2 * uniform_nodes, (
-        f"graded {len(z)} not << uniform estimate {uniform_nodes:.0f}")
+        f"generator {len(z)} not << uniform estimate {uniform_nodes:.0f}")
 
 
 # =================================================================================
