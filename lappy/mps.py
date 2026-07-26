@@ -6,6 +6,7 @@ from .geometry import PointSet, Polygon
 from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBasis, FourierBesselBasis
 from .cubature import polygon_cubature
 from .asymp import weyl_est
+from .rellich import build_rellich_data, rellich_gram_basis, orthonormalize_coef
 
 from .cache import instance_lru_cache
 import numpy as np
@@ -210,26 +211,45 @@ def make_ddiff_vander(basis, pts, vecs, wts=None):
 
 class MPSEigensolver(BaseEigensolver):
     def __init__(self, basis, bdry_pts, int_pts, bdry_normals=None, bc_param=0,
-                 reg_type='svd', rtol=rtol_default, ttol=ttol_default, ltol=ltol_default):
+                 reg_type='svd', rtol=rtol_default, ttol=ttol_default, ltol=ltol_default,
+                 cauchy_data=None):
 
         self.basis = basis
         self.bdry_pts = bdry_pts
         self.bdry_normals = bdry_normals
         self.int_pts = int_pts
         self.bc_param = bc_param
-        
+
         # validate
         if not isinstance(basis, ParticularBasis):
             raise TypeError("'basis' must be a ParticularBasis object")
-        
+
         self.A_B = make_bdry_vander(basis, bdry_pts, bdry_normals, bc_param)
         self.A_I = make_vander(basis, int_pts)
 
-        # regularization and solver tolerances    
+        # regularization and solver tolerances
         self.reg_type = reg_type
         self.rtol = rtol
         self.ttol = ttol
         self.ltol = ltol
+
+        # Boundary-only Cauchy-data / quadrature bundle used for Rellich-identity
+        # normalization (docs/rellich.md, docs/rellich_hadamard_mps.pdf). This is
+        # opaque, already-materialized geometry+quadrature data (as from
+        # rellich.build_rellich_data), mirroring bdry_pts/int_pts -- MPSEigensolver
+        # itself has no notion of a domain. None disables eigenfunction_coef's
+        # normalization (it falls back to raw coefficients with a warning).
+        self._cauchy_data = cauchy_data
+
+    @property
+    def cauchy_data(self):
+        """The boundary Cauchy-data/quadrature bundle backing Rellich-identity
+        normalization (see rellich.build_rellich_data), or None if unavailable.
+        Exposed for reuse by code building other boundary-integral quantities
+        from the same basis/eigenfunctions (e.g. Hadamard-type shape-derivative
+        formulas) -- see lappy.cauchy for the generic Cauchy-data/kernel-assembler
+        API this is built on. lappy itself does not implement such formulas."""
+        return self._cauchy_data
 
     @classmethod
     def default_basis(domain, n):
@@ -244,8 +264,10 @@ class MPSEigensolver(BaseEigensolver):
         pass
 
     @classmethod
-    def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False, 
-                    reg_type='svd', rtol=rtol_default, ttol=ttol_default):
+    def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False,
+                    reg_type='svd', rtol=rtol_default, ttol=ttol_default,
+                    rellich=True, rellich_x0=None, rellich_mult=2, rellich_min_per_seg=4,
+                    rellich_panel_frac=0.4, rellich_group_pts=16):
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
         if lam_max is None:
@@ -268,7 +290,22 @@ class MPSEigensolver(BaseEigensolver):
         # normalize basis
         basis = basis.to_normalized((bdry_pts, int_pts))
 
-        return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec)
+        # boundary-only (Rellich identity) normalization data: see docs/rellich.md.
+        # Robin boundaries are unsupported here; eigenfunction_coef falls back to raw
+        # (un-normalized) coefficients with a warning in that case.
+        cauchy_data = None
+        if rellich:
+            if domain.bc_type == 'rob':
+                warnings.warn("Rellich-identity orthonormalization is not supported for "
+                              "Robin boundary conditions; eigenfunction_coef will return "
+                              "un-normalized coefficients.")
+            else:
+                cauchy_data = build_rellich_data(domain, basis, rellich_x0, rellich_mult,
+                                                 rellich_min_per_seg, rellich_panel_frac,
+                                                 rellich_group_pts)
+
+        return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec,
+                   cauchy_data=cauchy_data)
         
     def _get_params(self, reg_type=None, rtol=None, ttol=None, ltol=None):
         """Helper to resolve parameters against instance defaults"""
@@ -311,9 +348,32 @@ class MPSEigensolver(BaseEigensolver):
         return self.tensions(lam, reg_type, rtol)[0]
     
     @instance_lru_cache(maxsize=64)
-    def eigenfunction_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+    def _cauchy_gram(self, eig):
+        """Boundary-only (Rellich identity) L^2(Omega) Gram matrix of the basis at eig.
+        See docs/rellich.md; cached per eigenvalue since it is otherwise the same cost
+        order as one basis evaluation."""
+        return rellich_gram_basis(self.basis, eig, self._cauchy_data)
+
+    @instance_lru_cache(maxsize=64)
+    def eigenfunction_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, normalize='rellich'):
+        """Coefficient vector(s) (in basis-function space) for the eigenfunction(s)
+        at eig. By default (normalize='rellich'), the coefficients are rescaled (and,
+        for mult>1, rotated) to be orthonormal in the true L^2(Omega) inner product,
+        computed via the boundary-only Rellich identity (docs/rellich.md). Pass
+        normalize=None/False to get the raw (arbitrarily-scaled) GSVD nullspace
+        coefficients instead. Falls back to raw coefficients with a warning if no
+        cauchy_data was supplied at construction (e.g. from_domain(..., rellich=False),
+        a domain with Robin boundary conditions, or manual construction)."""
         reg_type, rtol, ttol, _ = self._get_params(reg_type, rtol, ttol)
-        return nullspace_coef(self.A_B(eig), self.A_I(eig), mult, reg_type, rtol, ttol)
+        coef = nullspace_coef(self.A_B(eig), self.A_I(eig), mult, reg_type, rtol, ttol)
+        if not normalize:
+            return coef
+        if self._cauchy_data is None:
+            warnings.warn("Rellich-identity normalization unavailable (no cauchy_data "
+                          "supplied at construction); returning un-normalized coefficients.")
+            return coef
+        G = self._cauchy_gram(eig)
+        return orthonormalize_coef(coef, G)
     
     def eigenfunction(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         coef = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol)

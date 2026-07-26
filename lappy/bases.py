@@ -131,10 +131,21 @@ class ParticularBasis(ABC):
     
     def to_normalized(self, quad_pts, quad_wts=None, max_scale=True):
         return NormalizedBasis(self, quad_pts, quad_wts, max_scale=max_scale)
-    
+
     @abstractmethod
     def __len__(self):
         pass
+
+    def corner_terms(self, domain=None):
+        """Per-column corner-singularity structure: (corner_id, exponent), both length len(self).
+        corner_id[j] is the index into domain.corners that basis column j is singular at, or -1 if
+        column j is regular everywhere (e.g. a global fundamental-solution term); exponent[j] is
+        column j's leading radial exponent p_m there (0/unused where corner_id[j] == -1). Used by
+        lappy.cauchy's singularity-subtraction quadrature (docs/rellich_hadamard_mps.pdf) to grade
+        boundary integrals to each basis function's actual local behavior, rather than one exponent
+        per corner/segment. Default: regular everywhere (correct for e.g. FundamentalBasis)."""
+        n = len(self)
+        return np.full(n, -1, dtype=int), np.zeros(n)
 
 class MultiBasis(ParticularBasis):
     """Basis composed of the union of several bases"""
@@ -148,7 +159,11 @@ class MultiBasis(ParticularBasis):
     
     def _grad_pointset(self, lam, pts):
         return np.hstack([basis._grad_pointset(lam, pts) for basis in self.bases])
-    
+
+    def corner_terms(self, domain=None):
+        corner_ids, exponents = zip(*(b.corner_terms(domain) for b in self.bases))
+        return np.concatenate(corner_ids), np.concatenate(exponents)
+
     def __iadd__(self, other):
         if not isinstance(other, ParticularBasis):
             raise TypeError("'other' must be an instance of ParticularBasis")
@@ -205,6 +220,13 @@ class NormalizedBasis(ParticularBasis):
 
     def __len__(self):
         return len(self.basis)
+
+    def corner_terms(self, domain=None):
+        """Delegates to the wrapped basis -- rescaling a column doesn't change its corner
+        singularity structure. Describes the wrapped basis's full column set (matching __len__);
+        note _eval_pointset can, at a given lambda, prune a zero-norm column and so return fewer
+        columns than this -- a pre-existing NormalizedBasis edge case, not specific to corner_terms."""
+        return self.basis.corner_terms(domain)
 
     @instance_lru_cache(maxsize=4)
     def _weighted_eval(self, lam, pts):
@@ -477,12 +499,39 @@ class FourierBesselBasis(ParticularBasis):
     @property
     def n_sources(self):
         return len(self.sources)
-    
+
     @property
     def alpha(self):
         phi = np.angle(self._ray1/self._ray0)
         phi[phi <= 0] += 2*np.pi
         return np.pi/phi
+
+    def corner_terms(self, domain=None):
+        """(corner_id, exponent) per column -- see ParticularBasis.corner_terms. `domain` is
+        required here: self.sources are matched by position against domain.corners to recover each
+        source's corner index (self._src_idx only indexes this basis's own, possibly order-0-filtered,
+        source list, not domain.corners directly). Raises if a source isn't among domain.corners --
+        e.g. a hand-built basis whose sources weren't taken from domain.corners (via from_domain/
+        at_corners), for which "corner_terms" isn't a meaningful query."""
+        if domain is None:
+            raise ValueError("FourierBesselBasis.corner_terms requires a domain "
+                             "(to identify which domain.corners index each source is)")
+        corners = domain.corners
+        src_to_corner = np.empty(self.n_sources, dtype=int)
+        for i, s in enumerate(self.sources):
+            matches = np.nonzero(np.isclose(corners, s))[0]
+            if len(matches) == 0:
+                raise ValueError(f"basis source {i} at {s} does not match any domain corner; "
+                                 "corner_terms() requires sources built from domain.corners "
+                                 "(e.g. via FourierBesselBasis.from_domain/at_corners)")
+            src_to_corner[i] = matches[0]
+
+        corner_id = src_to_corner[self._src_idx]
+        exponent = self._alphak_col
+        if self.kind == 'sincos':
+            corner_id = np.concatenate([corner_id, corner_id])
+            exponent = np.concatenate([exponent, exponent])
+        return corner_id, exponent
 
     def _set_alphak(self):
         # write angles as complex rays

@@ -94,6 +94,74 @@ def test_index_maps_consistent_with_orders():
     assert np.array_equal(basis._alphak_col, basis.alphak_vec[0])
 
 
+# ── corner_terms() — per-column corner-singularity structure (lappy.cauchy) ──
+
+def test_corner_terms_fourier_bessel_matches_alphak():
+    from lappy import Polygon
+    domain = Polygon(np.array([0, 2, 2 + 1j, 1j]), bc='dir')
+    basis = FourierBesselBasis.from_domain(domain, orders=[3, 3, 3, 3])
+    corner_id, exponent = basis.corner_terms(domain)
+    assert corner_id.shape == (len(basis),)
+    assert np.array_equal(corner_id, basis._src_idx)  # sources built in domain.corners order
+    assert np.array_equal(exponent, basis._alphak_col)
+    assert np.array_equal(np.sort(np.unique(corner_id)), np.arange(4))
+
+
+def test_corner_terms_fourier_bessel_sincos_duplicates_columns():
+    domain_mixed_kind = 'sincos'
+    from lappy import Polygon
+    domain = Polygon(np.array([0, 2, 2 + 1j, 1j]), bc='dir')
+    phi0, phi1 = domain.corner_angles
+    basis = FourierBesselBasis(domain.corners, phi0, phi1, [3, 3, 3, 3],
+                               domain.branch_cut_rays(), kind=domain_mixed_kind)
+    corner_id, exponent = basis.corner_terms(domain)
+    half = len(basis)//2
+    assert np.array_equal(corner_id[:half], corner_id[half:])
+    assert np.array_equal(exponent[:half], exponent[half:])
+
+
+def test_corner_terms_unmatched_source_raises():
+    basis = _make_basis(order=3)  # source at 0+0j, unrelated to any domain
+    from lappy import Polygon
+    domain = Polygon(np.array([5, 7, 7 + 1j, 5 + 1j]), bc='dir')  # doesn't contain 0+0j
+    with pytest.raises(ValueError):
+        basis.corner_terms(domain)
+
+
+def test_corner_terms_fundamental_basis_all_regular():
+    from lappy.bases import FundamentalBasis
+    basis = FundamentalBasis(np.array([5+5j, -5-5j]), orders=2)
+    corner_id, exponent = basis.corner_terms()
+    assert np.all(corner_id == -1)
+    assert corner_id.shape == (len(basis),)
+
+
+def test_corner_terms_multibasis_concatenates():
+    from lappy import Polygon
+    from lappy.bases import FundamentalBasis
+    domain = Polygon(np.array([0, 2, 2 + 1j, 1j]), bc='dir')
+    fb = FourierBesselBasis.from_domain(domain, orders=[3, 3, 3, 3])
+    fs = FundamentalBasis(np.array([5+5j, -5-5j]), orders=2)
+    mb = fb + fs
+    corner_id, exponent = mb.corner_terms(domain)
+    cid_fb, exp_fb = fb.corner_terms(domain)
+    cid_fs, exp_fs = fs.corner_terms(domain)
+    assert np.array_equal(corner_id, np.concatenate([cid_fb, cid_fs]))
+    assert np.array_equal(exponent, np.concatenate([exp_fb, exp_fs]))
+
+
+def test_corner_terms_normalized_basis_delegates():
+    from lappy import Polygon
+    domain = Polygon(np.array([0, 2, 2 + 1j, 1j]), bc='dir')
+    fb = FourierBesselBasis.from_domain(domain, orders=[3, 3, 3, 3])
+    bdry = domain.bdry_pts(20)
+    nb = fb.to_normalized(bdry)
+    cid_nb, exp_nb = nb.corner_terms(domain)
+    cid_fb, exp_fb = fb.corner_terms(domain)
+    assert np.array_equal(cid_nb, cid_fb)
+    assert np.array_equal(exp_nb, exp_fb)
+
+
 # ── polyline+ray branch cuts ────────────────────────────────────────────────
 
 from lappy import Polygon

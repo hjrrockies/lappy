@@ -19,6 +19,10 @@ def complex_form(pts, y=None):
     else:
         raise ValueError('pts must be a real array of shape (...,2)')
 
+def complex_dot(a, b):
+    """Dot product of two vectors in the plane given in complex form."""
+    return a.real*b.real + a.imag*b.imag
+
 def real_form(pts):
     pts = np.asarray(pts)
     if np.iscomplexobj(pts):
