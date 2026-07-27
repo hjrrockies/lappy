@@ -33,7 +33,7 @@ from .quad import jacgauss
 CauchyData = namedtuple('CauchyData', ['pts', 'normals', 'tangents', 'wts', 'Phi', 'Phi_N', 'Phi_T'])
 
 
-def basis_cauchy_data(basis, lam, pts, normals, tangents, wts=None):
+def basis_cauchy_data(basis, lam, pts, normals, tangents, wts=None, cols=None):
     """Evaluates a particular-solution basis' Cauchy data (value, normal
     derivative, tangent derivative) at a caller-supplied boundary node set,
     bundled with the node geometry for reuse across every downstream
@@ -45,7 +45,14 @@ def basis_cauchy_data(basis, lam, pts, normals, tangents, wts=None):
     This is the general-purpose entry point: any caller -- including code
     outside lappy -- that wants Cauchy data at a node set/panel structure of
     its own choosing (e.g. tuned to its own weight function) can call this
-    directly, rather than reusing lappy's precomputed Rellich node sets."""
+    directly, rather than reusing lappy's precomputed Rellich node sets.
+
+    `cols`, if given (a sorted integer index array -- see ParticularBasis.__call__),
+    evaluates only those basis columns: the returned CauchyData's Phi/Phi_N/Phi_T have
+    `len(cols)` columns, in that order, not the basis's full width. This is what makes
+    lappy.cauchy.singular_gram's SS/RR sub-blocks cheap for bases with a per-column-localized
+    cost (e.g. FourierBesselBasis): a corner's own small mode set, or "everything but that
+    corner", can be evaluated without paying for the columns that block doesn't need."""
     if not isinstance(pts, PointSet):
         pts = PointSet(pts)
     if not isinstance(normals, PointSet):
@@ -55,9 +62,9 @@ def basis_cauchy_data(basis, lam, pts, normals, tangents, wts=None):
     if wts is None:
         wts = np.zeros(len(pts))
 
-    Phi = basis(lam, pts)
-    Phi_N = basis.ddiff(lam, pts, normals)
-    Phi_T = basis.ddiff(lam, pts, tangents)
+    Phi = basis(lam, pts, cols=cols)
+    Phi_N = basis.ddiff(lam, pts, normals, cols=cols)
+    Phi_T = basis.ddiff(lam, pts, tangents, cols=cols)
     return CauchyData(pts, normals, tangents, wts, Phi, Phi_N, Phi_T)
 
 
@@ -198,30 +205,35 @@ def _corner_panel_gram(basis, domain, lam, kernel, weight_fn, corner_idx, corner
     p_Sc = exponent[Sc]
     not_Sc = np.setdiff1d(np.arange(N), Sc)
 
-    def panel_cauchy_data(a):
+    def panel_cauchy_data(a, cols=None):
         parts = []
         if active_out:
             parts.append(_panel_nodes(seg_out, R, a, 'p0', group_pts))
         if active_in:
             parts.append(_panel_nodes(seg_in, R, a, 'pf', group_pts))
         pts, normals, tangents, wts = (np.concatenate(x) for x in zip(*parts))
-        cd = basis_cauchy_data(basis, lam, pts, normals, tangents, wts)
+        cd = basis_cauchy_data(basis, lam, pts, normals, tangents, wts, cols=cols)
         return cd, weight_fn(pts, normals, tangents)
 
     G = np.zeros((N, N))
 
-    # SS: Sc x Sc, grouped by each pair's exact combined exponent
+    # SS: Sc x Sc, grouped by each pair's exact combined exponent. Evaluates only Sc's own
+    # columns (cols=Sc) -- the dominant cost otherwise, since SS calls are the overwhelming
+    # majority of calls made across a whole singular_gram invocation, and previously each one
+    # paid for evaluating every one of the basis's N columns to use only |Sc| of them (see
+    # docs/rellich_hadamard_mps.pdf and the profiling in benchmarks/reference/rellich_profile.py).
     a_pairs = p_Sc[:, np.newaxis] + p_Sc[np.newaxis, :] - 2*d
     for a in np.unique(a_pairs):
         _check_exponent(a, corner_idx)
         mask = np.isclose(a_pairs, a)
-        cd, weight = panel_cauchy_data(a)
-        M = assemble_kernel(cd, kernel, weight, cols1=Sc, cols2=Sc)
+        cd, weight = panel_cauchy_data(a, cols=Sc)
+        M = assemble_kernel(cd, kernel, weight)   # cd already IS the Sc x Sc columns, in order
         sub = G[np.ix_(Sc, Sc)]
         sub[mask] = M[mask]
         G[np.ix_(Sc, Sc)] = sub
 
-    # SR/RS: Sc x (rest), grouped by Sc's own exponent
+    # SR/RS: Sc x (rest). Genuinely needs (most of) every other column to correlate Sc's group
+    # against, so no cols restriction here beyond what's already implied by grouping.
     for a in np.unique(p_Sc - d):
         _check_exponent(a, corner_idx)
         group = Sc[np.isclose(p_Sc - d, a)]
@@ -230,9 +242,10 @@ def _corner_panel_gram(basis, domain, lam, kernel, weight_fn, corner_idx, corner
         G[np.ix_(group, not_Sc)] = M
         G[np.ix_(not_Sc, group)] = M.T
 
-    # RR: (rest) x (rest), plain (ungraded) rule on the same panel
-    cd, weight = panel_cauchy_data(0.0)
-    G[np.ix_(not_Sc, not_Sc)] = assemble_kernel(cd, kernel, weight, cols1=not_Sc, cols2=not_Sc)
+    # RR: (rest) x (rest), plain (ungraded) rule on the same panel -- restricted to not_Sc's
+    # columns (a smaller, cheaper evaluation than the full basis whenever Sc is nonempty).
+    cd, weight = panel_cauchy_data(0.0, cols=not_Sc)
+    G[np.ix_(not_Sc, not_Sc)] = assemble_kernel(cd, kernel, weight)
 
     return G, R
 

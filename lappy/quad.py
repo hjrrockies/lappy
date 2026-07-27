@@ -25,6 +25,7 @@ def cached_chebgauss(order):
     weights = weights/2 # adjust weights to interval of unit length
     return nodes[::-1], weights[::-1]
 
+@cache
 def jacgauss(order, a=0, b=0):
     # reverse order so a is the singular exponent for the left, and b is the singular exponent for the right
     x, w = roots_jacobi(order, b, a)

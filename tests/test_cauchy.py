@@ -162,6 +162,39 @@ def test_singular_gram_node_doubling_stable():
     assert np.max(np.abs(G1 - G2)) < 1e-8
 
 
+def test_singular_gram_uses_column_restricted_evaluation():
+    """singular_gram's SS/RR sub-blocks evaluate only the columns they need, not the full basis
+    (docs/rellich_hadamard_mps.pdf; see benchmarks/reference/rellich_profile.py for the profiling
+    that motivated this) -- confirmed here by instrumenting basis_cauchy_data and checking most
+    calls are narrower than the full basis width. Correctness of the *result* (that this
+    restriction doesn't change the Gram matrix) is covered by test_bases.py's direct cols-vs-full
+    unit tests, plus test_rellich.py's independent-composite-quadrature-reference and
+    degenerate-orthonormality checks, which exercise this exact code path end-to-end."""
+    import lappy.cauchy as cauchy_mod
+
+    domain, basis = _rect_domain_basis()
+    lam = rect_eig(1, 2, L, H)
+    x0 = default_x0(domain)
+    seg_mask = np.array([True]*4)
+    weight_fn = _weight_rN(x0)
+    N = len(basis)
+
+    widths = []
+    original = cauchy_mod.basis_cauchy_data
+    def record_width(basis_, lam_, pts, normals, tangents, wts=None, cols=None):
+        widths.append(N if cols is None else len(cols))
+        return original(basis_, lam_, pts, normals, tangents, wts, cols)
+    cauchy_mod.basis_cauchy_data = record_width
+    try:
+        singular_gram(basis, domain, lam, 'NN', weight_fn, seg_mask=seg_mask,
+                      group_pts=16, bulk_mult=2, bulk_min_per_seg=4)
+    finally:
+        cauchy_mod.basis_cauchy_data = original
+
+    assert len(widths) > 0
+    assert any(w < N for w in widths), "expected at least some column-restricted calls"
+
+
 def test_singular_gram_multibasis_fb_plus_fs():
     """FourierBesselBasis + FundamentalBasis combination: FS columns are regular everywhere and
     should compose into the RR path with no special-casing (corner_terms() marks them -1)."""

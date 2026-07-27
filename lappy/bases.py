@@ -26,7 +26,7 @@ def _points_in_polygon(pts, poly):
         inside ^= crosses & (x_cross > x)
     return inside
 
-def make_default_basis(domain, n_basis, fs_frac=0.5, fs_bdry_order=1, fs_d=1.0, 
+def make_default_basis(domain, n_basis, fs_frac=0.5, fs_bdry_order=1, fs_d=1.0,
                        fs_corner_order=2, fs_sigma=1.0, fs_C=10.0):
     """Make the default basis for a domain of size n_basis"""
     # smooth domains: pure boundary fundamental solutions
@@ -81,32 +81,41 @@ def make_default_basis(domain, n_basis, fs_frac=0.5, fs_bdry_order=1, fs_d=1.0,
 
 class ParticularBasis(ABC):
     """Base class for function bases on the plane which depend on the spectral parameter λ."""
-    def __call__(self, lam, pts, wts=False):
-        """Evaluate the basis on a given set of points in the plane for a given spectral parameter value."""
+    def __call__(self, lam, pts, wts=False, cols=None):
+        """Evaluate the basis on a given set of points in the plane for a given spectral parameter
+        value. `cols`, if given, restricts evaluation to a subset of basis columns (an integer
+        index array, in the given order) -- for bases with a per-column-localized cost (e.g.
+        FourierBesselBasis's Bessel-function evaluation), this can be substantially cheaper than
+        evaluating every column and discarding most of them, which is exactly what
+        lappy.cauchy's singularity-subtraction quadrature needs for its SS/RR sub-blocks (see
+        docs/rellich_hadamard_mps.pdf). Default (None) evaluates every column, unchanged from
+        before this parameter existed."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
-        A = self._eval_pointset(lam, pts)
+        A = self._eval_pointset(lam, pts, cols)
         if wts is True and hasattr(pts, 'wts'):
             return pts.sqrt_wts*A
         elif isinstance(wts, np.ndarray):
             return wts[:,np.newaxis]*A
         else: return A
-        
-    def grad(self, lam, pts, wts=False):
-        """Evaluate the basis on a given set of points in the plane for a given spectral parameter value."""
+
+    def grad(self, lam, pts, wts=False, cols=None):
+        """Evaluate the basis on a given set of points in the plane for a given spectral parameter
+        value. See __call__ for `cols`."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
-        Agrad = self._grad_pointset(lam, pts)
+        Agrad = self._grad_pointset(lam, pts, cols)
         if wts is True and hasattr(pts, 'wts'):
             return pts.sqrt_wts*Agrad
         elif isinstance(wts, np.ndarray):
             return wts[:,np.newaxis]*Agrad
         else: return Agrad
-        
-    def ddiff(self, lam, pts, vecs, wts=False):
+
+    def ddiff(self, lam, pts, vecs, wts=False, cols=None):
+        """See __call__ for `cols`."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
-        Agrad = self._grad_pointset(lam, pts)
+        Agrad = self._grad_pointset(lam, pts, cols)
         if isinstance(vecs, PointSet):
             vecs = vecs.pts
         vecs = vecs[:,np.newaxis]
@@ -118,7 +127,7 @@ class ParticularBasis(ABC):
         else: return Addiff
 
     @abstractmethod
-    def _eval_pointset(self, lam, pts):
+    def _eval_pointset(self, lam, pts, cols=None):
         pass
 
     def __add__(self, other):
@@ -154,11 +163,35 @@ class MultiBasis(ParticularBasis):
             raise TypeError("all elements of 'bases' must be instances of ParticularBasis")
         self.bases = list(bases)
 
-    def _eval_pointset(self, lam, pts):
-        return np.hstack([basis._eval_pointset(lam, pts) for basis in self.bases])
-    
-    def _grad_pointset(self, lam, pts):
-        return np.hstack([basis._grad_pointset(lam, pts) for basis in self.bases])
+    def _col_offsets(self):
+        return np.concatenate(([0], np.cumsum([len(b) for b in self.bases])))
+
+    def _dispatch_cols(self, cols):
+        """Splits a global `cols` index array (sorted ascending, as produced by
+        np.nonzero/np.setdiff1d in lappy.cauchy) into per-sub-basis local index arrays. Returns a
+        list of (sub_basis, local_cols_or_None) pairs, skipping sub-bases with no requested
+        columns entirely -- e.g. a corner's Sc never touches a FundamentalBasis sub-basis, so it's
+        never evaluated for that block."""
+        offsets = self._col_offsets()
+        out = []
+        for i, basis in enumerate(self.bases):
+            lo, hi = offsets[i], offsets[i+1]
+            local = cols[(cols >= lo) & (cols < hi)] - lo
+            if len(local) > 0:
+                out.append((basis, local))
+        return out
+
+    def _eval_pointset(self, lam, pts, cols=None):
+        if cols is None:
+            return np.hstack([basis._eval_pointset(lam, pts) for basis in self.bases])
+        return np.hstack([basis._eval_pointset(lam, pts, local)
+                          for basis, local in self._dispatch_cols(np.asarray(cols))])
+
+    def _grad_pointset(self, lam, pts, cols=None):
+        if cols is None:
+            return np.hstack([basis._grad_pointset(lam, pts) for basis in self.bases])
+        return np.hstack([basis._grad_pointset(lam, pts, local)
+                          for basis, local in self._dispatch_cols(np.asarray(cols))])
 
     def corner_terms(self, domain=None):
         corner_ids, exponents = zip(*(b.corner_terms(domain) for b in self.bases))
@@ -260,46 +293,88 @@ class NormalizedBasis(ParticularBasis):
         active = col_norms > 0
         return col_norms[active], active
 
-    def _eval_pointset(self, lam, pts):
+    def _eval_pointset(self, lam, pts, cols=None):
+        norms, active = self.norms(lam)
+        if cols is None:
+            A = self.basis._eval_pointset(lam, pts)
+            return A[:, active] / norms
+        if active.all():
+            return self.basis._eval_pointset(lam, pts, cols) / norms[cols]
         A = self.basis._eval_pointset(lam, pts)
-        norms, active = self.norms(lam)
-        return A[:, active] / norms
+        return (A[:, active] / norms)[:, cols]
 
-    def _grad_pointset(self, lam, pts):
+    def _grad_pointset(self, lam, pts, cols=None):
+        norms, active = self.norms(lam)
+        if cols is None:
+            Ag = self.basis._grad_pointset(lam, pts)
+            return Ag[:, active] / norms
+        if active.all():
+            return self.basis._grad_pointset(lam, pts, cols) / norms[cols]
         Ag = self.basis._grad_pointset(lam, pts)
-        norms, active = self.norms(lam)
-        return Ag[:, active] / norms
+        return (Ag[:, active] / norms)[:, cols]
 
-    def __call__(self, lam, pts, wts=False):
+    def __call__(self, lam, pts, wts=False, cols=None):
+        """`cols`, if given (and every basis column has nonzero norm, the overwhelmingly common
+        case -- see norms()'s `active` mask), restricts evaluation to those wrapped-basis columns
+        without evaluating the rest; see ParticularBasis.__call__. Falls back to full evaluation +
+        slicing (correct but not accelerated) in the rare case some columns were pruned as
+        zero-norm, since `cols` and `active` then index different spaces."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
         norms, active = self.norms(lam)          # warms _weighted_eval for component_pts
-        if wts is True and hasattr(pts, 'wts'):
-            A_w = self._weighted_eval(lam, pts)  # cache HIT if pts is a component
-            return A_w[:, active] / norms
-        elif isinstance(wts, np.ndarray):
-            A = self.basis._eval_pointset(lam, pts)
-            return (A[:, active] / norms) * wts[:, np.newaxis]
+        if cols is None:
+            if wts is True and hasattr(pts, 'wts'):
+                A_w = self._weighted_eval(lam, pts)  # cache HIT if pts is a component
+                return A_w[:, active] / norms
+            elif isinstance(wts, np.ndarray):
+                A = self.basis._eval_pointset(lam, pts)
+                return (A[:, active] / norms) * wts[:, np.newaxis]
+            else:
+                A = self.basis._eval_pointset(lam, pts)
+                return A[:, active] / norms
+
+        if active.all():
+            A = self.basis._eval_pointset(lam, pts, cols) / norms[cols]
         else:
             A = self.basis._eval_pointset(lam, pts)
-            return A[:, active] / norms
+            A = (A[:, active] / norms)[:, cols]
+        if wts is True and hasattr(pts, 'wts'):
+            return pts.sqrt_wts*A
+        elif isinstance(wts, np.ndarray):
+            return wts[:, np.newaxis]*A
+        else:
+            return A
 
-    def ddiff(self, lam, pts, vecs, wts=False):
+    def ddiff(self, lam, pts, vecs, wts=False, cols=None):
+        """See __call__ for `cols`."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
         norms, active = self.norms(lam)
         if isinstance(vecs, PointSet):
             vecs = vecs.pts
         vecs = vecs[:, np.newaxis]
-        if wts is True and hasattr(pts, 'wts'):
-            Ag_w = self._weighted_grad_eval(lam, pts)  # cache HIT if pts is a component
-            Ag = Ag_w[:, active] / norms
-        elif isinstance(wts, np.ndarray):
-            Ag_raw = self.basis._grad_pointset(lam, pts)
-            Ag = (Ag_raw[:, active] / norms) * wts[:, np.newaxis]
+
+        if cols is None:
+            if wts is True and hasattr(pts, 'wts'):
+                Ag_w = self._weighted_grad_eval(lam, pts)  # cache HIT if pts is a component
+                Ag = Ag_w[:, active] / norms
+            elif isinstance(wts, np.ndarray):
+                Ag_raw = self.basis._grad_pointset(lam, pts)
+                Ag = (Ag_raw[:, active] / norms) * wts[:, np.newaxis]
+            else:
+                Ag_raw = self.basis._grad_pointset(lam, pts)
+                Ag = Ag_raw[:, active] / norms
+            return Ag.real * vecs.real + Ag.imag * vecs.imag
+
+        if active.all():
+            Ag = self.basis._grad_pointset(lam, pts, cols) / norms[cols]
         else:
             Ag_raw = self.basis._grad_pointset(lam, pts)
-            Ag = Ag_raw[:, active] / norms
+            Ag = (Ag_raw[:, active] / norms)[:, cols]
+        if wts is True and hasattr(pts, 'wts'):
+            Ag = pts.sqrt_wts*Ag
+        elif isinstance(wts, np.ndarray):
+            Ag = wts[:, np.newaxis]*Ag
         return Ag.real * vecs.real + Ag.imag * vecs.imag
 
     def __str__(self):
@@ -670,33 +745,55 @@ class FourierBesselBasis(ParticularBasis):
         return np.cos(theta_cols * self._alphak_col)
     
 
-    def _bessel(self, lam, pts):
-        """Computes the Bessel part of the Fourier-Bessel functions on the given PointSet pts"""
+    def _bessel(self, lam, pts, cols=None):
+        """Computes the Bessel part of the Fourier-Bessel functions on the given PointSet pts.
+        `cols`, if given, indexes the radial-mode space directly (width n_radial =
+        sum(orders), i.e. NOT doubled for kind='sincos' -- see _eval_pointset/_grad_pointset,
+        which translate a basis-column-space `cols` into this space before calling here). This is
+        the expensive step (scipy jv over an (n_pts, n_radial) array), so restricting `cols` here
+        is what actually saves work -- evaluating only a corner's own few modes instead of every
+        basis column, exactly what lappy.cauchy's SS/RR sub-blocks need."""
         r_rep = self._r_rep(pts)
-        bessel = jv(self.alphak_vec, np.sqrt(lam)*r_rep)
-        return bessel
+        alphak_vec = self.alphak_vec
+        if cols is not None:
+            r_rep = r_rep[:, cols]
+            alphak_vec = alphak_vec[:, cols]
+        return jv(alphak_vec, np.sqrt(lam)*r_rep)
 
 
-    def _besselp(self, lam, pts):
-        """Computes the derivatives of the Bessel part of the Fourier-Bessel functions on the given PointSet pts"""
+    def _besselp(self, lam, pts, cols=None):
+        """Derivative of the Bessel part; see _bessel for `cols`."""
         r_rep = self._r_rep(pts)
-        besselp = jvp(self.alphak_vec, np.sqrt(lam)*r_rep)
-        return besselp
+        alphak_vec = self.alphak_vec
+        if cols is not None:
+            r_rep = r_rep[:, cols]
+            alphak_vec = alphak_vec[:, cols]
+        return jvp(alphak_vec, np.sqrt(lam)*r_rep)
 
 
-    def _eval_pointset(self, lam, pts):
-        # get (potentially cached) evaluations of sine/cosine part and Bessel part
-        bessel = self._bessel(lam, pts)
+    def _eval_pointset(self, lam, pts, cols=None):
+        if cols is None:
+            # get (potentially cached) evaluations of sine/cosine part and Bessel part
+            bessel = self._bessel(lam, pts)
+            if self.kind == 'sin':
+                return bessel*self._sin(pts)
+            elif self.kind == 'cos':
+                return bessel*self._cos(pts)
+            elif self.kind == 'sincos':
+                return np.hstack((bessel*self._sin(pts), bessel*self._cos(pts)))
+
+        cols = np.asarray(cols)
+        n_radial = self.alphak_vec.shape[1]
         if self.kind == 'sin':
-            sin = self._sin(pts)
-            return bessel*sin
+            return self._bessel(lam, pts, cols)*self._sin(pts)[:, cols]
         elif self.kind == 'cos':
-            cos = self._cos(pts)
-            return bessel*cos
-        elif self.kind == 'sincos':
-            sin = self._sin(pts)
-            cos = self._cos(pts)
-            return np.hstack((bessel*sin,bessel*cos))
+            return self._bessel(lam, pts, cols)*self._cos(pts)[:, cols]
+        else:  # sincos: cols indexes the doubled (sin-half, cos-half) output space
+            radial_idx = cols % n_radial
+            is_cos = cols >= n_radial
+            bessel = self._bessel(lam, pts, radial_idx)
+            trig = np.where(is_cos, self._cos(pts)[:, radial_idx], self._sin(pts)[:, radial_idx])
+            return bessel*trig
     
     @instance_cache
     def _dr_dz(self, pts):
@@ -715,35 +812,63 @@ class FourierBesselBasis(ParticularBasis):
         return dtheta_dz
     
 
-    def _grad_pointset(self, lam, pts):
+    def _grad_pointset(self, lam, pts, cols=None):
         """Evaluates the gradients of the basis functions on the given PointSet. Returns in complex form,
-        with the x-partial in the real part and the y-partial in the imaginary part"""
+        with the x-partial in the real part and the y-partial in the imaginary part. See _eval_pointset
+        for `cols` (basis-column space; internally translated to radial-mode space as needed)."""
         if not isinstance(pts, PointSet):
             raise TypeError("'pts' must be an instance of PointSet")
 
-        # get (potentially cached) evaluations of components
-        sin = self._sin(pts)
-        cos = self._cos(pts)
-        bessel = self._bessel(lam, pts)
-        besselp = self._besselp(lam, pts)
-        dr_dz = self._dr_dz(pts)
-        dtheta_dz = self._dtheta_dz(pts)
+        if cols is None:
+            # get (potentially cached) evaluations of components
+            sin = self._sin(pts)
+            cos = self._cos(pts)
+            bessel = self._bessel(lam, pts)
+            besselp = self._besselp(lam, pts)
+            dr_dz = self._dr_dz(pts)
+            dtheta_dz = self._dtheta_dz(pts)
 
-        if self.kind == 'sin':
-            dA_dr = np.sqrt(lam)*besselp*sin
-            dA_dtheta = self.alphak_vec*bessel*cos
-        elif self.kind == 'cos':
-            dA_dr = np.sqrt(lam)*besselp*cos
-            dA_dtheta = -self.alphak_vec*bessel*sin
-        elif self.kind == 'sincos':
-            arr1 = np.sqrt(lam)*besselp
-            arr2 = self.alphak_vec*bessel
-            dA_dr = np.hstack((arr1*sin,arr1*cos))
-            dA_dtheta = np.hstack((arr2*cos,-arr2*sin))
-            dr_dz = np.hstack((dr_dz, dr_dz))
-            dtheta_dz = np.hstack((dtheta_dz, dtheta_dz))
+            if self.kind == 'sin':
+                dA_dr = np.sqrt(lam)*besselp*sin
+                dA_dtheta = self.alphak_vec*bessel*cos
+            elif self.kind == 'cos':
+                dA_dr = np.sqrt(lam)*besselp*cos
+                dA_dtheta = -self.alphak_vec*bessel*sin
+            elif self.kind == 'sincos':
+                arr1 = np.sqrt(lam)*besselp
+                arr2 = self.alphak_vec*bessel
+                dA_dr = np.hstack((arr1*sin,arr1*cos))
+                dA_dtheta = np.hstack((arr2*cos,-arr2*sin))
+                dr_dz = np.hstack((dr_dz, dr_dz))
+                dtheta_dz = np.hstack((dtheta_dz, dtheta_dz))
 
-        # combine using chain rule
+            # combine using chain rule
+            return dA_dr*dr_dz.real + dA_dtheta*dtheta_dz.real + 1j*(dA_dr*dr_dz.imag + dA_dtheta*dtheta_dz.imag)
+
+        cols = np.asarray(cols)
+        n_radial = self.alphak_vec.shape[1]
+        if self.kind in ('sin', 'cos'):
+            radial_idx = cols
+            is_cos = np.full(cols.shape, self.kind == 'cos')
+        else:  # sincos
+            radial_idx = cols % n_radial
+            is_cos = cols >= n_radial
+
+        sin = self._sin(pts)[:, radial_idx]
+        cos = self._cos(pts)[:, radial_idx]
+        bessel = self._bessel(lam, pts, radial_idx)
+        besselp = self._besselp(lam, pts, radial_idx)
+        dr_dz = self._dr_dz(pts)[:, radial_idx]
+        dtheta_dz = self._dtheta_dz(pts)[:, radial_idx]
+        alphak = self.alphak_vec[:, radial_idx]
+
+        dA_dr_sin = np.sqrt(lam)*besselp*sin
+        dA_dr_cos = np.sqrt(lam)*besselp*cos
+        dA_dtheta_sin = alphak*bessel*cos
+        dA_dtheta_cos = -alphak*bessel*sin
+        dA_dr = np.where(is_cos, dA_dr_cos, dA_dr_sin)
+        dA_dtheta = np.where(is_cos, dA_dtheta_cos, dA_dtheta_sin)
+
         return dA_dr*dr_dz.real + dA_dtheta*dtheta_dz.real + 1j*(dA_dr*dr_dz.imag + dA_dtheta*dtheta_dz.imag)
     
 def fs_bdry_sps(domain, n, order=1, min_per_seg=1):
@@ -951,55 +1076,71 @@ class FundamentalBasis(ParticularBasis):
     # ------------------------------------------------------------------ #
 
 
-    def _bessel(self, lam, pts):
-        """Y_m(√λ · r) for every basis column."""
+    def _bessel(self, lam, pts, cols=None):
+        """Y_m(√λ · r) for every basis column (or just `cols`, if given -- see
+        FourierBesselBasis._bessel; the same restricted-evaluation idea applies here, though
+        FundamentalBasis columns are never singular so this mainly matters when a MultiBasis
+        combining FS with a singular FB basis dispatches a corner's cols through both)."""
         k = np.sqrt(lam)
         r_cols = self._r_cols(pts)
-        return yv(self._m[np.newaxis, :], k * r_cols)
+        m = self._m
+        if cols is not None:
+            r_cols = r_cols[:, cols]
+            m = m[cols]
+        return yv(m[np.newaxis, :], k * r_cols)
 
 
-    def _besselp(self, lam, pts):
-        """Y_m'(√λ · r) for every basis column (derivative w.r.t. the argument)."""
+    def _besselp(self, lam, pts, cols=None):
+        """Y_m'(√λ · r) for every basis column (derivative w.r.t. the argument); see _bessel."""
         k = np.sqrt(lam)
         r_cols = self._r_cols(pts)
-        return yvp(self._m[np.newaxis, :], k * r_cols)
+        m = self._m
+        if cols is not None:
+            r_cols = r_cols[:, cols]
+            m = m[cols]
+        return yvp(m[np.newaxis, :], k * r_cols)
 
     # ------------------------------------------------------------------ #
     #  Core evaluation methods                                            #
     # ------------------------------------------------------------------ #
 
 
-    def _eval_pointset(self, lam, pts):
-        """Evaluate all basis functions at the given points.
+    def _eval_pointset(self, lam, pts, cols=None):
+        """Evaluate all basis functions (or just `cols`, if given) at the given points.
 
-        Returns array of shape (n_pts, n_basis).
+        Returns array of shape (n_pts, n_basis) or (n_pts, len(cols)).
         """
-        return self._bessel(lam, pts) * self._angular(pts)
+        ang = self._angular(pts) if cols is None else self._angular(pts)[:, cols]
+        return self._bessel(lam, pts, cols) * ang
 
 
-    def _grad_pointset(self, lam, pts):
-        """Evaluate gradients of all basis functions at the given points.
+    def _grad_pointset(self, lam, pts, cols=None):
+        """Evaluate gradients of all basis functions (or just `cols`, if given) at the given points.
 
-        Returns a complex array of shape (n_pts, n_basis) where the
+        Returns a complex array of shape (n_pts, n_basis) or (n_pts, len(cols)) where the
         real part is ∂/∂x and the imaginary part is ∂/∂y.
         """
         k = np.sqrt(lam)
-        bessel = self._bessel(lam, pts)
-        besselp = self._besselp(lam, pts)
+        bessel = self._bessel(lam, pts, cols)
+        besselp = self._besselp(lam, pts, cols)
         ang = self._angular(pts)
         dang = self._angular_deriv(pts)
+        r_cols = self._r_cols(pts)
+        z_cols = self._z(pts)[:, self._src_idx]
+        if cols is not None:
+            ang = ang[:, cols]
+            dang = dang[:, cols]
+            r_cols = r_cols[:, cols]
+            z_cols = z_cols[:, cols]
 
         # Radial contribution:  dA/dr = k · Y_m'(kr) · angular
         dA_dr = k * besselp * ang
 
         # Angular contribution: (1/r) · Y_m(kr) · d(angular)/dθ
-        r_cols = self._r_cols(pts)
         dA_dtheta = bessel * dang  # will divide by r below
 
         # Chain rule: ∂r/∂x = (x-x0)/r,  ∂r/∂y = (y-y0)/r
         #             ∂θ/∂x = -(y-y0)/r², ∂θ/∂y = (x-x0)/r²
-        z = self._z(pts)
-        z_cols = z[:, self._src_idx]
         dx = z_cols.real  # x - x_j
         dy = z_cols.imag  # y - y_j
 
@@ -1080,10 +1221,18 @@ class ExPrecFBBasis(FourierBesselBasis):
         return bessel
     
 
-    def _eval_pointset(self, lam, pts):
+    def _eval_pointset(self, lam, pts, cols=None):
+        """`cols`, if given: evaluates every column (as always) then slices the output -- a
+        correctness-preserving fallback, not an optimization, for this (already slow-by-design,
+        not performance-sensitive) extended-precision mpmath path. Its _grad_pointset is inherited
+        from FourierBesselBasis unmodified for `cols`, since it isn't overridden here to use
+        mpmath internally in the first place (a pre-existing limitation, not something this
+        introduces -- see the class docstring)."""
         mp.mp.dps = self.dps
         mat = self._eval_pointset_mp(lam, pts)
         arr = np.array(mat.tolist(), dtype='float')
+        if cols is not None:
+            arr = arr[:, cols]
         return arr
 
 

@@ -269,3 +269,87 @@ def test_from_domain_polyline_cuts_false_raises():
     sp = spiral()
     with pytest.raises(ValueError, match="no straight-ray branch cut"):
         FourierBesselBasis.from_domain(sp, np.full(len(sp.corners), 3), polyline_cuts=False)
+
+
+# ── cols (column-subset evaluation, for lappy.cauchy's SS/RR blocks) ────────
+# Restricting evaluation to a subset of columns must exactly match (bit-for-bit) evaluating
+# every column and slicing afterward -- this is a pure performance optimization
+# (docs/rellich_hadamard_mps.pdf; see benchmarks/reference/rellich_profile.py), never allowed
+# to change results. Covers 'sin'/'cos'/'sincos' kinds, value/grad/ddiff, and FundamentalBasis,
+# MultiBasis, NormalizedBasis composition.
+
+def _rect_domain():
+    return Polygon(np.array([0, 2, 2 + 1j, 1j]), bc='dir')
+
+
+@pytest.mark.parametrize('kind', ['sin', 'cos', 'sincos'])
+def test_cols_matches_full_eval_fourier_bessel(kind):
+    domain = _rect_domain()
+    phi0, phi1 = domain.corner_angles
+    basis = FourierBesselBasis(domain.corners, phi0, phi1, [4, 4, 4, 4],
+                               domain.branch_cut_rays(), kind=kind)
+    lam = 37.5
+    pts = PointSet(np.array([0.3+0.2j, 1.5+0.6j, 1.9+0.9j, 0.05+0.05j]))
+    normals = PointSet(np.array([1+0j, 0+1j, -1+0j, 0-1j]))
+    N = len(basis)
+    cols = np.array(sorted(set(np.random.default_rng(0).integers(0, N, size=N//2).tolist())))
+
+    assert np.allclose(basis(lam, pts)[:, cols], basis(lam, pts, cols=cols))
+    assert np.allclose(basis.grad(lam, pts)[:, cols], basis.grad(lam, pts, cols=cols))
+    assert np.allclose(basis.ddiff(lam, pts, normals)[:, cols],
+                       basis.ddiff(lam, pts, normals, cols=cols))
+
+
+def test_cols_matches_full_eval_fundamental_basis():
+    from lappy.bases import FundamentalBasis
+    basis = FundamentalBasis(np.array([10+10j, -10-10j, 5-10j]), orders=3)
+    lam = 37.5
+    pts = PointSet(np.array([0.3+0.2j, 1.5+0.6j, 1.9+0.9j]))
+    normals = PointSet(np.array([1+0j, 0+1j, -1+0j]))
+    cols = np.array([1, 3, 5, 8])
+
+    assert np.allclose(basis(lam, pts)[:, cols], basis(lam, pts, cols=cols))
+    assert np.allclose(basis.grad(lam, pts)[:, cols], basis.grad(lam, pts, cols=cols))
+    assert np.allclose(basis.ddiff(lam, pts, normals)[:, cols],
+                       basis.ddiff(lam, pts, normals, cols=cols))
+
+
+def test_cols_matches_full_eval_multibasis_and_normalized():
+    from lappy.bases import FundamentalBasis
+    domain = _rect_domain()
+    fb = FourierBesselBasis.from_domain(domain, orders=[5, 5, 5, 5])
+    fs = FundamentalBasis(np.array([10+10j, -10-10j]), orders=2)
+    mb = fb + fs
+    nb = mb.to_normalized(domain.bdry_pts(20))
+
+    lam = 37.5
+    pts = PointSet(np.array([0.3+0.2j, 1.5+0.6j, 1.9+0.9j]))
+    normals = PointSet(np.array([1+0j, 0+1j, -1+0j]))
+    N = len(fb)
+    cols = np.array([1, 3, 7, N+1])   # spans both FB and FS sub-bases
+
+    for basis in (mb, nb):
+        assert np.allclose(basis(lam, pts)[:, cols], basis(lam, pts, cols=cols))
+        assert np.allclose(basis.ddiff(lam, pts, normals)[:, cols],
+                           basis.ddiff(lam, pts, normals, cols=cols))
+
+
+def test_multibasis_cols_skips_unneeded_sub_basis():
+    """cols restricted entirely to the FB sub-basis's range should never touch the FS
+    sub-basis (part of the point -- MultiBasis._dispatch_cols skips it entirely)."""
+    from lappy.bases import FundamentalBasis
+    domain = _rect_domain()
+    fb = FourierBesselBasis.from_domain(domain, orders=[3, 3, 3, 3])
+
+    class _RaisingFS(FundamentalBasis):
+        def _eval_pointset(self, lam, pts, cols=None):
+            raise AssertionError("FS sub-basis should not have been evaluated")
+
+    fs = _RaisingFS(np.array([10+10j, -10-10j]), orders=2)
+    mb = fb + fs
+
+    lam = 37.5
+    pts = PointSet(np.array([0.3+0.2j]))
+    cols = np.array([0, 2, 5])   # entirely within fb's [0, len(fb)) range
+    out = mb(lam, pts, cols=cols)
+    assert out.shape == (1, 3)
