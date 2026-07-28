@@ -1,19 +1,22 @@
-"""Tests for lappy.rellich — boundary-only L^2(Omega) Gram matrices (via the SS/SR/RS/RR
-singularity-subtraction quadrature, lappy.cauchy.singular_gram), and their wiring into
-MPSEigensolver.eigenfunction_coef."""
+"""Tests for lappy.rellich — boundary-only L^2(Omega) Gram matrices (via the Kress-style
+graded-mesh boundary quadrature, lappy.cauchy.build_boundary_quadrature), and their wiring
+into MPSEigensolver.eigenfunction_coef."""
 
 import warnings
 
 import numpy as np
 import pytest
+import scipy.linalg as la
 from numpy.polynomial.legendre import leggauss
 
-from lappy import Polygon
+from lappy import Polygon, geometry, bases, cubature, bounds
 from lappy.bases import FourierBesselBasis
 from lappy.reference import rect_eig
 from lappy.geometry import L_shape, PointSet
-from lappy.mps import MPSEigensolver, make_default_bdry_data, make_default_int_pts
-from lappy.rellich import build_rellich_data, rellich_gram_basis, orthonormalize_coef, default_x0
+from lappy.mps import MPSEigensolver, NormalizedBasis, make_default_bdry_data, make_default_int_pts
+import lappy.mps as mps_mod
+from lappy.rellich import (build_rellich_data, rellich_gram_basis, orthonormalize_coef,
+                           lowdin_transform, default_x0)
 
 L, H = 2.0, 1.0
 RECT_VERTS = np.array([0, L, L + 1j*H, 1j*H])
@@ -61,7 +64,7 @@ def test_rellich_gram_basis_matches_independent_reference_dirichlet():
     lam = rect_eig(1, 2, L, H)
     x0 = default_x0(domain)
 
-    rellich_data = build_rellich_data(domain, basis, x0, group_pts=32)
+    rellich_data = build_rellich_data(domain, basis, lam_max=lam, x0=x0, mult=4)
     G = rellich_gram_basis(basis, lam, rellich_data)
     Gref = _composite_gram_NN_reference(basis, domain, lam, x0)/(2*lam)
     assert np.allclose(G, Gref, atol=1e-8)
@@ -141,13 +144,115 @@ def test_eigenfunction_coef_orthonormal_degenerate():
     assert np.allclose(Gram, np.eye(2), atol=1e-8)
 
 
+def test_orthonorm_transforms_whiten_their_own_gram_degenerate():
+    """Both independent Löwdin transforms (_orthonorm_transform_coef, _orthonorm_transform_eval)
+    must whiten their OWN Gram matrix by construction, for a genuine mult=2 degenerate cluster --
+    this does NOT assert they coincide (different GSVD pencils for mult>1 aren't guaranteed to
+    pick the same rotation within the cluster, see MPSEigensolver._orthonorm_transform_eval's
+    docstring)."""
+    domain = Polygon(SQ_VERTS, bc='dir')
+    basis = FourierBesselBasis.from_domain(domain, orders=[10, 10, 10, 10])
+    solver = MPSEigensolver.from_domain(domain, basis=basis)
+    eig = rect_eig(1, 2, 1, 1)
+    assert rect_eig(2, 1, 1, 1) == pytest.approx(eig)
+
+    D_coef, G_coef = solver._orthonorm_transform_coef(eig, mult=2)
+    assert np.allclose(D_coef@G_coef@D_coef.T, np.eye(2), atol=1e-8)
+
+    D_eval, G_eval = solver._orthonorm_transform_eval(eig, mult=2)
+    assert np.allclose(D_eval@G_eval@D_eval.T, np.eye(2), atol=1e-8)
+
+
+def test_orthonorm_coef_and_eval_agree_for_simple_eigenvalue():
+    """For a simple (mult=1) eigenvalue, the coefficient-based (_orthonorm_transform_coef) and
+    GSVD-eval-based (_orthonorm_transform_eval) orthonorm=True paths solve different GSVD
+    pencils, but a 1-D nullspace has no rotation ambiguity -- they should agree at shared points
+    up to a global sign. (docs/rellich_hadamard_mps.pdf Remark 2: large disagreement here would
+    mean the raw coefficient vector is corrupted beyond safe pointwise evaluation, not merely
+    mis-sandwiched.)"""
+    domain = Polygon(RECT_VERTS, bc='dir')
+    basis = FourierBesselBasis.from_domain(domain, orders=[8, 8, 8, 8])
+    solver = MPSEigensolver.from_domain(domain, basis=basis)
+    eig = rect_eig(1, 2, L, H)
+
+    pts = solver._cauchy_data.pts
+    coef = solver.eigenfunction_coef(eig, mult=1, orthonorm=True)
+    u_coef = (solver.basis(eig, pts)@coef)[:, 0]
+    u_eval = solver.eigenfunction_eval_extras(eig, mult=1, extra_pts=pts, orthonorm=True)[2][:, 0]
+
+    if np.dot(u_coef, u_eval) < 0:
+        u_eval = -u_eval
+    assert np.allclose(u_coef, u_eval, atol=1e-6, rtol=1e-6)
+
+
+def test_lowdin_transform_deficient_returns_none_with_warning():
+    """lowdin_transform must degrade gracefully (None + warning) rather than let w**-0.5 blow up
+    on a near-singular Gram matrix (e.g. a requested multiplicity larger than the true one)."""
+    G = np.array([[1.0, 0.0], [0.0, 1e-10]])
+    with pytest.warns(UserWarning, match='deficient'):
+        D = lowdin_transform(G)
+    assert D is None
+
+
+def test_orthonorm_caching_reuses_raw_coef_and_caches_independently():
+    """orthonorm=False and orthonorm=True must cache independently (different kwarg -> different
+    instance_lru_cache key), and orthonorm=True's internal raw-coefficient step must reuse
+    orthonorm=False's cached result rather than re-solving the GSVD nullspace a second time."""
+    domain = Polygon(RECT_VERTS, bc='dir')
+    basis = FourierBesselBasis.from_domain(domain, orders=[8, 8, 8, 8])
+    solver = MPSEigensolver.from_domain(domain, basis=basis)
+    eig = rect_eig(1, 2, L, H)
+
+    calls = []
+    original = mps_mod.nullspace_coef
+    def counting_nullspace_coef(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    mps_mod.nullspace_coef = counting_nullspace_coef
+    try:
+        solver.eigenfunction_coef(eig, mult=1, orthonorm=False)
+        assert len(calls) == 1
+        solver.eigenfunction_coef(eig, mult=1, orthonorm=False)  # cache hit
+        assert len(calls) == 1
+        solver.eigenfunction_coef(eig, mult=1, orthonorm=True)  # reuses raw-coef cache
+        assert len(calls) == 1
+        solver.eigenfunction_coef(eig, mult=1, orthonorm=True)  # cache hit
+        assert len(calls) == 1
+    finally:
+        mps_mod.nullspace_coef = original
+
+
+def test_orthonorm_true_fixes_ill_conditioned_basis_norm():
+    """Regression test for the CACT-sandwich bug (docs/rellich_hadamard_mps.pdf Sec. 3.1):
+    an H-shape domain with a deliberately overcomplete Fourier-Bessel + fundamental-solution
+    basis (collocation-matrix condition number ~1e16) previously gave a cubature-measured
+    eigenfunction norm off from 1 by ~1e-4 under the old coef.T@G_NxN@coef sandwich; the new
+    "evaluate first, sandwich never" orthonorm=True path should land within ~1e-6."""
+    dom = geometry.H_shape()
+    basis = bases.make_default_basis(dom, 200, fs_frac=0.5, fs_C=0.5)
+    pps = mps_mod.pts_per_seg(dom, basis, mult=3)
+    bdry_pts = dom.bdry_pts(pps)
+    int_pts = dom.int_pts(npts_rand=len(basis))
+    normed_basis = NormalizedBasis(basis, (bdry_pts, int_pts))
+    rellich_data = build_rellich_data(dom, normed_basis, mult=2)
+    solver = MPSEigensolver(normed_basis, bdry_pts, int_pts, cauchy_data=rellich_data, rtol=1e-14)
+    eigs, mults, _ = solver.solve_interval(bounds.faber_krahn(dom), mps_mod.weyl_est(2, dom), 20)
+    eig = eigs[0]
+
+    coef = solver.eigenfunction_coef(eig, mult=1, orthonorm=True)
+    nodes, weights = cubature.polygon_cubature(dom, eig, 1e-12)
+    u = (normed_basis(eig, nodes)@coef)[:, 0]
+    norm = la.norm(u*np.sqrt(weights))
+    assert norm == pytest.approx(1.0, abs=1e-6)
+
+
 def test_eigenfunction_coef_normalize_false_recovers_raw():
     domain = Polygon(RECT_VERTS, bc='dir')
     basis = FourierBesselBasis.from_domain(domain, orders=[8, 8, 8, 8])
     solver = MPSEigensolver.from_domain(domain, basis=basis)
     eig = rect_eig(1, 2, L, H)
-    coef_raw = solver.eigenfunction_coef(eig, mult=1, normalize=False)
-    coef_norm = solver.eigenfunction_coef(eig, mult=1, normalize='rellich')
+    coef_raw = solver.eigenfunction_coef(eig, mult=1, orthonorm=False)
+    coef_norm = solver.eigenfunction_coef(eig, mult=1, orthonorm=True)
     # different scale in general -- raw GSVD scale isn't unit L^2 norm
     assert not np.allclose(coef_raw, coef_norm)
 
@@ -164,8 +269,8 @@ def test_robin_domain_falls_back_with_warning():
     assert solver._cauchy_data is None
 
     with pytest.warns(UserWarning, match='unavailable'):
-        coef_raw = solver.eigenfunction_coef(30.0, mult=1, normalize=False)
-        coef_norm = solver.eigenfunction_coef(30.0, mult=1, normalize='rellich')
+        coef_raw = solver.eigenfunction_coef(30.0, mult=1, orthonorm=False)
+        coef_norm = solver.eigenfunction_coef(30.0, mult=1, orthonorm=True)
     assert np.allclose(coef_raw, coef_norm)
 
 
@@ -202,7 +307,7 @@ def test_manual_construction_without_domain_has_no_cauchy_data():
 
     eig = rect_eig(1, 1, L, H)
     with pytest.warns(UserWarning, match='unavailable'):
-        coef = solver.eigenfunction_coef(eig, mult=1, normalize='rellich')
+        coef = solver.eigenfunction_coef(eig, mult=1, orthonorm=True)
     assert coef.shape[1] == 1
 
 

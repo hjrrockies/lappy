@@ -26,7 +26,8 @@ from collections import namedtuple
 import numpy as np
 
 from .geometry import PointSet
-from .quad import jacgauss
+from .quad import cached_leggauss, cached_kressgauss
+from .asymp import weyl_est
 
 # A basis's Cauchy data (value, normal deriv, tangent deriv) at a boundary node set (pts/normals/
 # tangents plus plain, unsigned arc-length quadrature weights), for one spectral parameter lambda.
@@ -49,10 +50,11 @@ def basis_cauchy_data(basis, lam, pts, normals, tangents, wts=None, cols=None):
 
     `cols`, if given (a sorted integer index array -- see ParticularBasis.__call__),
     evaluates only those basis columns: the returned CauchyData's Phi/Phi_N/Phi_T have
-    `len(cols)` columns, in that order, not the basis's full width. This is what makes
-    lappy.cauchy.singular_gram's SS/RR sub-blocks cheap for bases with a per-column-localized
-    cost (e.g. FourierBesselBasis): a corner's own small mode set, or "everything but that
-    corner", can be evaluated without paying for the columns that block doesn't need."""
+    `len(cols)` columns, in that order, not the basis's full width. Useful for any caller
+    that only needs a subset of the basis at a given node set (e.g. a Hadamard-type
+    consumer outside lappy); rellich_gram_basis itself always evaluates every column
+    once, since build_boundary_quadrature's single shared node set serves the whole
+    basis at once."""
     if not isinstance(pts, PointSet):
         pts = PointSet(pts)
     if not isinstance(normals, PointSet):
@@ -122,183 +124,138 @@ def default_x0(domain):
     return x0_re + 1j*x0_im
 
 
-def graded_pts_per_seg(domain, basis, mult=2, min_per_seg=4):
-    """Per-segment point counts for a graded boundary quadrature, sized
-    relative to basis length and segment length (mirrors mps.pts_per_seg's
-    generic branch)."""
+def graded_pts_per_seg(domain, basis, lam_max=None, q_seg=None, mult=2, min_per_seg=4,
+                       c_lam=1.0, beta=0.2):
+    """Per-segment point counts for a graded boundary quadrature, sized from three terms:
+
+    - `mult*len(basis)*seg_len/total_len` (the original basis-size/segment-length proxy;
+      mirrors mps.pts_per_seg's generic branch).
+    - `c_lam*sqrt(lam_max)*seg_len`, a Nyquist-style oscillation term: boundary Cauchy data
+      oscillates at wavenumber ~sqrt(lam) (lam is the eigenvalue itself here, e.g.
+      FourierBesselBasis evaluates jv(order, sqrt(lam)*r)), so resolving it needs points per
+      unit arclength scaling with sqrt(lam_max) regardless of basis size. `lam_max` defaults
+      to `weyl_est(6, domain)` (matching MPSEigensolver.from_domain's own default) when not
+      supplied, so callers that don't pass it still get lam-aware sizing. weyl_est doesn't
+      support mixed/Robin boundary conditions; for those, the lam term is skipped (not an
+      error) when `lam_max` isn't given explicitly, falling back to the basis-size term alone.
+
+    The two terms above are independent proxies for the same underlying "how much does the
+    smooth part of the integrand need" quantity, so they're combined by max(), not sum().
+
+    - `q_seg`, if given (per-segment Kress grading order, see corner_grading_orders/
+      build_boundary_quadrature), inflates that smooth-content count by `1 + beta*(q-1)`
+      for q>0: a higher grading order clusters more of a fixed node budget near the corner,
+      so the segment's smooth interior needs proportionally more nodes to stay resolved.
+
+    Every additional term only ever increases the point count relative to the original
+    length-only heuristic, so this is a strictly more (or equally) conservative superset of
+    the prior behavior for any fixed mult/min_per_seg."""
     seg_lens = domain.seg_lens
-    pps = np.round(mult*len(basis)*seg_lens/seg_lens.sum()).astype(int)
+    base_n = mult*len(basis)*seg_lens/seg_lens.sum()
+    if lam_max is None:
+        try:
+            lam_max = weyl_est(6, domain)
+        except NotImplementedError:
+            lam_max = None
+    lam_n = c_lam*np.sqrt(lam_max)*seg_lens if lam_max is not None else 0.0
+    smooth_n = np.maximum(base_n, lam_n)
+    if q_seg is not None:
+        smooth_n = smooth_n*np.where(q_seg > 0, 1.0 + beta*(q_seg - 1), 1.0)
+    pps = np.round(smooth_n).astype(int)
     return np.maximum(pps, min_per_seg).astype(int)
 
 
-### Singularity-subtraction (SS/SR/RS/RR) quadrature, docs/rellich_hadamard_mps.pdf Sec. 4-5.
+### Kress-style graded-mesh quadrature, docs/rellich_hadamard_mps.pdf Sec. 6.1.
 #
-# Rather than one Gauss-Jacobi exponent per segment (graded from a corner's *leading* mode only and
-# applied uniformly to every basis-function pair, an earlier/simpler approach), each basis column's
-# *own* exact local behavior near each corner is used: column j with mode exponent p_j at corner c
-# behaves like rho**(p_j - d) * entire(rho**2) there, d in {0,1} the number of derivatives the
-# kernel takes of that factor (0 for a value factor as in K^uv, 1 for a normal/tangential-
-# derivative factor, since both reduce the order by exactly 1). Grading a Gauss-Jacobi rule to a
-# basis-function *pair*'s exact combined exponent -- rather than a segment-wide leading-mode proxy
-# -- is standard, correct usage and needs no new special-function machinery: ordinary jv/jvp
-# (already used by FourierBesselBasis) are evaluated only at the graded rule's interior nodes,
-# which never land at rho=0.
+# Rather than grading a separate Gauss-Jacobi rule to each basis-function pair's exact combined
+# corner exponent (the earlier SS/SR/RS/RR approach -- exact, but requires one full-basis
+# Cauchy-data evaluation per distinct exponent *group* at each corner, which blows up whenever a
+# corner's modes have generically-incommensurate exponents), each segment gets a single shared
+# quadrature rule -- ordinary Gauss-Legendre, or Kress-graded toward whichever of its two corner
+# endpoints are genuinely singular -- and the *raw* (undecomposed) Cauchy data of the whole basis
+# is evaluated once at that rule's nodes. This trades an exact per-mode error certificate for an
+# empirical one (node-doubling / grading-order-doubling), in exchange for evaluation cost that no
+# longer depends on how many singular modes a corner has.
 
-def panel_radius(domain, corner_idx, frac=0.4):
-    """Radius of the singularity-subtraction panel around domain.corners[corner_idx]: `frac` times
-    the shorter of its two adjacent segment lengths. For a polygon, every singular point is a
-    corner, so "nearest other singular point along an edge" is simply that edge's far endpoint --
-    a correct, simpler specialization of the paper's Sec. 9.2 heuristic."""
-    seg_idx = domain.corner_idx[corner_idx]
-    n_segs = len(domain.bdry.segments)
-    seg_lens = domain.seg_lens
-    return frac*min(seg_lens[seg_idx], seg_lens[(seg_idx - 1) % n_segs])
+def corner_grading_orders(basis, domain, margin=2.0, q_min=4, q_max=12):
+    """Per-corner Kress grading order q (see quad.kress_w), sized from that corner's worst (most
+    negative/most singular) admissible exponent via basis.corner_terms(domain). Corners with no
+    singular columns there, or whose columns are all entire (nonnegative-integer exponent), get
+    q=0 (no grading needed -- plain Gauss-Legendre suffices).
 
-
-def _panel_nodes(seg, R, exponent, side, n):
-    """Gauss-Jacobi nodes/weights (plain complex/real arrays, not a PointSet) on an arc-length-R
-    panel of `seg`, singular with the given exponent at its 'p0' or 'pf' end (wherever the panel's
-    owning corner is) and regular (exponent 0) at the panel's other (interior) boundary.
-
-    jacgauss's own convention grades its *left* (u=0) endpoint with `a` and its *right* (u=1)
-    endpoint with `b` (quad.py:jacgauss docstring). The corner is always mapped to u=0 here (tau=0
-    for side='p0', tau=1 for side='pf' -- see the tau formulas below), so both sides always grade
-    with `a=exponent, b=0.0`; only the tau-mapping direction differs by side."""
-    u, w = jacgauss(n, a=exponent, b=0.0)
-    if side == 'p0':
-        tau = u*(R/seg.len)
-    elif side == 'pf':
-        tau = 1.0 - u*(R/seg.len)
-    else:
-        raise ValueError("side must be 'p0' or 'pf'")
-    wts = R*w
-    return seg.p(tau), seg.N(tau), seg.T(tau), wts
-
-
-def _check_exponent(a, corner_idx):
-    if a <= -1:
-        raise ValueError(f"invalid Gauss-Jacobi exponent {a} at corner {corner_idx} "
-                         "(basis/domain data implies a non-integrable corner singularity)")
-
-
-def _corner_panel_gram(basis, domain, lam, kernel, weight_fn, corner_idx, corner_id, exponent,
-                       seg_mask, frac, group_pts):
-    """(N,N) contribution of one corner's SS+SR+RS+RR panel (restricted to arc-length panel_radius
-    on each of its two adjacent segments), or (None, 0.0) if this corner has no columns singular
-    there (nothing to carve out; the caller's bulk region covers it untouched)."""
-    N = len(corner_id)
-    Sc = np.nonzero(corner_id == corner_idx)[0]
-    if len(Sc) == 0:
-        return None, 0.0
-
-    seg_idx = domain.corner_idx[corner_idx]
-    n_segs = len(domain.bdry.segments)
-    prev_idx = (seg_idx - 1) % n_segs
-    seg_out, seg_in = domain.bdry.segments[seg_idx], domain.bdry.segments[prev_idx]
-    active_out = seg_mask is None or seg_mask[seg_idx]
-    active_in = seg_mask is None or seg_mask[prev_idx]
-    if not (active_out or active_in):
-        return None, 0.0
-
-    R = panel_radius(domain, corner_idx, frac)
-    d = 0 if kernel == 'uv' else 1
-    p_Sc = exponent[Sc]
-    not_Sc = np.setdiff1d(np.arange(N), Sc)
-
-    def panel_cauchy_data(a, cols=None):
-        parts = []
-        if active_out:
-            parts.append(_panel_nodes(seg_out, R, a, 'p0', group_pts))
-        if active_in:
-            parts.append(_panel_nodes(seg_in, R, a, 'pf', group_pts))
-        pts, normals, tangents, wts = (np.concatenate(x) for x in zip(*parts))
-        cd = basis_cauchy_data(basis, lam, pts, normals, tangents, wts, cols=cols)
-        return cd, weight_fn(pts, normals, tangents)
-
-    G = np.zeros((N, N))
-
-    # SS: Sc x Sc, grouped by each pair's exact combined exponent. Evaluates only Sc's own
-    # columns (cols=Sc) -- the dominant cost otherwise, since SS calls are the overwhelming
-    # majority of calls made across a whole singular_gram invocation, and previously each one
-    # paid for evaluating every one of the basis's N columns to use only |Sc| of them (see
-    # docs/rellich_hadamard_mps.pdf and the profiling in benchmarks/reference/rellich_profile.py).
-    a_pairs = p_Sc[:, np.newaxis] + p_Sc[np.newaxis, :] - 2*d
-    for a in np.unique(a_pairs):
-        _check_exponent(a, corner_idx)
-        mask = np.isclose(a_pairs, a)
-        cd, weight = panel_cauchy_data(a, cols=Sc)
-        M = assemble_kernel(cd, kernel, weight)   # cd already IS the Sc x Sc columns, in order
-        sub = G[np.ix_(Sc, Sc)]
-        sub[mask] = M[mask]
-        G[np.ix_(Sc, Sc)] = sub
-
-    # SR/RS: Sc x (rest). Genuinely needs (most of) every other column to correlate Sc's group
-    # against, so no cols restriction here beyond what's already implied by grouping.
-    for a in np.unique(p_Sc - d):
-        _check_exponent(a, corner_idx)
-        group = Sc[np.isclose(p_Sc - d, a)]
-        cd, weight = panel_cauchy_data(a)
-        M = assemble_kernel(cd, kernel, weight, cols1=group, cols2=not_Sc)
-        G[np.ix_(group, not_Sc)] = M
-        G[np.ix_(not_Sc, group)] = M.T
-
-    # RR: (rest) x (rest), plain (ungraded) rule on the same panel -- restricted to not_Sc's
-    # columns (a smaller, cheaper evaluation than the full basis whenever Sc is nonempty).
-    cd, weight = panel_cauchy_data(0.0, cols=not_Sc)
-    G[np.ix_(not_Sc, not_Sc)] = assemble_kernel(cd, kernel, weight)
-
-    return G, R
-
-
-def singular_gram(basis, domain, lam, kernel, weight_fn, seg_mask=None, panel_frac=0.4,
-                  group_pts=16, bulk_mult=2, bulk_min_per_seg=8):
-    """Boundary-integral N x N matrix for one (kernel, weight) pair, via the SS/SR/RS/RR
-    singularity-subtraction quadrature (docs/rellich_hadamard_mps.pdf Sec. 4-5): each corner's own
-    basis columns are graded to their *exact* local exponent, and the rest of the boundary uses
-    plain Gauss-Legendre.
-
-    `weight_fn(pts, normals, tangents) -> real array` is evaluated at whatever nodes this function
-    builds internally -- unlike `assemble_kernel`'s precomputed `cauchy_data`, panel node sets here
-    aren't shared/precomputed upfront (each corner/exponent group needs its own).
-
-    `seg_mask`: optional boolean array over `domain.bdry.segments` restricting which segments
-    contribute at all (e.g. Gamma_D/Gamma_N for Rellich's boundary-condition split); `None`
-    includes every segment."""
+    The quantity actually needing resolution is the *product* of two singular factors at the same
+    corner (the old SS block), whose combined exponent for a derivative-type kernel (KNN/KTT/Kcr)
+    is 2*(p1 - 1) for leading exponent p1; `margin` pads the grading order comfortably past that,
+    per the doc's own qualitative guidance ("q chosen comfortably larger than the worst exponent
+    present")."""
     corner_id, exponent = basis.corner_terms(domain)
-    N = len(basis)
-    G = np.zeros((N, N))
-
     n_corners = len(domain.corners)
-    n_segs = len(domain.bdry.segments)
-    excl_start, excl_end = np.zeros(n_segs), np.zeros(n_segs)
-
+    q = np.zeros(n_corners, dtype=int)
     for c in range(n_corners):
-        seg_idx = domain.corner_idx[c]
-        prev_idx = (seg_idx - 1) % n_segs
-        Gc, R = _corner_panel_gram(basis, domain, lam, kernel, weight_fn, c, corner_id, exponent,
-                                   seg_mask, panel_frac, group_pts)
-        if Gc is None:
+        Sc = exponent[corner_id == c]
+        if len(Sc) == 0:
             continue
-        G += Gc
-        if seg_mask is None or seg_mask[seg_idx]:
-            excl_start[seg_idx] = R
-        if seg_mask is None or seg_mask[prev_idx]:
-            excl_end[prev_idx] = R
+        p1 = Sc.min()
+        if np.isclose(p1, np.round(p1)) and p1 > -0.5:
+            continue  # entire at this corner -- no singularity to grade for
+        severity = max(0.0, 2*(1 - p1))
+        q[c] = int(np.clip(np.ceil(severity + margin), q_min, q_max))
+    return q
 
-    # bulk RR: the remainder of each active segment beyond its corner panels
-    n_per_seg = graded_pts_per_seg(domain, basis, bulk_mult, bulk_min_per_seg)
-    for i, seg in enumerate(domain.bdry.segments):
-        if seg_mask is not None and not seg_mask[i]:
-            continue
-        tau_lo, tau_hi = excl_start[i]/seg.len, 1 - excl_end[i]/seg.len
-        if tau_hi <= tau_lo:
-            continue
-        u, w = jacgauss(n_per_seg[i], 0.0, 0.0)
-        tau = tau_lo + u*(tau_hi - tau_lo)
-        wts = seg.len*(tau_hi - tau_lo)*w
-        pts, normals, tangents = seg.p(tau), seg.N(tau), seg.T(tau)
-        cd = basis_cauchy_data(basis, lam, pts, normals, tangents, wts)
-        weight = weight_fn(pts, normals, tangents)
-        G += assemble_kernel(cd, kernel, weight)
 
-    return G
+def build_boundary_quadrature(domain, basis, lam_max=None, mult=2, min_per_seg=4, margin=2.0,
+                              q_min=4, q_max=12, c_lam=1.0, beta=0.2):
+    """One shared quadrature rule per segment -- Kress-graded (quad.cached_kressgauss) toward
+    either endpoint that basis.corner_terms(domain) marks as genuinely singular, plain
+    Gauss-Legendre (quad.cached_leggauss) otherwise -- covering the whole boundary. Point counts
+    per segment come from `graded_pts_per_seg`, sized from basis size, segment length, `lam_max`
+    (the worst-case spectral parameter this shared node set must stay accurate for -- see
+    rellich.build_rellich_data's docstring on why this node set is built once and reused across
+    every lam in a solve_interval search) and each segment's own Kress grading order (so a
+    heavily-graded segment doesn't starve its own smooth interior of nodes). Returns concatenated
+    (pts, normals, tangents, wts, dir_mask, neu_mask) as plain arrays (pts/normals/tangents
+    complex, wts/dir_mask/neu_mask real), covering every segment regardless of boundary-condition
+    type -- dir_mask/neu_mask are 0/1 float masks over the SAME combined point array, letting a
+    single Cauchy-data evaluation serve every boundary-condition split via multiplicative weight
+    masking (see rellich.rellich_gram_basis) rather than separate per-condition node sets."""
+    segs = domain.bdry.segments
+    n_segs = len(segs)
+    q_corner = corner_grading_orders(basis, domain, margin, q_min, q_max)
+
+    # q_start[i]: grading order at segment i's p0 corner, if that point is a listed corner.
+    q_start = np.zeros(n_segs, dtype=int)
+    for c in range(len(domain.corners)):
+        q_start[domain.corner_idx[c]] = q_corner[c]
+
+    # q_seg[i]: grading order actually used on segment i (max of its two corner endpoints),
+    # computed once so graded_pts_per_seg can size n_per_seg with it before quadrature assembly.
+    q_seg_arr = np.maximum(q_start, np.roll(q_start, -1))
+
+    n_per_seg = graded_pts_per_seg(domain, basis, lam_max, q_seg_arr, mult, min_per_seg,
+                                   c_lam, beta)
+
+    pts_parts, normals_parts, tangents_parts, wts_parts = [], [], [], []
+    dir_parts, neu_parts = [], []
+    for i, seg in enumerate(segs):
+        q_seg = q_seg_arr[i]
+        n = n_per_seg[i]
+        if q_seg == 0:
+            tau, w = cached_leggauss(n)
+        else:
+            tau, w = cached_kressgauss(n, q_seg)
+        pts_parts.append(seg.p(tau))
+        normals_parts.append(seg.N(tau))
+        tangents_parts.append(seg.T(tau))
+        wts_parts.append(seg.len*w)
+        is_dir = float(seg.bc_type == 'dir')
+        is_neu = float(seg.bc_type == 'neu')
+        dir_parts.append(np.full(n, is_dir))
+        neu_parts.append(np.full(n, is_neu))
+
+    pts = np.concatenate(pts_parts)
+    normals = np.concatenate(normals_parts)
+    tangents = np.concatenate(tangents_parts)
+    wts = np.concatenate(wts_parts)
+    dir_mask = np.concatenate(dir_parts)
+    neu_mask = np.concatenate(neu_parts)
+    return pts, normals, tangents, wts, dir_mask, neu_mask

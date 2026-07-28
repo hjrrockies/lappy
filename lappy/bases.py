@@ -72,8 +72,7 @@ def make_default_basis(domain, n_basis, fs_frac=0.5, fs_bdry_order=1, fs_d=1.0,
 
             # Fundamental solution terms
             sources_per_corner = fs_corner_orders(domain, n_fs, order=fs_corner_order)
-            diam = domain.diameter
-            fs_basis = FundamentalBasis.by_corners(domain, sources_per_corner, fs_C*diam, fs_sigma, fs_corner_order)
+            fs_basis = FundamentalBasis.by_corners(domain, sources_per_corner, fs_C, fs_sigma, fs_corner_order)
 
             # combine
             basis = fb_basis + fs_basis

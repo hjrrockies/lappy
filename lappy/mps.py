@@ -6,7 +6,9 @@ from .geometry import PointSet, Polygon
 from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBasis, FourierBesselBasis
 from .cubature import polygon_cubature
 from .asymp import weyl_est
-from .rellich import build_rellich_data, rellich_gram_basis, orthonormalize_coef
+from .rellich import build_rellich_data, rellich_gram_basis, rellich_gram_from_cauchy_data, \
+    lowdin_transform, orthonormalize_coef
+from .cauchy import CauchyData
 
 from .cache import instance_lru_cache
 import numpy as np
@@ -267,7 +269,7 @@ class MPSEigensolver(BaseEigensolver):
     def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False,
                     reg_type='svd', rtol=rtol_default, ttol=ttol_default,
                     rellich=True, rellich_x0=None, rellich_mult=2, rellich_min_per_seg=4,
-                    rellich_panel_frac=0.4, rellich_group_pts=16):
+                    rellich_margin=2.0, rellich_c_lam=1.0, rellich_beta=0.2):
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
         if lam_max is None:
@@ -300,9 +302,9 @@ class MPSEigensolver(BaseEigensolver):
                               "Robin boundary conditions; eigenfunction_coef will return "
                               "un-normalized coefficients.")
             else:
-                cauchy_data = build_rellich_data(domain, basis, rellich_x0, rellich_mult,
-                                                 rellich_min_per_seg, rellich_panel_frac,
-                                                 rellich_group_pts)
+                cauchy_data = build_rellich_data(domain, basis, lam_max, rellich_x0, rellich_mult,
+                                                 rellich_min_per_seg, rellich_margin,
+                                                 rellich_c_lam, rellich_beta)
 
         return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec,
                    cauchy_data=cauchy_data)
@@ -351,32 +353,66 @@ class MPSEigensolver(BaseEigensolver):
     def _cauchy_gram(self, eig):
         """Boundary-only (Rellich identity) L^2(Omega) Gram matrix of the basis at eig.
         See docs/rellich.md; cached per eigenvalue since it is otherwise the same cost
-        order as one basis evaluation."""
+        order as one basis evaluation. NOTE: this is the basis-level (N x N) Gram matrix --
+        sandwiching it between two copies of a coefficient vector (as orthonormalize_coef
+        does) is the numerically risky pattern eigenfunction_coef no longer uses by default
+        (docs/rellich_hadamard_mps.pdf Sec. 3.1); kept for direct use by tests/benchmarks and
+        any external Hadamard-type consumer that genuinely needs the full basis Gram."""
         return rellich_gram_basis(self.basis, eig, self._cauchy_data)
 
     @instance_lru_cache(maxsize=64)
-    def eigenfunction_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, normalize='rellich'):
-        """Coefficient vector(s) (in basis-function space) for the eigenfunction(s)
-        at eig. By default (normalize='rellich'), the coefficients are rescaled (and,
-        for mult>1, rotated) to be orthonormal in the true L^2(Omega) inner product,
-        computed via the boundary-only Rellich identity (docs/rellich.md). Pass
-        normalize=None/False to get the raw (arbitrarily-scaled) GSVD nullspace
-        coefficients instead. Falls back to raw coefficients with a warning if no
-        cauchy_data was supplied at construction (e.g. from_domain(..., rellich=False),
-        a domain with Robin boundary conditions, or manual construction)."""
+    def _nullspace_coef_raw(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+        """Raw (arbitrarily-scaled) GSVD nullspace coefficients -- eigenfunction_coef's
+        orthonorm=False path, factored out (and independently cached under a fixed
+        calling convention) so orthonorm=True can reliably reuse this cache via a direct
+        call rather than depending on eigenfunction_coef's own recursive-call kwarg style."""
         reg_type, rtol, ttol, _ = self._get_params(reg_type, rtol, ttol)
-        coef = nullspace_coef(self.A_B(eig), self.A_I(eig), mult, reg_type, rtol, ttol)
-        if not normalize:
-            return coef
+        return nullspace_coef(self.A_B(eig), self.A_I(eig), mult, reg_type, rtol, ttol)
+
+    @instance_lru_cache(maxsize=64)
+    def _orthonorm_transform_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+        """Löwdin orthonormalization transform D (mult x mult) for eigenfunction_coef's
+        orthonorm=True path, built via the safe "evaluate first, sandwich never" Rellich Gram
+        (docs/rellich_hadamard_mps.pdf Sec. 3.2): the raw candidate coefficients' OWN Cauchy
+        data is evaluated directly at the shared Rellich boundary node set (a single
+        un-sandwiched matrix-vector product -- basis(eig,pts)@coef, never coef.T@G_NxN@coef),
+        and Löwdin-orthogonalized from the resulting small (mult x mult) Gram. Stays entirely
+        within nullspace_coef's own GSVD pencil (no extra GSVD call). Returns (D, G), or
+        (None, None) with a warning if no cauchy_data was supplied at construction."""
         if self._cauchy_data is None:
             warnings.warn("Rellich-identity normalization unavailable (no cauchy_data "
                           "supplied at construction); returning un-normalized coefficients.")
+            return None, None
+        coef = self._nullspace_coef_raw(eig, mult, reg_type, rtol, ttol)
+        pts, normals, tangents = self._cauchy_data.pts, self._cauchy_data.normals, self._cauchy_data.tangents
+        Phi = self.basis(eig, pts) @ coef
+        Phi_N = self.basis.ddiff(eig, pts, normals) @ coef
+        Phi_T = self.basis.ddiff(eig, pts, tangents) @ coef
+        cd = CauchyData(pts, normals, tangents, self._cauchy_data.wts, Phi, Phi_N, Phi_T)
+        G = rellich_gram_from_cauchy_data(cd, eig, self._cauchy_data)
+        return lowdin_transform(G), G
+
+    @instance_lru_cache(maxsize=64)
+    def eigenfunction_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=True):
+        """Coefficient vector(s) (in basis-function space) for the eigenfunction(s)
+        at eig. By default (orthonorm=True), the coefficients are rescaled (and,
+        for mult>1, rotated) to be orthonormal in the true L^2(Omega) inner product,
+        computed via the boundary-only Rellich identity (docs/rellich.md) using the safe
+        "evaluate first, sandwich never" transform (_orthonorm_transform_coef). Pass
+        orthonorm=False to get the raw (arbitrarily-scaled) GSVD nullspace coefficients
+        instead. Falls back to raw coefficients with a warning if no cauchy_data was
+        supplied at construction (e.g. from_domain(..., rellich=False), a domain with
+        Robin boundary conditions, or manual construction)."""
+        coef = self._nullspace_coef_raw(eig, mult, reg_type, rtol, ttol)
+        if not orthonorm:
             return coef
-        G = self._cauchy_gram(eig)
-        return orthonormalize_coef(coef, G)
-    
-    def eigenfunction(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
-        coef = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol)
+        D, G = self._orthonorm_transform_coef(eig, mult, reg_type, rtol, ttol)
+        if D is None:
+            return coef
+        return coef @ D.T
+
+    def eigenfunction(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=True):
+        coef = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol, orthonorm)
         def eigenfunc(pts):
             if isinstance(pts, PointSet):
                 shape = (len(pts), coef.shape[1])
@@ -392,8 +428,8 @@ class MPSEigensolver(BaseEigensolver):
             return (self.basis._eval_pointset(eig, pts)@coef).reshape(shape)
         return eigenfunc
     
-    def eigenfunction_grad(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
-        coef = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol)
+    def eigenfunction_grad(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=True):
+        coef = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol, orthonorm)
         def eigenfunc_grad(pts):
             if isinstance(pts, PointSet):
                 shape = (len(pts), coef.shape[1])
@@ -410,7 +446,7 @@ class MPSEigensolver(BaseEigensolver):
         return eigenfunc_grad
     
     def eigenfunction_eval_extras(self, eig, mult=1, extra_pts=None, ddiff_pts=None, ddiff_vecs=None,
-                                  reg_type=None, rtol=None, ttol=None):
+                                  reg_type=None, rtol=None, ttol=None, orthonorm=False):
         reg_type, rtol, ttol, _ = self._get_params(reg_type, rtol, ttol)
         # convert extra_pts & ddiff_pts to PointSets
         if extra_pts is not None:
@@ -455,21 +491,69 @@ class MPSEigensolver(BaseEigensolver):
             U_extra /= extra_pts.sqrt_wts
         if hasattr(ddiff_pts, 'wts'):
             U_ddiff /= ddiff_pts.sqrt_wts
+
+        if orthonorm:
+            D, G = self._orthonorm_transform_eval(eig, mult, reg_type, rtol, ttol)
+            if D is not None:
+                if U_B is not None: U_B = U_B @ D.T
+                if U_I is not None: U_I = U_I @ D.T
+                if U_extra is not None: U_extra = U_extra @ D.T
+                if U_ddiff is not None: U_ddiff = U_ddiff @ D.T
         return tuple([arr for arr in (U_B, U_I, U_extra, U_ddiff) if arr is not None])
-        
-    @instance_lru_cache(maxsize=64)
-    def eigenfunction_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
-        return self.eigenfunction_eval_extras(eig, mult, reg_type=reg_type, rtol=rtol, ttol=ttol)
+
+    def _rellich_cauchy_data_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+        """Evaluates the raw (unnormalized) candidate eigenfunctions' Cauchy data directly at
+        the shared Rellich boundary node set, via the GSVD-eval pipeline (nullspace_eval) --
+        never reconstructing a basis coefficient vector at all. Concatenates the node set with
+        itself, paired with normals then tangents ("doubling trick"), to get both boundary
+        derivatives from a single extra GSVD call. orthonorm=False here is required, not a
+        default: this data is what _orthonorm_transform_eval is built FROM, so using
+        orthonorm=True would recurse into the transform being constructed."""
+        pts = self._cauchy_data.pts
+        normals, tangents = self._cauchy_data.normals, self._cauchy_data.tangents
+        ddiff_pts = np.concatenate([pts, pts])
+        ddiff_vecs = np.concatenate([normals, tangents])
+        _, _, U_extra, U_ddiff = self.eigenfunction_eval_extras(
+            eig, mult, extra_pts=pts, ddiff_pts=ddiff_pts, ddiff_vecs=ddiff_vecs,
+            reg_type=reg_type, rtol=rtol, ttol=ttol, orthonorm=False)
+        n = len(pts)
+        return CauchyData(pts, normals, tangents, self._cauchy_data.wts,
+                          U_extra, U_ddiff[:n], U_ddiff[n:])
 
     @instance_lru_cache(maxsize=64)
-    def eigenfunction_eval_normals(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+    def _orthonorm_transform_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+        """Löwdin orthonormalization transform D (mult x mult) for eigenfunction_eval_extras's
+        orthonorm=True path, built via GSVD-eval (nullspace_eval) Cauchy data at the shared
+        Rellich boundary node set -- an independent transform from _orthonorm_transform_coef's
+        (different GSVD pencil: nullspace_eval decomposes A_I augmented with the Rellich-node
+        rows, nullspace_coef does not), since for a degenerate cluster (mult>1) the two pencils'
+        raw candidate bases need not be related by the same rotation. Agrees with
+        _orthonorm_transform_coef up to a global sign for mult=1 (empirically verified: both
+        reach ~1e-10 relative accuracy against an independent cubature reference on the same
+        test case). Returns (D, G), or (None, None) with a warning if no cauchy_data was
+        supplied at construction."""
+        if self._cauchy_data is None:
+            warnings.warn("Rellich-identity normalization unavailable (no cauchy_data "
+                          "supplied at construction); returning un-normalized values.")
+            return None, None
+        cd = self._rellich_cauchy_data_eval(eig, mult, reg_type, rtol, ttol)
+        G = rellich_gram_from_cauchy_data(cd, eig, self._cauchy_data)
+        return lowdin_transform(G), G
+
+    @instance_lru_cache(maxsize=64)
+    def eigenfunction_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=False):
+        return self.eigenfunction_eval_extras(eig, mult, reg_type=reg_type, rtol=rtol, ttol=ttol,
+                                              orthonorm=orthonorm)
+
+    @instance_lru_cache(maxsize=64)
+    def eigenfunction_eval_normals(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=False):
         return self.eigenfunction_eval_extras(eig, mult, ddiff_pts=self.bdry_pts, ddiff_vecs=self.bdry_normals,
-                                              reg_type=reg_type, rtol=rtol, ttol=ttol)
-    
-    def eigenfunction_energies(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+                                              reg_type=reg_type, rtol=rtol, ttol=ttol, orthonorm=orthonorm)
+
+    def eigenfunction_energies(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=True):
         """computes the energy values for the particular solution basis
         for the eigenfunction(s) corresponding to the given eigenvalue"""
-        C = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol) 
+        C = self.eigenfunction_coef(eig, mult, reg_type, rtol, ttol, orthonorm)
         AI = self.A_I(eig)
         col_norms = la.norm(AI, axis=0)
         denoms = la.norm(AI@C, axis=0)
@@ -709,10 +793,10 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
     #     raise EigensolverFailure(f"Tension grid all small (logmean={tension_logmean}): solver likely needs to be reconfigured.")
 
     # get brackets containing minima
-    if verbose > 0:
-        d1 = np.diff(tensiongrid)
-        d2 = np.diff(d1)
-        print("noise_est =", la.norm(d2)/la.norm(d1))
+    # if verbose > 0:
+    #     d1 = np.diff(tensiongrid)
+    #     d2 = np.diff(d1)
+    #     print("noise_est =", la.norm(d2)/la.norm(d1))
     if verbose > 0: print("2. finding eigenvalue brackets...")
     brackets, fe = bracket_mins(lambda lam: tensions(lam)[:2], lamgrid, 
                                 tensiongrid, ltol, verbose=verbose-1, **bracket_kwargs)

@@ -35,6 +35,56 @@ def jacgauss(order, a=0, b=0):
     weights = weights/2 # adjust weights to interval of unit length
     return nodes, weights
 
+### Kress-style graded-mesh quadrature (docs/rellich_hadamard_mps.pdf Sec. 6.1).
+#
+# w(t) is a fixed, smooth sigmoid reparametrization of [0,1] with w(0)=0, w(1)=1, w(0.5)=0.5,
+# and w^(k)(0) = 0 for k = 1, ..., q-1 (by construction w(t) = 1 - w(1-t), so the same holds at
+# t=1). Composing a segment's arclength parametrization with w clusters Gauss-Legendre nodes
+# geometrically near both of that segment's corner endpoints -- one shared rule per segment, no
+# per-basis-function-pair grading.
+
+def kress_v(t, q):
+    """Cubic building block of the Kress sigmoid (eq. 11): v(0)=0, v(1)=1, v(0.5)=0.5."""
+    return (1.0/q - 0.5)*(1 - 2*t)**3 + (2*t - 1)/q + 0.5
+
+def kress_w(t, q):
+    """Kress grading map w: [0,1] -> [0,1], order q >= 2. Flattens q-1 derivatives at each
+    endpoint, clustering nodes there without introducing panel joints."""
+    a, b = kress_v(t, q), kress_v(1 - t, q)
+    aq, bq = a**q, b**q
+    return aq/(aq + bq)
+
+def kress_dw(t, q, h=1e-30):
+    """dw/dt via complex-step differentiation (exact to machine precision for this smooth,
+    polynomial-based map -- avoids a hand-derived closed form and its attendant algebra risk)."""
+    return np.imag(kress_w(t + 1j*h, q))/h
+
+_KRESS_TAU_FLOOR = 1e-9  # see cached_kressgauss docstring
+
+
+@cache
+def cached_kressgauss(order, q):
+    """Kress-graded Gauss-Legendre rule on [0,1]: `order` base Legendre nodes, remapped through
+    the grading map `kress_w` (order q), with weights adjusted by its Jacobian.
+
+    For large `q`/`order`, `kress_w` can map the smallest base nodes to a `tau` many orders of
+    magnitude below machine epsilon (e.g. 1e-23). Downstream, a segment's linear/arclength
+    parametrization evaluates points as `(1-tau)*p0 + tau*pf`; once `tau` is below float64
+    epsilon relative to `p0`, this rounds to *exactly* `p0` -- the quadrature node silently
+    collapses onto the corner itself (r=0 in local polar coordinates), producing a division by
+    zero (and NaN) in any basis whose corner-relative derivatives involve 1/r. No exact Gauss
+    rule ever places a node at an endpoint, so this collapse is a pure floating-point artifact,
+    not a real quadrature choice -- clamping `tau` comfortably above the epsilon that causes it
+    (`_KRESS_TAU_FLOOR`, ~1e6x above float64 epsilon) removes it. The clamped points still carry
+    a weight tiny enough (see module tests) that this has no detectable effect on the assembled
+    integral -- the whole point of the grading is that near-endpoint nodes contribute
+    vanishingly little individually."""
+    u, wt = cached_leggauss(order)
+    tau = kress_w(u, q)
+    weights = wt*kress_dw(u, q)
+    tau = np.clip(tau, _KRESS_TAU_FLOOR, 1 - _KRESS_TAU_FLOOR)
+    return tau, weights
+
 def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
     quadrature rules. Transforms the nodes to lie along the edges of the polygon with

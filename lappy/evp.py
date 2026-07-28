@@ -253,3 +253,7 @@ class Eigenproblem(BaseEigenproblem):
     def eigenfunction_eval_normals(self, eig, mult=1, solver=None, **solver_kwargs):
         solver = self._get_evec_solver(solver)
         return solver.eigenfunction_eval_normals(eig, mult, **solver_kwargs)
+
+    def eigenfunction_energies(self, eig, mult=1, solver=None, **solver_kwargs):
+        solver = self._get_evec_solver(solver)
+        return solver.eigenfunction_energies(eig, mult, **solver_kwargs)
