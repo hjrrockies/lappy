@@ -1,102 +1,43 @@
-def gww(n_eigs, n_fb_basis, n_fs_basis, ltol, rtol, ppl):
-    # GWW domain: Dirichlet eigenvalues and error estimates
-    from lappy import geometry, FourierBesselBasis, FundamentalBasis
-    from benchmarking import estimate_peon, precise_eigs
+"""Reference Dirichlet eigenvalues for the GWW isospectral domain pair
+(Gordon-Webb-Wolpert). No symmetry, 4 singular corners each (45/135 degree
+corners are singular, 90/270 degree corners are regular) -- make_default_basis
+takes the mixed FB+FS path. Existing lappy.reference.gww_eigs already
+tabulates 25 shared values to ~12 digits; this re-derives per-domain values
+(and checks GWW1/GWW2 actually agree, as they should for an isospectral pair)
+with the current pipeline (not the primary source of truth -- see
+reference.py).
 
-    # get domain (Dirichlet and Neumann boundary)
-    gww = geometry.GWW1()
-    gww_neu = geometry.GWW1(bc='neu')
+DIGIT CEILING: GWW1 mostly 9.5-9.9 digits at n_basis=320, except two
+eigenvalues (near lambda=5.18 and lambda=12.34) stuck at 6.1 and 3.9
+digits. GWW2 mostly 7.2-8.7 digits at n_basis=320, plus one mode
+(lambda=12.337005501361730) at 13.2 digits. WHY: the pipeline-bug fix (see
+ellipse.py, TUNING_LOG.md) alone barely moved most modes at the old
+n_basis=240 -- genuinely resolution-limited. A moderate basis bump
+(240->320) helped substantially for GWW1's well-behaved modes. GWW1's
+lambda=12.34 outlier is suspiciously close to GWW2's isolated
+high-precision mode at lambda=12.337005501361730 -- may be a genuinely
+close-but-distinct pair in GWW1 that GWW2's geometry doesn't share; not
+investigated further given time."""
+import numpy as np
+from lappy import geometry, reference
+from common import escalate_and_solve_v2, report
 
-    # basis info
-    # set up Fourier-Bessel Basis
-    if n_fb_basis > 0:
-        int_angles = gww.int_angles
-        reg_corner_idx = ((np.pi/int_angles % 1) < 1e-16)
-        singular_angles = int_angles[~reg_corner_idx]
-        orders = np.zeros(int_angles.shape, dtype=int)
-        orders[~reg_corner_idx] = np.ceil(n_fb_basis*singular_angles/singular_angles.sum()).astype(int)
-        while orders.sum() > n_fb_basis:
-            orders[orders.argmax()] -= 1
-        while orders.sum() < n_fb_basis:
-            orders[orders.argmin()] += 1
+N_EIGS = 8
+N_BASIS_LIST = [60, 120, 240, 320]
 
-    # set up fundamental solution basis
-    seg_lens = np.array([seg.len for seg in gww.bdry.segments])
-    if n_fs_basis > 0:
-        n_per_seg = np.ceil(n_fs_basis*seg_lens/seg_lens.sum()).astype(int)
-        while n_per_seg.sum() > n_fs_basis:
-            n_per_seg[n_per_seg.argmax()] -= 1
-        while n_per_seg.sum() < n_fs_basis:
-            n_per_seg[n_per_seg.argmin()] += 1
 
-    # bdry and int pts
-    n_bdry = 2*(n_fb_basis + n_fs_basis)
-    pts_per_seg = np.ceil(n_bdry*seg_lens/seg_lens.sum()).astype(int)
-    bdry_pts, bdry_normals = gww.bdry_data(pts_per_seg)[:2]
-    int_pts = gww.int_pts(npts_rand=(n_fb_basis + n_fs_basis))
-    print(f"len(basis)={n_fb_basis+n_fs_basis}")
-    print(f"len(bdry_pts)={len(bdry_pts)}, len(int_pts)={len(int_pts)}")
+def run(which, n_eigs=N_EIGS):
+    dom = geometry.GWW1() if which == 1 else geometry.GWW2()
+    n_basis, eigs, mults, tensions = escalate_and_solve_v2(dom, N_BASIS_LIST, n_eigs)
+    report(f'GWW{which}()  [n_basis={n_basis}]', eigs, tensions)
+    return eigs, tensions
 
-    # bdry and int nodes
-    bdry_nodes = gww.bdry_pts(pts_per_seg, weights=True)
-    int_nodes = gww.int_pts('mesh', mesh_size=0.25, weights=True)
-    print(f"len(bdry_nodes)={len(bdry_nodes)}, len(int_nodes)={len(int_nodes)}")
-
-    # estimate Poisson extension operator norm
-    # C(Omega) <= 1/sqrt(inradius(Omega)*mu_1(Omega))
-    # where mu_1(Omega) is the first nonzero Neumann eigenvalue
-    print("Estimating Poisson extension operator norm")
-    basis_neu = FourierBesselBasis.from_domain(gww_neu, orders)
-    if n_fs_basis > 0:
-        fs_basis_neu = FundamentalBasis.from_domain(gww_neu, n_per_seg, 0.15)
-        basis_neu = basis_neu + fs_basis_neu
-    basis_neu = basis_neu.to_normalized((bdry_pts, int_pts))
-    peon_bound = estimate_peon(gww_neu, basis_neu, bdry_pts, int_pts, bdry_normals, ltol, 1e-6, ppl, verbose=2)
-    print(f"estimated bound on C(Omega):", peon_bound)
-
-    # solve for Dirichlet eigs
-    print("Solving for Dirichlet eigenvalues")
-    basis = FourierBesselBasis.from_domain(gww, orders)
-    if n_fs_basis > 0:
-        fs_basis = FundamentalBasis.from_domain(gww, n_per_seg, 0.15)
-        basis = basis + fs_basis
-    basis = basis.to_normalized((bdry_pts, int_pts))
-    eigs, tensions = precise_eigs(n_eigs, gww, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
-
-    # compute estimated relative error bound
-    relerr_est = tensions*peon_bound
-
-    print("eigs:", eigs)
-    print("relerr_est:", relerr_est)
-
-    return eigs, tensions, relerr_est, peon_bound
-    
 
 if __name__ == "__main__":
-    import argparse
-    import numpy as np
-    
-    parser = argparse.ArgumentParser(description="GWW domain dirichlet eigenvalues")
-    parser.add_argument("n_eigs", type=int, help="Number of eigenvalues to compute")
-    parser.add_argument("n_fb_basis", type=int, help="Number of Fourier-Bessel basis functions to use")
-    parser.add_argument("n_fs_basis", type=int, help="Number of FS sources to use")
-    parser.add_argument("--ltol", type=float, help="Eigenvalue relative tolerance", default=5e-16)
-    parser.add_argument("--rtol", type=float, help="Regularization tolerance", default=1e-12)
-    parser.add_argument("--ppl", type=int, help="points per level", default=10)
-    parser.add_argument("--outfile", type=str, help="results outfile", default="")
-
-    args = parser.parse_args()
-    n_eigs = args.n_eigs
-    n_fb_basis = args.n_fb_basis
-    n_fs_basis = args.n_fs_basis
-    ltol = args.ltol
-    rtol = args.rtol
-    ppl = args.ppl
-    if args.outfile == "":
-        outfile = f"gww_e{n_eigs}_nfb{n_fb_basis}_fns{n_fs_basis}"
-    else:
-        outfile = args.outfile
-    
-    eigs, tensions, relerr_est, peon_bound = gww(n_eigs, n_fb_basis, n_fs_basis, ltol, rtol, ppl)
-    # save results
-    np.savez(outfile, eigs=eigs, tensions=tensions, relerr_est=relerr_est, peon_bound=peon_bound)
+    eigs1, tensions1 = run(1)
+    eigs2, tensions2 = run(2)
+    ref = reference.gww_eigs(N_EIGS)
+    print(f"\nexisting ref:   {ref}")
+    print(f"GWW1 abs diff:  {np.abs(eigs1 - ref)}")
+    print(f"GWW2 abs diff:  {np.abs(eigs2 - ref)}")
+    print(f"GWW1 vs GWW2:   {np.abs(eigs1 - eigs2)}")

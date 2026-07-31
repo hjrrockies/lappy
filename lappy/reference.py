@@ -332,7 +332,12 @@ def disk_eigs(k, r, bc_type='dir'):
 
 # ── Domains without closed-form eigenvalues ─────────────────────────────────────────────────────
 def gww_eigs(k):
-    """The first 25 Dirichlet eigenvalues of the GWW isospectral domains, accurate to 12 digits, in sorted order"""
+    """The first 25 Dirichlet eigenvalues of the GWW isospectral domains, accurate to 12 digits, in sorted order.
+    Cross-checked (see benchmarks/reference/gww.py, TUNING_LOG.md) via
+    independent MPS solves of GWW1 and GWW2 separately at n_basis=320:
+    GWW1 mostly reaches 9.5-9.9 digits (2 outliers at 6.1, 3.9 digits),
+    GWW2 mostly reaches 7.2-8.7 digits (1 mode at 13.2 digits) -- both
+    agree with this table to within their respective precision."""
     if k > 25:
         raise ValueError("Only the first 25 eigenvalues are available")
     # just letting numpy sort because Driscoll's table wasn't easy to copy and paste!
@@ -344,7 +349,11 @@ def gww_eigs(k):
     return eigs[:k]
 
 def L_shape_eigs(k):
-    """The first 25 eigenvalues of the L-shaped domain, accurate to at least 14 digits"""
+    """The first 25 eigenvalues of the L-shaped domain, accurate to at least
+    14 digits. Cross-checked (see benchmarks/reference/L_shape.py,
+    TUNING_LOG.md) via an independent MPS solve at n_basis=240 reaching
+    12.9-13.3 digits for the first 10 -- agrees with this table to ~1e-13,
+    within that precision."""
     if k > 25:
         raise ValueError("Only the first 25 eigenvalues are available")
     return np.array([  9.639723844021946,  15.197251926454308,  19.739208802178716,
@@ -357,24 +366,211 @@ def L_shape_eigs(k):
                      115.5201730946677,   128.30485721416164,  128.30485721416164,
                      130.11902885096785])[:k]
 
-def chevron_eigs(k, h1=1.0, h2=2.0):
-    """The first 10 eigenvalues of the chevron with heights h1,h2, accurate to 12 digits"""
+def ellipse_eigs(k, a=2.0, b=1.0):
+    """The first 10 Dirichlet eigenvalues of the ellipse with semi-axes a,b
+    (computed via benchmarks/reference/ellipse.py, MPS with a boundary
+    fundamental-solution basis -- no closed form). a=2,b=1: 13.3-14.4
+    digits (n_basis=240, re-verified with the corrected pipeline -- see
+    TUNING_LOG.md). a=3,4 (b=1) were NOT re-verified with the corrected
+    pipeline (a re-check run was killed after 5+ minutes without
+    finishing, unusually slow compared to a=2's ~1-2 minutes) -- their
+    values are from the earlier, less careful pass: accurate to at least
+    7 digits, worst case ~6.7 digits at a=3."""
     if k > 10:
         raise ValueError("Only the first 10 eigenvalues are available")
-    
+    if a == 2.0 and b == 1.0:
+        return np.array([ 3.566726599853406,  6.275430620157517, 10.028401620452271,
+                          11.736665434133736, 14.877304135375340, 15.923963976853598,
+                          20.846866237831982, 21.023029232908417, 24.885731654879255,
+                          27.080637209915011])[:k]
+    elif a == 3.0 and b == 1.0:
+        return np.array([ 3.108128700342726,  4.595055082905808,  6.509341614142352,
+                           8.881928158123285, 11.030611158910741, 11.734242285459748,
+                          13.539805518163716, 15.080890472747482, 16.430451193912770,
+                          18.931804562846718])[:k]
+    elif a == 4.0 and b == 1.0:
+        return np.array([ 2.920251003362351,  3.934862295633269,  5.175723543179423,
+                           6.659014663915840,  8.397619666159422, 10.401610755766617,
+                          10.714369529583474, 12.505571121120370, 12.678776996497007,
+                          14.503899387838459])[:k]
+    else:
+        raise ValueError("eigenvalues not available for this a,b pair")
+
+def reg_ngon_eigs(k, N):
+    """The first 10 Dirichlet eigenvalues (counting multiplicity) of a
+    regular N-gon with unit circumradius, N=5..8 (computed via
+    benchmarks/reference/reg_ngon.py, MPS with a mixed Fourier-Bessel +
+    fundamental-solution basis -- every corner is singular for these N).
+    Accurate to at least 10.2 digits for N=5,6,7; for N=8, 8 of 9 unique
+    eigenvalues are accurate to at least 8.8 digits, but one
+    (lambda=29.536810903327243, a near-neighbor of the doubled eigenvalue
+    at 29.540564727244991) is only accurate to ~2.8 digits -- see
+    reg_ngon.py and TUNING_LOG.md for the diagnostics ruling out
+    regularization/collocation as the cause (it's a genuinely under-
+    resolved mode at n_basis=120)."""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+    if N == 5:
+        return np.array([  7.957089389349433,  20.106281644908393,  20.106281644908393,
+                           35.654694217826744,  35.654694217826744,  41.313935812799116,
+                           55.700798288206641,  55.700798288206641,  64.521882950899112,
+                           64.521882950899112])[:k]
+    elif N == 6:
+        return np.array([  7.155339133926017,  18.131677865530712,  18.131677865530712,
+                           32.451857514400388,  32.451857514400388,  37.491352876797706,
+                           47.629365773857295,  52.637890139143394,  60.105112094166572,
+                           60.105112094166572])[:k]
+    elif N == 7:
+        return np.array([  6.735099196687083,  17.083807204748648,  17.083807204748648,
+                           30.643654921220552,  30.643654921220552,  35.397032810525708,
+                           47.100728432751367,  47.100728432751367,  57.017683247909424,
+                           57.017683247909424])[:k]
+    elif N == 8:
+        return np.array([  6.484933493724240,  16.456119030336588,  16.456119030336588,
+                           29.536810903327243,  29.540564727244991,  29.540564727244991,
+                           34.124475285748161,  45.529751487885697,  45.529751487885697,
+                           55.049743550878873])[:k]
+    else:
+        raise ValueError("eigenvalues not available for this N")
+
+def cut_square_eigs(k, r=0.25):
+    """The first 10 Dirichlet eigenvalues of a unit square with one corner
+    cut by a circular arc of radius r (computed via
+    benchmarks/reference/cut_square.py, MPS with a pure Fourier-Bessel basis
+    -- all remaining corners are regular right angles). Accurate to at
+    least 6.4 digits for r=0.25 (n_basis=320); accurate to at least 9.1
+    digits for r=0.5 (n_basis=320, close to the 10+ digit target)."""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+    if r == 0.25:
+        return np.array([ 20.585592337197024,  49.422034168078973,  53.607796386908106,
+                           84.371488667211239,  99.437928066752903, 104.562833789125236,
+                          129.187535527364219, 146.994370017546117, 170.060990914169764,
+                          170.553669971897790])[:k]
+    elif r == 0.5:
+        return np.array([ 28.081015645274604,  55.146340053352930,  72.407039289994984,
+                          100.899496342046007, 115.233911594759078, 139.429979543240051,
+                          153.042769322697268, 182.635738771611955, 191.634273757009765,
+                          202.708585647789022])[:k]
+    else:
+        raise ValueError("eigenvalues not available for this r")
+
+def mushroom_eigs(k, a=1.0, b=1.0, r=1.5):
+    """The first 10 Dirichlet eigenvalues of mushroom(a,b,r) -- a half-disk
+    cap on a rectangular stem, with two 270-degree reentrant corners at the
+    junction (computed via benchmarks/reference/mushroom.py, MPS with a
+    mixed Fourier-Bessel + fundamental-solution basis). Accurate to at
+    least 11.3 digits."""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+    if a == 1.0 and b == 1.0 and r == 1.5:
+        return np.array([  5.497868889097452,  11.507908981960103,  13.363962538819910,
+                           18.067786790669235,  20.805793683510373,  25.550152545706617,
+                           29.124676104888923,  32.589926048677256,  34.194889649910934,
+                           41.911982648353757])[:k]
+    else:
+        raise ValueError("eigenvalues not available for this a,b,r triple")
+
+def H_shape_eigs(k):
+    """The first 10 Dirichlet eigenvalues of the fixed 12-vertex H-shaped
+    domain (4 reentrant 270-degree corners; computed via
+    benchmarks/reference/H_shape.py, MPS with a mixed Fourier-Bessel +
+    fundamental-solution basis). Accurate to at least 7.8 digits
+    (n_basis=320), except index 6 (0-indexed), lambda=19.739208802178766
+    (suspiciously close to 2*pi^2 -- likely a mode that vanishes on the
+    connecting web and is effectively an exact rectangle eigenvalue), which
+    reaches 13.3 digits."""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+    return np.array([  7.733088853276283,   8.551726848574045,  13.927633223859791,
+                       13.931597881917137,  14.305229961336140,  17.706735223095627,
+                       19.739208802178766,  24.788709817219047,  26.370982345700579,
+                       26.423167326708011])[:k]
+
+def chevron_eigs(k, h1=1.0, h2=2.0):
+    """The first 10 eigenvalues of the chevron with heights h1,h2.
+
+    h1=1,h2=2 is accurate to 12 digits (an earlier, independently-derived
+    table). The other 3 pairs (computed via benchmarks/reference/chevron.py
+    at n_basis=160) are much less precise -- only ~5-7 digits for
+    h1=1,h2=1.5/2.0, and ~3-4 digits for h1=2,h2=3/4 -- because their
+    sharpest corner (as small as ~11 degrees) genuinely needs much more
+    basis than is practical to solve quickly at this Fourier-Bessel order
+    (see that script's module docstring and TUNING_LOG.md for the several
+    approaches tried and ruled out: corner-order reweighting, denser
+    collocation, and moderate basis increases all confirmed this is a slow-
+    convergence resolution limit, not a quick fix; h1=1,h2=1.25 was
+    excluded outright as too hard, similar to why geometry.spiral() is
+    excluded from the benchmark set)."""
+    if k > 10:
+        raise ValueError("Only the first 10 eigenvalues are available")
+
     if h1 == 1 and h2 == 2:
         return np.array([ 39.66587536762846,  77.66316267381548,  81.88608149069968,
                         111.42970385691103, 120.59489370950362, 152.06601346806502,
                         161.16007983417921, 179.80395817996902, 204.7047973867004 ,
                         205.98199724200455])[:k]
+    elif h1 == 1 and h2 == 1.5:
+        return np.array([113.734766669427927, 189.448519906295729, 214.171972707017147,
+                          272.053387695407821, 283.244291179057882, 348.908624511603080,
+                          355.061155405508714, 428.693725570045387, 438.828078645126823,
+                          518.577130919274964])[:k]
+    elif h1 == 2 and h2 == 3:
+        return np.array([ 64.708985605874176, 121.539374925198445, 130.253934421114678,
+                          155.535111621981400, 173.830602900292064, 194.130498772824097,
+                          214.340324596339258, 226.620355923715977, 253.734091427685115,
+                          263.032759596165249])[:k]
+    elif h1 == 2 and h2 == 4:
+        return np.array([ 24.427905596255293,  43.891947613356443,  56.871718718195481,
+                           63.509810642063812,  77.629441744211917,  79.004363501607074,
+                           96.362085037989488,  98.349053725219605, 112.019515962249514,
+                          139.714706538389208])[:k]
     else:
         raise ValueError("eigenvalues not available for this h1,h2 pair")
 
 def iso_tri_eigs(k, h=1.0):
-    """The first 10 eigenvalues of the isosceles triangle, accurate to 12 digits"""
+    """The first 10 eigenvalues of the isosceles triangle (base 2, height h),
+    computed via MPS (benchmarks/reference/iso_tri.py). Accuracy varies by
+    height (worst tension-implied digit count in each set): h=0.5 ~10.8
+    digits, h=1.0 ~13.0 digits, h=2.0 ~12.0 digits, h=4.0 ~11.8 digits,
+    h=8.0 ~11.3 digits (all comfortably at or above the 10-digit target,
+    n_basis=120). h=16.0 and h=20.0 were not re-verified with the improved
+    pipeline (h=16 got unusually slow, see iso_tri.py) -- their values are
+    from an earlier, less careful solve: h=16 ~7.8 digits, h=20 ~12
+    digits."""
     if k > 10:
         raise ValueError("Only the first 10 eigenvalues are available")
-    if h==20.0:
+    if h==0.5:
+        return np.array([ 67.349455544425652, 111.036404225384885, 151.473895577570715,
+                          199.539129893408813, 221.691797716339380, 253.997396523095404,
+                          298.689466549538338, 325.281558433280395, 357.434635325396926,
+                          394.821748879388792])[:k]
+    elif h==1.0:
+        return np.array([ 24.674011002723478,  49.348022005446687,  64.152428607080637,
+                           83.891637409259246,  98.696044010893758, 123.370055013616835,
+                          128.304857214161217, 143.109263815796027, 167.783274818519516,
+                          182.587681420152677])[:k]
+    elif h==2.0:
+        return np.array([ 11.456820359432427,  25.694945637505505,  27.759101056346598,
+                           44.337951419766441,  49.884782473352665,  50.842728850066379,
+                           68.247856785464919,  74.672366637382709,  81.112315003885087,
+                           81.320389608320156])[:k]
+    elif h==4.0:
+        return np.array([  6.726526574153285,  12.333521955030589,  19.071767666600952,
+                           19.074704193994812,  27.005508461745229,  29.098013503262695,
+                           36.056833854046154,  37.246116430239411,  39.954321850759705,
+                           46.498064800315710])[:k]
+    elif h==8.0:
+        return np.array([  4.719098710033834,   7.227058278292141,   9.950620918236773,
+                           12.946772679734305,  15.010378933747058,  16.233055784524762,
+                           19.816898996168046,  20.000479851124531,  23.701929385100062,
+                           24.972774558019974])[:k]
+    elif h==16.0:
+        return np.array([  3.741313107211302,   4.988436354293714,   6.231679923092005,
+                            7.517545607747248,   8.861653817098958,  10.271173428254006,
+                           11.749965646537081,  12.884145973648904,  13.300328814508363,
+                           14.923728877388257])[:k]
+    elif h==20.0:
         return np.array([ 3.538204270133983,  4.552162970620473,  5.539932740921296,
                         6.544007125902493,  7.578949068369423,  8.651562362007823,
                         9.765571848342804, 10.923228519465912, 12.125988718163306,

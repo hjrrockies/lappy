@@ -1,0 +1,25 @@
+{
+  "config": {
+    "domain_name": "iso_right_tri",
+    "domain_params": {
+      "l": 1.0
+    },
+    "n_eigs": 10,
+    "n_fb": 50,
+    "n_fs": 50,
+    "fb_strategy": "singular_angle_weighted",
+    "fs_d_strategy": "fixed",
+    "fs_d": 0.15,
+    "fs_d_scale": 0.15,
+    "fs_seg_strategy": "length_weighted",
+    "bdry_pts_factor": 2.0,
+    "int_pts_factor": 1.0,
+    "rtol": 1e-14,
+    "ltol": 1e-15,
+    "ppl": 10
+  },
+  "n_basis_actual": 100,
+  "n_bdry_pts": 201,
+  "n_int_pts": 100,
+  "has_rel_errors": true
+}

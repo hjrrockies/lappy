@@ -1,0 +1,23 @@
+{
+  "config": {
+    "domain_name": "eq_tri",
+    "domain_params": {},
+    "n_eigs": 10,
+    "n_fb": 25,
+    "n_fs": 25,
+    "fb_strategy": "singular_angle_weighted",
+    "fs_d_strategy": "fixed",
+    "fs_d": 0.15,
+    "fs_d_scale": 0.15,
+    "fs_seg_strategy": "length_weighted",
+    "bdry_pts_factor": 2.0,
+    "int_pts_factor": 1.0,
+    "rtol": 1e-14,
+    "ltol": 1e-15,
+    "ppl": 10
+  },
+  "n_basis_actual": 50,
+  "n_bdry_pts": 99,
+  "n_int_pts": 50,
+  "has_rel_errors": true
+}

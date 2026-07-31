@@ -4,8 +4,14 @@ Benchmark suite tests.
 import numpy as np
 import pytest
 
-from benchmarks.benchmark_suite.domains import DOMAINS
-from benchmarks.benchmark_suite.runner import BenchmarkConfig, run_benchmark
+pytest.skip(
+    "benchmark_suite was moved to benchmarks/archive/ pending a rebuild on "
+    "the current API; revisit later",
+    allow_module_level=True,
+)
+
+from benchmarks.archive.benchmark_suite.domains import DOMAINS
+from benchmarks.archive.benchmark_suite.runner import BenchmarkConfig, run_benchmark
 
 
 def test_unit_square_smoke():

@@ -1,94 +1,50 @@
+"""Reference Dirichlet eigenvalues for chevron(h1, h2): a sharp reentrant
+corner whose severity grows with h2/h1. All 4 corners are singular, so
+make_default_basis takes the mixed FB+FS path. Existing
+lappy.reference.chevron_eigs only covers h1=1,h2=2; this covers the fuller
+family used in the (now-archived) benchmark_suite registry."""
 import numpy as np
+from lappy import geometry
+from common import escalate_and_solve_v2, report
 
-def chevron(h1, h2, n_eigs, n_fb_basis, n_fs_basis, ltol, rtol, ppl):
-    # chevron domain: Dirichlet eigenvalues and error estimates
-    from lappy import geometry, FourierBesselBasis, FundamentalBasis, asymp
-    from benchmarking import estimate_peon, precise_eigs
+N_EIGS = 10
+# DIGIT CEILING: 5.2-6.3 digits for h1=1,h2=1.5; 6.1-7.1 for h1=1,h2=2.0;
+# 3.7-4.6 for h1=2,h2=3.0; 4.2-5.0 for h1=2,h2=4.0 -- all at n_basis=160,
+# still well short of the 10-12 digit target. WHY: chevron(1,1.5) has TWO
+# corners at only ~11.3 degrees each (not just the 270-degree reentrant
+# one); the default fb_corner_fraction weighting gives them just 3.1% each
+# of the FB budget (weight ~ angle magnitude, so the 270-degree corner
+# dominates at 75%) -> FB orders [3,43,3,11] at n_basis=120. Tried and
+# ruled out as fixes (see TUNING_LOG.md for detail):
+#   1. Reweighting fb_corner_orders/fs_corner_orders toward the sharp
+#      corners (bypassing make_default_basis) -- made things slower, not
+#      better: raw order-count at an already-sharp corner produces huge
+#      individual Bessel orders (order=21 at 11.3 degrees means exponents
+#      up to ~334) without filling in any missing intermediate resolution.
+#   2. 3x denser collocation (bdry_mult, int_npts) with default order
+#      allocation -- no change (diagnose() shows n_reg/n ~79% either way).
+#   3. Moderate n_basis increase (120->160) -- real but slow improvement
+#      (~0.7-1.2 extra digits for a 33% basis increase), consistent with
+#      needing much more basis (400+) to reach 10 digits, which is known to
+#      hit the slow-Bessel-evaluation wall (n_basis=240 didn't finish in
+#      15+ minutes for these corners in the first pass).
+#
+# h1=1,h2=1.25 excluded outright: its two acute corners are only ~6.3
+# degrees (even sharper). Solves either fail to converge (n_basis=60:
+# 0/10 eigenvalues found) or become extremely slow (n_basis=120: didn't
+# finish in 15+ minutes) -- similar in spirit to why spiral() was excluded
+# from the whole benchmark set.
+PARAMS = [(1.0, 1.5), (1.0, 2.0), (2.0, 3.0), (2.0, 4.0)]
+N_BASIS_LIST = [60, 120, 160]
 
-    # get domain (Dirichlet and Neumann boundary)
-    chev = geometry.chevron(h1, h2)
-    chev_neu = geometry.chevron(h1, h2, bc='neu')
 
-    # basis info
-    int_angles = chev.int_angles
-    orders = np.ceil(n_fb_basis*int_angles/int_angles.sum()).astype(int)
-    print(orders)
+def run(h1, h2, n_eigs=N_EIGS):
+    dom = geometry.chevron(h1, h2)
+    n_basis, eigs, mults, tensions = escalate_and_solve_v2(dom, N_BASIS_LIST, n_eigs)
+    report(f'chevron(h1={h1}, h2={h2})  [n_basis={n_basis}]', eigs, tensions)
+    return eigs, tensions
 
-    lens = np.array([seg.len for seg in chev.bdry.segments])
-    sources_per_seg = np.ceil(n_fs_basis*lens/lens.sum()).astype(int)
-    print(sources_per_seg)
-
-    # bdry and int pts
-    n_basis = n_fb_basis + n_fs_basis
-    n_bdry = 2*n_basis
-    n_per_seg = np.ceil(n_bdry*lens/lens.sum()).astype(int)
-    bdry_pts, bdry_normals = chev.bdry_data(n_per_seg)[:2]
-    int_pts = chev.int_pts(npts_rand=n_basis)
-    print(f"len(basis) = {n_basis}")
-    print(f"len(bdry_pts)={len(bdry_pts)}, len(int_pts)={len(int_pts)}")
-
-    # bdry and int nodes
-    bdry_nodes = chev.bdry_pts(n_per_seg, weights=True)
-    int_nodes = chev.int_pts('mesh', mesh_size=0.25)
-    print(f"len(bdry_nodes)={len(bdry_nodes)}, len(int_nodes)={len(int_nodes)}")
-
-    # estimate Poisson extension operator norm
-    # C(Omega) <= 1/sqrt(inradius(Omega)*mu_1(Omega))
-    # where mu_1(Omega) is the first nonzero Neumann eigenvalue
-    print("Estimating Poisson extension operator norm")
-    fb_basis_neu = FourierBesselBasis.from_domain(chev_neu, orders)
-    d_neu = 2*np.pi/asymp.weyl_est(1, chev_neu)
-    fs_basis_neu = FundamentalBasis.from_domain(chev_neu, sources_per_seg, d=d_neu)
-    basis_neu = (fb_basis_neu + fs_basis_neu).to_normalized(bdry_pts + int_pts)
-    peon_bound = estimate_peon(chev_neu, basis_neu, bdry_pts, int_pts, bdry_normals, ltol, rtol, ppl, verbose=2)
-    print(f"estimated bound on C(Omega):", peon_bound)
-
-    # solve for Dirichlet eigs
-    print("Solving for Dirichlet eigenvalues")
-    fb_basis = FourierBesselBasis.from_domain(chev, orders).to_normalized(bdry_pts + int_pts)
-    d = 2*np.pi/asymp.weyl_est(1, chev)
-    fs_basis = FundamentalBasis.from_domain(chev, sources_per_seg, d=d)
-    basis = (fb_basis + fs_basis).to_normalized(bdry_pts + int_pts)
-    eigs, tensions = precise_eigs(n_eigs, chev, basis, bdry_pts, int_pts, bdry_nodes, int_nodes, ltol, rtol, ppl, 2)
-
-    # compute estimated relative error bound
-    relerr_est = tensions*peon_bound
-
-    print(eigs)
-    print(relerr_est)
-
-    return eigs, tensions, relerr_est, peon_bound
-    
 
 if __name__ == "__main__":
-    import argparse
-    import numpy as np
-    
-    parser = argparse.ArgumentParser(description="chevron domain dirichlet eigenvalues")
-    parser.add_argument("--h1", type=float, help="h1 param", default=1.0)
-    parser.add_argument("--h2", type=float, help="h2 param", default=2.0)
-    parser.add_argument("n_eigs", type=int, help="Number of eigenvalues to compute")
-    parser.add_argument("n_fb_basis", type=int, help="Number of FB basis functions to use")
-    parser.add_argument("n_fs_basis", type=int, help="Number of FS basis functions to use")
-    parser.add_argument("--ltol", type=float, help="Eigenvalue relative tolerance", default=5e-16)
-    parser.add_argument("--rtol", type=float, help="Regularization tolerance", default=1e-14)
-    parser.add_argument("--ppl", type=int, help="points per level", default=10)
-    parser.add_argument("--outfile", type=str, help="results outfile", default="")
-
-    args = parser.parse_args()
-    h1 = args.h1
-    h2 = args.h2
-    n_eigs = args.n_eigs
-    n_fb_basis = args.n_fb_basis
-    n_fs_basis = args.n_fs_basis
-    ltol = args.ltol
-    rtol = args.rtol
-    ppl = args.ppl
-    if args.outfile == "":
-        outfile = f"chevron_{h1}_{h2}_e{n_eigs}_fb{n_fb_basis}_fs{n_fs_basis}"
-    else:
-        outfile = args.outfile
-    
-    eigs, tensions, relerr_est, peon_bound = chevron(h1, h2, n_eigs, n_fb_basis, n_fs_basis, ltol, rtol, ppl)
-    # save results
-    np.savez(outfile, eigs=eigs, tensions=tensions, relerr_est=relerr_est, peon_bound=peon_bound)
+    for h1, h2 in PARAMS:
+        run(h1, h2)
