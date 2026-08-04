@@ -86,7 +86,8 @@ def weyl_count(domain, lam):
 
 
 def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
-                      max_recurse=8, n_pts_per_eig=11):
+                      max_recurse=8, n_pts_per_eig=11, int_npts=None,
+                      bdry_mult=2):
     """Returns a result dict. Raises on failure; the caller records that."""
     from lappy.symmetry import domain_symmetry
     from common import build_solver, manual_solve, polish_eigs, lambda_window
@@ -97,14 +98,22 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
     grp = entry.group() if use_sym else None
 
     if grp is not None:
+        # int_npts defaults inside build_sym_solver to n_basis//|G|, i.e.
+        # about ONE interior point per basis column, while the boundary gets
+        # 2x oversampling. The interior block is what rules out the trivial
+        # solution, so at ratio 1 it is barely determined and the answer
+        # depends on which points happened to be drawn -- the suspected cause
+        # of the seed variance on iso_right_tri and GWW.
         eigs, sectors, tens, solvers = solve_sym(
             dom, grp, n_basis, n_eigs, return_solvers=True, verbose=0,
-            max_recurse=max_recurse, n_pts_per_eig=n_pts_per_eig)
+            max_recurse=max_recurse, n_pts_per_eig=n_pts_per_eig,
+            int_npts=int_npts, bdry_mult=bdry_mult)
         recs = certify_sym(solvers, dom, eigs, sectors, verbose=False)
         method = f'symmetry({grp.name}, |G|={grp.order})'
         mults = None
     else:
-        solver = build_solver(dom, n_basis, int_npts=max(2 * n_basis, 500))
+        solver = build_solver(dom, n_basis, bdry_mult=bdry_mult,
+                              int_npts=int_npts or max(2 * n_basis, 500))
         a, b = lambda_window(dom, n_eigs)
         e, mults, _ = manual_solve(solver, a, b,
                                    max(n_pts_per_eig * n_eigs, 50),
@@ -175,6 +184,10 @@ def main(argv=None):
     ap.add_argument('--no-sym', action='store_true')
     ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--max-recurse', type=int, default=8)
+    ap.add_argument('--int-npts', type=int, default=None,
+                    help='interior collocation points (per sector); '
+                         'default is ~1 per basis column')
+    ap.add_argument('--bdry-mult', type=int, default=2)
     ap.add_argument('--seed', type=int, default=0,
                     help='seeds numpy global RNG; interior collocation '
                          'points are drawn randomly, so results are not '
@@ -204,7 +217,9 @@ def main(argv=None):
         out = solve_and_certify(entry, n_basis, n_eigs,
                                 use_sym=not args.no_sym, n_workers=args.workers,
                                 max_recurse=args.max_recurse,
-                                n_pts_per_eig=args.pts_per_eig)
+                                n_pts_per_eig=args.pts_per_eig,
+                                int_npts=args.int_npts,
+                                bdry_mult=args.bdry_mult)
         out['ok'] = True
     except Exception as exc:
         out = dict(key=args.key, n_basis=n_basis, n_eigs=n_eigs, ok=False,
@@ -212,6 +227,8 @@ def main(argv=None):
                    traceback=traceback.format_exc()[-3000:])
     out['tag'] = args.tag
     out['seed'] = args.seed
+    out['int_npts'] = args.int_npts
+    out['bdry_mult'] = args.bdry_mult
     out['seconds'] = time.time() - t0
     out['use_sym'] = not args.no_sym
     with open(path, 'w') as fh:

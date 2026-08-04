@@ -5,15 +5,15 @@
   "best_n_basis": 320,
   "best_tag": "base",
   "notes": "",
-  "status": "running"
+  "status": "short"
  },
  "GWW2": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 5.6802840628421185,
   "best_n_basis": 320,
   "best_tag": "base",
   "notes": "",
-  "status": "short"
+  "status": "running"
  },
  "H_shape": {
   "attempts": 3,

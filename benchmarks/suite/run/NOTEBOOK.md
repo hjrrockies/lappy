@@ -522,3 +522,34 @@ That gives a cheap, direct test that needs no reference values at all: solve at
 several seeds and report the spread. Worth running across the suite as a
 conditioning measure, and it may explain `iso_right_tri` and `GWW1`/`GWW2`
 better than any basis argument.
+
+### A concrete hypothesis for the seed variance: the interior block is starved
+
+`build_sym_solver` defaults `int_npts = max(n_basis // group.order, 40)` —
+about **one interior point per basis column** — while the boundary gets
+`bdry_mult=2`, i.e. 2x oversampling. Measured ratios:
+
+    domain          n_basis  |G|   int_pts   sector cols   ratio
+    iso_right_tri     120     2       60          60       1.00
+    eq_tri            120     2       60          60       1.00
+    reg_ngon_6        320     4       80          80       1.00
+    square            120     4       40          30       1.33
+    GWW1 (no sym)     320     1      640         320       2.00
+
+In the MPS GSVD the interior block `A_I` is what rules out the trivial
+solution: the tension is the ratio of boundary norm to interior norm, so `A_I`
+has to *pin down* the interior size of the candidate eigenfunction. At one
+point per column that system is barely determined, and which points you happen
+to draw decides the answer — exactly the observed seed sensitivity.
+
+`--int-npts` and `--bdry-mult` are now exposed on the runner to test this. The
+experiment (queued for when the machine is free — one job at a time):
+`iso_right_tri` at int_npts = 60, 120, 240, 480, several seeds each. Prediction:
+the **spread across seeds collapses** as int_npts grows, and the mean accuracy
+rises. If it holds, the default is simply too low and this is a real, cheap
+method improvement, not a domain-specific tweak.
+
+Note `eq_tri` also sits at ratio 1.00 yet reaches 14.5 digits, so a starved
+interior block is not *sufficient* to cause trouble — it presumably only bites
+when the basis is otherwise poorly conditioned. That is testable in the same
+experiment by including a domain from each camp.
