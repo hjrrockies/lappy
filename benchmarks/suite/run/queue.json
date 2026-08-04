@@ -9,11 +9,11 @@
  },
  "GWW2": {
   "attempts": 1,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "best_digits": 5.6802840628421185,
+  "best_n_basis": 320,
+  "best_tag": "base",
   "notes": "",
-  "status": "running"
+  "status": "short"
  },
  "H_shape": {
   "attempts": 3,
@@ -40,7 +40,7 @@
   "status": "pending"
  },
  "chevron_1_15": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -48,7 +48,7 @@
   "status": "pending"
  },
  "chevron_1_2": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -56,7 +56,7 @@
   "status": "pending"
  },
  "chevron_2_3": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -236,19 +236,19 @@
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "swap guard: system swap 5580MB exceeded baseline+4000MB",
-  "status": "failed"
- },
- "reg_ngon_5": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
   "notes": "",
   "status": "pending"
  },
+ "reg_ngon_5": {
+  "attempts": 1,
+  "best_digits": 12.293169480506116,
+  "best_n_basis": 240,
+  "best_tag": "base",
+  "notes": "",
+  "status": "done"
+ },
  "reg_ngon_6": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -256,15 +256,15 @@
   "status": "pending"
  },
  "reg_ngon_7": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 11.739214102847775,
+  "best_n_basis": 240,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "reg_ngon_8": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,

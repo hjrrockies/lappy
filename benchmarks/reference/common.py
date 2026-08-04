@@ -101,7 +101,7 @@ def polish_eigs(solver, eigs, ltol=1e-14, bracket_rel_width=None):
 
 
 def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
-                 max_recurse=8,
+                 max_recurse=8, clear_every=32,
                   ttol=None, n_workers=1, verbose=0):
     """Find eigenvalues in [a, b] by calling opt.bracket_mins /
     opt.minimize_on_bracket / mps.estimate_multiplicity directly, instead of
@@ -135,7 +135,22 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
     ttol = solver.ttol if ttol is None else ttol
     lamgrid = mps.make_lamgrid(a, b, n_pts)
 
+    # Bound cache growth during the search. bracket_mins evaluates thousands
+    # of DISTINCT lambdas (fill_refinement reuses known values explicitly, so
+    # genuine cache hits here are rare), and each one lands in caches sized in
+    # entries: _tensions_scalar keeps 256 and NormalizedBasis.norms 128. At
+    # n_basis=320 each entry is a few MB, so one sector's search can hold ~1GB
+    # -- times one solver per symmetry sector, all kept alive for certification.
+    # reg_ngon_6 reached the 4GB swap budget 25 seconds in this way.
+    # Clearing every `clear_every` evaluations caps the footprint at roughly
+    # that many matrices while costing almost nothing, since there was nothing
+    # to reuse.
+    _neval = [0]
+
     def tensions2(lam):
+        _neval[0] += 1
+        if clear_every and _neval[0] % clear_every == 0:
+            clear_instance_caches(solver)
         return solver.tensions(lam)[:2]
 
     if n_workers > 1:

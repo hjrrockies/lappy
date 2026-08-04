@@ -398,3 +398,74 @@ table that is wrong in every entry after it, with a *valid* certified bound on
 each surviving value and only a ~1 discrepancy in the Weyl count. That is the
 most dangerous failure mode in this whole exercise, and the analytic tier is
 the only instrument that detects it reliably.
+
+### Calibrating the certified bound against truth
+
+The GWW pair gives a correctness check that needs no reference table at all:
+GWW1 and GWW2 are isospectral, so they must agree with each other.
+
+    GWW1 vs GWW2, per mode : 10.6 10.0 7.4 11.9 6.7 8.7 10.8 10.0 14.3 11.5
+    worst agreement        : 6.7 digits
+    vs Driscoll's table    : GWW1 7.4, GWW2 6.7 digits
+    certified (Moler-Payne): GWW1 6.6, GWW2 5.7 digits
+
+Collecting every case where truth is independently known:
+
+    domain              certified   true    gap
+    sector_sharp_p65      13.1      14.5    1.4
+    sector_sharp_p133     12.9      14.5    1.6
+    sector_reflex         13.5      12.9   -0.6
+    sector_slit           13.6      13.1   -0.5
+    square                13.4      14.5    1.1
+    eq_tri                13.6      14.5    0.9
+    disk                  13.7      14.5    0.8
+    GWW1                   6.6       7.4    0.8
+    GWW2                   5.7       6.7    1.0
+
+**The certified bound runs about 1 digit pessimistic**, and never optimistic by
+more than 0.6 (the two sector cases where it reads high are within the noise of
+a bound that is itself computed in floating point). That is the expected
+behaviour: `boundary_sup` deliberately inflates by the sup-refinement drift and
+`interior_l2` deliberately under-estimates, both erring safe.
+
+Practical consequence for classifying domains: a domain certifying at 7 is
+probably *at* the 8-digit target, and one certifying at 5.7 probably is not.
+I will classify on the certified number, because it is the honest one, but the
+write-up should state the offset so the table is not read as more pessimistic
+than it is.
+
+### Bug 3 — the same cache, a third time: `manual_solve`'s search
+
+`reg_ngon_6` hit the swap budget **25 seconds in**. Sector-solver construction
+was only 140MB (measured), so once again the memory was in the search, not the
+setup.
+
+`bracket_mins` evaluates *thousands* of distinct lambdas — and `fill_refinement`
+explicitly reuses the y-values it already knows, so genuine cache hits during
+the search are rare. Every one of those evaluations nevertheless lands in
+`_tensions_scalar` (256 entries) and `NormalizedBasis.norms` (128). At
+`n_basis=320` that is a few MB each, so a single sector's search holds ~1GB,
+times one solver per sector, all kept alive for certification afterwards.
+
+Fixed by clearing every 32 evaluations inside `manual_solve`'s `tensions2`.
+Costs essentially nothing because there was nothing to reuse.
+**`reg_ngon_6`: 12.8 certified digits, 197s — previously dead at 25s.**
+
+This is the third distinct place the same root cause surfaced (certification
+loop, `polish_eigs`, now the search). The real lesson is upstream of all three:
+**`instance_lru_cache` is sized in entries, which is only safe when entries are
+scalars.** Every one of these caches stores a matrix whose size scales with
+`n_basis` x `n_points`. A `maxsize` in bytes, or simply a much smaller entry
+count for the matrix-valued caches, would have prevented all three. Worth
+proposing as a real change to `lappy/cache.py` rather than three call-site
+workarounds — but that changes existing behaviour, so it is left as a
+recommendation.
+
+### Process error, recorded because it cost real time
+
+I ran `reg_ngon_6` as a test **while the sweep was running**. Two processes
+allocating at once doubled the pressure and tripped the swap guard on three
+innocent domains (`reg_ngon_8`, `chevron_1_15`, `chevron_1_2` — the last drove
+swap to 13GB). Those failures are artifacts of my own contention, not
+properties of those domains; all three were reset to pending and must be
+re-run. **One job at a time on this machine. No exceptions.**
