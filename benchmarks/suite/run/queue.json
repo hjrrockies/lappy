@@ -1,11 +1,11 @@
 {
  "GWW1": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 6.627659961401108,
   "best_n_basis": 320,
   "best_tag": "base",
   "notes": "",
-  "status": "short"
+  "status": "running"
  },
  "GWW2": {
   "attempts": 1,
@@ -133,7 +133,7 @@
   "best_n_basis": 120,
   "best_tag": "base",
   "notes": "swap guard: system swap 6949MB exceeded baseline+4000MB",
-  "status": "running"
+  "status": "short"
  },
  "iso_tri_h05": {
   "attempts": 0,

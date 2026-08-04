@@ -67,10 +67,11 @@ def swap_used_mb():
 SWAP_LIMIT_MB = float(os.environ.get('LAPPY_RUN_SWAP_MB', '4000'))
 
 
-def run_one(key, tag, n_basis, n_eigs, timeout, no_sym=False, workers=1):
+def run_one(key, tag, n_basis, n_eigs, timeout, no_sym=False, workers=1,
+            seed=0):
     os.makedirs(LOGS, exist_ok=True)
     cmd = [sys.executable, '-m', 'benchmarks.suite.runner', key,
-           '--tag', tag, '--workers', str(workers)]
+           '--tag', tag, '--workers', str(workers), '--seed', str(seed)]
     if n_basis:
         cmd += ['--n-basis', str(n_basis)]
     if n_eigs:
@@ -130,6 +131,7 @@ def main(argv=None):
     ap.add_argument('--n-eigs', type=int, default=None)
     ap.add_argument('--timeout', type=int, default=900)
     ap.add_argument('--workers', type=int, default=1)
+    ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--no-sym', action='store_true')
     ap.add_argument('--redo', action='store_true',
                     help='rerun even if already done')
@@ -167,7 +169,8 @@ def main(argv=None):
         save_queue(q)
 
         rc, note, secs = run_one(key, args.tag, args.n_basis, args.n_eigs,
-                                 args.timeout, args.no_sym, args.workers)
+                                 args.timeout, args.no_sym, args.workers,
+                                 seed=args.seed)
         res = read_result(key, args.tag) if rc == 0 else None
 
         if res and res.get('ok'):

@@ -487,3 +487,38 @@ Net operational rules for this run, all learned the expensive way:
   1. One compute job at a time on this machine.
   2. Verify a background job is alive AND advancing before trusting it.
   3. Park diagnosed failures so restarts do not re-pay for them.
+
+---
+
+## Session 5 — the pipeline was not reproducible
+
+`iso_right_tri` returned **4.9, then 4.0, then 2.5** certified digits on three
+successive runs of identical code. Not drift from my edits — genuine run-to-run
+variation.
+
+Cause: interior collocation points come from
+`domain.int_pts(method='random')`, which draws from numpy's **global** RNG
+(`geometry.py:1609`) with no seed. Every run gets a different interior sample.
+`benchmarks/reference/run_sym.py` and `audit.py` already seed `np.random` before
+solving, so the hazard was known; the suite runner simply did not.
+
+Fixed: `--seed` (default 0) on both `runner.py` and `sweep.py`, seeded before
+the solve and recorded in every result JSON.
+
+**Two consequences, one obvious and one not.**
+
+The obvious one: reference values must be reproducible, and until now they were
+not. The 13 already-banked results were produced with unseeded draws. At 12-14
+digits the sample almost certainly does not matter, but "almost certainly" is
+not good enough for a table meant to back tests — the planned final consistent
+re-run will now also be a *seeded* one.
+
+The non-obvious one: **the spread across seeds is a diagnostic in its own
+right.** A domain whose accuracy swings 2.4 digits with the interior sample is
+telling you the collocation system is under-determined there — the interior
+points are not pinning down the solution, so which ones you happen to draw
+decides the answer. A well-conditioned domain should be nearly seed-independent.
+That gives a cheap, direct test that needs no reference values at all: solve at
+several seeds and report the spread. Worth running across the suite as a
+conditioning measure, and it may explain `iso_right_tri` and `GWW1`/`GWW2`
+better than any basis argument.

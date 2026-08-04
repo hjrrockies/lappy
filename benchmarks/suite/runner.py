@@ -175,6 +175,10 @@ def main(argv=None):
     ap.add_argument('--no-sym', action='store_true')
     ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--max-recurse', type=int, default=8)
+    ap.add_argument('--seed', type=int, default=0,
+                    help='seeds numpy global RNG; interior collocation '
+                         'points are drawn randomly, so results are not '
+                         'reproducible without this')
     ap.add_argument('--pts-per-eig', type=int, default=11)
     args = ap.parse_args(argv)
 
@@ -184,6 +188,15 @@ def main(argv=None):
     n_eigs = args.n_eigs or entry.n_eigs
 
     _cap_address_space()
+    # Interior collocation points come from domain.int_pts(method='random'),
+    # which uses numpy's GLOBAL RNG (lappy.geometry:1609). Without seeding,
+    # every run draws a different sample and the answer moves: iso_right_tri
+    # returned 4.9, 4.0 and 2.5 certified digits on three successive runs of
+    # identical code. Reference values have to be reproducible, so seed it and
+    # record the seed. The spread across seeds is also a genuine diagnostic --
+    # a domain whose accuracy depends strongly on the interior sample is
+    # telling you the system is under-determined, not that it is unlucky.
+    np.random.seed(args.seed)
     os.makedirs(RESULTS, exist_ok=True)
     path = os.path.join(RESULTS, f'{args.key}__{args.tag}.json')
     t0 = time.time()
@@ -198,6 +211,7 @@ def main(argv=None):
                    error=f'{type(exc).__name__}: {exc}',
                    traceback=traceback.format_exc()[-3000:])
     out['tag'] = args.tag
+    out['seed'] = args.seed
     out['seconds'] = time.time() - t0
     out['use_sym'] = not args.no_sym
     with open(path, 'w') as fh:
