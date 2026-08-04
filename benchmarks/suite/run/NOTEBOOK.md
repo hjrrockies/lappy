@@ -723,3 +723,44 @@ corners whose expansions cannot see each other are not.
 The two families hold symmetry order (2), basis construction, and n_basis
 fixed while differing in corner count, so the comparison is about as controlled
 as this gets without building domains specifically for it.
+
+---
+
+## The fs_frac test was invalid — and that is instructive
+
+Tested the §2 prediction (multi-sharp-corner domains need support *between* the
+corners) by sweeping `fs_frac` on `parallelogram_p65`, seed 0, n_basis=320:
+
+    fs_frac   0.3    0.5    0.7    0.85
+    digits    7.6    7.1    7.4    7.0
+
+Flat and non-monotone over a 0.6-digit range — no effect. Taken at face value
+that falsifies the prediction.
+
+**It does not, because the experiment did not test it.** In
+`make_default_basis`, the multi-singular-corner branch builds
+
+    fs_basis = FundamentalBasis.by_corners(domain, sources_per_corner, ...)
+
+and `by_corners` places sources on outward rays from each corner, exponentially
+clustered *at the corners*. So both blocks — Fourier--Bessel and fundamental —
+are corner-localized. Raising `fs_frac` trades corner-localized functions of one
+kind for corner-localized functions of another. The middle of the domain gets no
+new support either way, which is exactly why nothing moved.
+
+The mechanism in §2 predicts that the near-null space lives *between* the sharp
+corners. To test it one needs sources that are actually there:
+`FundamentalBasis.by_boundary(domain, n_per_seg, d=...)` distributes sources
+along an offset boundary rather than clustering them at corners, and interior
+sources would be stronger still.
+
+So §2 remains **untested**, not refuted. Recorded this way deliberately: the
+flat sweep is real evidence about `fs_frac` as a knob (it is not the lever), and
+no evidence at all about the mechanism.
+
+It also sharpens the proposal. If the default basis for a multi-singular-corner
+domain puts *everything* at the corners, then for two distant sharp corners it
+has no representation of the region between them beyond whatever the corner
+expansions' slowly-decaying tails provide — which at `p ~ 6.5` is nearly
+nothing. That is a concrete, checkable deficiency in `make_default_basis`, and a
+better-specified proposal than "raise fs_frac".
