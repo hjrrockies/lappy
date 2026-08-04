@@ -940,3 +940,243 @@ Regression tests in `tests/test_solver_robustness.py` (10 tests) cover all four.
 They save and restore numpy's global RNG state, because other test modules draw
 interior points from it unseeded and reseeding changed their results depending
 on test order — itself an argument for threading `rng` everywhere.
+
+---
+
+## Rellich exact interior norm: correct, elegant, and useless here
+
+The MPS tension is a GSVD of the boundary block against an interior block whose
+only job is to supply ``||u||_{L2(Omega)}``. That block is Monte-Carlo
+collocation, which is why the answer moves with the draw. The Rellich identity
+computes the same Gram exactly from boundary data alone, so substituting a
+factor of it removes the random draw from the search entirely. Worth trying: it
+attacks the seed-variance mechanism at its root.
+
+**It works.** The modified tension gives clean wells -- 4.0e-15 at
+lambda=49.348022 and 5.6e-15 at 98.696044, against O(1e-2) away from
+eigenvalues.
+
+**It is unaffordable as the search objective.** The basis depends on lambda, so
+the Gram must be rebuilt and eigendecomposed at every evaluation. Measured: >30
+minutes without finishing, for a domain that takes 165s normally. Killed.
+
+**And where it is affordable, it changes nothing.** Hybrid: sampled interior to
+locate eigenvalues, exact Rellich Gram to refine them (~24 golden-section
+evaluations each, so the cost is negligible). Same coarse locations into both
+refinements, so the comparison isolates the interior norm:
+
+    iso_right_tri  seed 0:  sampled-polish 14.4   exact-polish 14.4   +0.0
+    iso_right_tri  seed 1:  sampled-polish 14.5   exact-polish 14.5   +0.0
+
+Zero improvement, twice. The reason is simple in hindsight: once the interior is
+adequately sampled, its error is far below the level at which the final digits
+are decided, so making it *exact* buys nothing. The sampled interior norm is
+only a problem when it is **starved**, and then the fix is more points, not
+better mathematics.
+
+Recorded as a dead end so the idea is not re-attempted. Note it may still matter
+for a domain where interior sampling is genuinely hard -- a very thin domain
+where rejection sampling struggles -- but it is not a general accuracy lever.
+
+## The finding hiding inside the negative result
+
+Both hybrid runs reached **14.4-14.5 digits on `iso_right_tri`**, a domain the
+pipeline reports at 5.8. And they were seed-stable: spread **0.1 digits** across
+two seeds, versus **3.3** through the pipeline.
+
+The experiment ran full-domain with ``int_npts = max(2*n_basis, 500) = 500``.
+The pipeline runs the symmetry path, where ``build_sym_solver`` defaults to
+
+    int_npts = max(n_basis // group.order, 40)    # = 60 here
+
+i.e. about **one interior point per basis column**, while the boundary gets 2x
+oversampling. That is the interior-starvation hypothesis from earlier in the
+run, which I set aside when GWW did not fit it -- wrongly, because GWW runs
+*full-domain* at ratio 2.0 and was never a test of the symmetry path at all.
+
+If the interior sweep confirms it, this is a one-line default change affecting
+every symmetric domain in the suite, which is most of them.
+
+---
+
+## Inexact Rellich interior block: works, but abandoned by decision
+
+Following a suggestion to replace the interior collocation with something merely
+*bounded away from zero* rather than exact. For a Dirichlet domain the Rellich
+identity collapses to one term, so
+
+    ||u||^2 = ||B(lam) c||^2,   B = (2 lam)^{-1/2} diag(sqrt(w * rN)) A_N(lam)
+
+with ``rN = (x - x0).n``. **The Gram never needs forming** -- which was the
+entire cost of the exact route (an O(n_quad n^2) assembly plus O(n^3)
+factorization per lambda, >30 min vs 165s). ``B`` is one normal-derivative
+Vandermonde on points we already have.
+
+Measured on `iso_right_tri`, n_basis=120:
+
+    per-lambda block cost:  sampled 39.6 ms   rellich 29.0 ms
+    true digits (3 seeds):  sampled 14.4      rellich 14.5/14.4/14.5
+
+Cheaper and equally accurate. But **it requires the domain to be star-shaped
+about x0** (``rN >= 0``), and the three hardest domains are precisely the ones
+that fail:
+
+    L_shape       min rN +1.0000    0.0% negative   ok
+    reg_ngon_6    min rN +0.8660    0.0% negative   ok
+    mushroom      min rN +0.2496    0.0% negative   ok
+    eq_tri        min rN +0.2165    0.0% negative   ok
+    GWW1          min rN -1.0000   20.0% negative   FAILS
+    H_shape       min rN -0.5000   22.6% negative   FAILS
+    chevron_1_15  min rN -0.1768   33.9% negative   FAILS
+
+(Note `L_shape` passes -- reentrant does not imply non-star-shaped.)
+
+**Dropped, on the user's call**: a technique that needs star-shapedness works
+mostly where things already work. Recorded for completeness, not as a
+recommendation.
+
+## And the interior block was never the bottleneck anyway
+
+The starvation test settles it. Full-domain, `iso_right_tri`, n_basis=120:
+
+    500 interior points -> 14.4 true digits
+     60 interior points -> 14.4 true digits
+
+Starving the sampled interior block by 8x costs **nothing**. So the
+"interior starvation" hypothesis is dead: the interior block is not what limits
+these domains, and neither an exact nor an inexact replacement for it can help.
+
+That leaves one candidate for the ~7-digit gap, and it is a big one:
+
+    full-domain,   n_basis=120 -> 14.4 true digits
+    symmetry path, n_basis=120 ->  7.1 true digits
+
+**The symmetry path costs ~7 digits on this domain at identical basis size.**
+That is the opposite of its documented purpose -- `symmetry.py` argues each
+sector needs |G| times fewer functions for the same resolution and should
+therefore be *better* conditioned. Candidates, all confounded in the current
+comparison: the `SymmetrizedBasis` projection (which is |G|-to-one on columns,
+so half the columns are annihilated for a mirror), `prune_columns`' two-stage
+removal, and `fundamental_bdry_pts` dropping the collocation points that lie on
+the symmetry axis.
+
+This is now the live lead, and it is independent of star-shapedness.
+
+---
+
+## Scope decision: symmetry is not the path lappy should be tuned on
+
+Called by the user, and the evidence supports it independently.
+
+lappy targets *generic* planar domains, and is meant to sit in the inner loop of
+shape optimization. In that setting symmetry is measure-zero: a shape being
+optimized will essentially never be symmetric, and if it drifts toward symmetry
+the group is not known in advance. So the symmetry path is a special case that
+most real inputs never take -- while the benchmark suite has been measuring it
+as the default for 39 of 44 domains.
+
+Worse, on the one domain where a clean head-to-head exists it is not just
+irrelevant but harmful:
+
+    iso_right_tri, n_basis=120     certified   true    time
+      symmetry path (default)          6.0      7.1    171s
+      full domain (--no-sym)          13.5     14.4     43s
+
+**+7.5 certified digits and 4x faster** on the generic path. Whatever the
+symmetry reduction is doing -- the |G|-to-one column projection, `prune_columns`,
+or dropping collocation points on the symmetry axis -- it is costing far more
+than the cubic saving it buys.
+
+It is not uniformly bad: `L_shape` (13.6), `eq_tri` (13.6) and `reg_ngon_6`
+(12.5) all reached good accuracy *through* it. But "sometimes fine, sometimes
+catastrophic, on a path most users will not take" is not something to tune
+against.
+
+**Consequence for the suite:** reference values should be produced on the
+generic full-domain path, and that is what the benchmarks should measure.
+Symmetry becomes an optional accelerator to be justified per-domain, not the
+default.
+
+**What this dissolves:** within-sector multiplicity expansion, fundamental-domain
+collocation, `prune_columns`, the symmetry-registry gaps, and the associated
+caveats all leave the critical path. Several of tonight's hardest-won fixes were
+in service of a code path that is now out of scope -- worth noting honestly,
+though the bugs they exposed (the bracket recursion, the polish-loop retention,
+the RNG seeding) were real and remain.
+
+### rect_thin explained: it was the symmetry path all along
+
+`rect_thin` was the one failure that survived everything -- the bracket depth
+cap, the cache clearing, three swap-budget settings, every seed. It drove the
+machine to a 59.8GB footprint and 40GB of swap and was parked as
+`status='hard'`, "runaway memory not yet explained".
+
+On the generic path: **7.5 certified / 8.5 true digits in 406s.** No memory
+event at all.
+
+So the runaway was a symmetry-path pathology, not a property of the domain or
+of the method. rect(1,8) under `rect D2` builds four sector solvers over an
+elongated geometry; something in that combination diverges. Since the symmetry
+path is now out of scope there is no reason to chase it further, but it is worth
+recording that the single most stubborn failure of the run had the same root
+cause as the largest accuracy losses.
+
+Running tally of what the scope decision fixed, at no cost:
+
+    iso_right_tri     7.1 -> 14.4 true digits
+    iso_tri_h05       2.7 ->  8.7 certified
+    reg_ngon_8        8.0 ->  9.5 certified
+    rect_thin         DEAD ->  8.5 true digits
+
+against a worst case of -0.3 (chevron_1_15) and one genuine regression:
+`rect_near_deg_1e5`, 13.6 -> 3.7 certified, where the symmetry path was
+separating a 1.2e-5 near-degenerate pair by sector and `estimate_multiplicity`
+now merges it. That is the multiplicity-vs-precision issue, not a conditioning
+one -- see the discussion of tying the merge threshold to the requested
+precision rather than to `ttol`.
+
+---
+
+## PAUSED — resume point
+
+Stopped cleanly for the machine to sleep. Nothing running; queue is resumable.
+
+**State:** generic-path pass (`--tag generic`) reached 6 of 44 before pausing.
+`queue.json`: 6 done, 1 short, 37 pending. Everything committed.
+
+**To resume:**
+
+    LAPPY_RUN_SWAP_MB=3000 python -m benchmarks.suite.sweep \
+        --all --retries 1 --timeout 900 --tag generic
+
+Symmetry reduction is now OFF by default (`--sym` opts back in), so this pass
+measures the generic path -- the one lappy is actually for.
+
+**Open item, agreed and not yet implemented.** `common.manual_solve` merges
+adjacent brackets whenever `estimate_multiplicity` at their midpoint returns
+>= 2, with **no distance bound at all**:
+
+    mult = mps.estimate_multiplicity(solver.tensions, cand_eig, cand_a, cand_b, ttol)
+    if mult >= 2: merge
+
+`ltol` and the requested precision never enter. `rect_near_deg_1e5`'s pair is
+1.2e-5 apart; both tensions at the midpoint are under `ttol=1e-3`, so it merges
+and the domain drops 13.6 -> 3.7 certified digits.
+
+This is a benchmarks-layer regression, **not** a bug in `lappy`.
+`mps.solve_interval` does it correctly:
+
+    eig_brackets = sort_merge_brackets(eig_brackets, ltol, ...)   # distance = ltol
+    mult = estimate_multiplicity(..., ttol, ...)                  # multiplicity, separately
+
+i.e. merge distance keyed to `ltol`, multiplicity determined afterwards by
+counting simultaneously-small tensions (`is_locmin & is_small`) -- which is
+already exactly the "genuine double vs unresolved pair" discriminator. I had
+described that as a proposal before reading the code; it was there all along.
+Correction recorded because I misattributed the bug to `lappy` first.
+
+**Fix when work resumes:** restore a distance guard in `manual_solve` -- only
+consider merging when `|e1 - e0| / e < ltol` (or the caller's target precision)
+-- then use `estimate_multiplicity` to confirm. That keeps what the rewrite
+wanted (degeneracy confirmed from tension structure rather than assumed from
+proximity) and restores the bound it dropped. `rect_near_deg_1e5` is the test.

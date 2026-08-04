@@ -85,7 +85,7 @@ def weyl_count(domain, lam):
     return float(n)
 
 
-def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
+def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
                       max_recurse=8, n_pts_per_eig=11, int_npts=None,
                       bdry_mult=2, basis_kwargs=None, fs_placement='default',
                       fs_frac=0.5, fs_d=1.0):
@@ -214,7 +214,18 @@ def main(argv=None):
     ap.add_argument('--n-eigs', type=int, default=None)
     ap.add_argument('--tag', default='base',
                     help='label distinguishing configs of the same domain')
-    ap.add_argument('--no-sym', action='store_true')
+    # Symmetry reduction is OFF by default. lappy targets generic planar
+    # domains -- in shape optimization, symmetry is measure-zero and the group
+    # is not known in advance -- so the symmetry path is a special case most
+    # real inputs never take, and benchmarking it as the default measured the
+    # wrong thing. It is also frequently worse: at n_basis=120, generic vs
+    # symmetry gives iso_right_tri 14.4 vs 7.1 true digits (and 43s vs 171s),
+    # iso_tri_h05 8.7 vs 2.7, reg_ngon_8 9.5 vs 8.0, against a worst case of
+    # -0.3 elsewhere. Pass --sym to opt back in.
+    ap.add_argument('--sym', dest='use_sym', action='store_true', default=False,
+                    help='opt in to symmetry-sector reduction (off by default)')
+    ap.add_argument('--no-sym', dest='use_sym', action='store_false',
+                    help='deprecated; full-domain is now the default')
     ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--max-recurse', type=int, default=8)
     ap.add_argument('--int-npts', type=int, default=None,
@@ -257,7 +268,7 @@ def main(argv=None):
     t0 = time.time()
     try:
         out = solve_and_certify(entry, n_basis, n_eigs,
-                                use_sym=not args.no_sym, n_workers=args.workers,
+                                use_sym=args.use_sym, n_workers=args.workers,
                                 max_recurse=args.max_recurse,
                                 n_pts_per_eig=args.pts_per_eig,
                                 int_npts=args.int_npts,
@@ -282,7 +293,7 @@ def main(argv=None):
     out['fs_frac'] = args.fs_frac
     out['fs_placement'] = args.fs_placement
     out['seconds'] = time.time() - t0
-    out['use_sym'] = not args.no_sym
+    out['use_sym'] = args.use_sym
     with open(path, 'w') as fh:
         json.dump(out, fh, indent=1)
 

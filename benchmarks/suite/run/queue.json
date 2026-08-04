@@ -5,7 +5,7 @@
   "best_n_basis": 320,
   "best_tag": "base",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "GWW2": {
   "attempts": 3,
@@ -13,15 +13,15 @@
   "best_n_basis": 320,
   "best_tag": "base",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "H_shape": {
   "attempts": 4,
   "best_digits": 9.874791076670066,
   "best_n_basis": 480,
   "best_tag": "base",
-  "notes": "swap guard: system swap 8189MB exceeded baseline+4000MB",
-  "status": "done"
+  "notes": "",
+  "status": "pending"
  },
  "L_shape": {
   "attempts": 2,
@@ -30,7 +30,7 @@
   "best_seed": 0,
   "best_tag": "seeded",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "chevron_1_125": {
   "attempts": 1,
@@ -39,7 +39,7 @@
   "best_seed": 0,
   "best_tag": "nb160",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "chevron_1_15": {
   "attempts": 3,
@@ -48,7 +48,7 @@
   "best_seed": 0,
   "best_tag": "nb160",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "chevron_1_2": {
   "attempts": 2,
@@ -57,7 +57,7 @@
   "best_seed": 0,
   "best_tag": "nb160",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "chevron_2_3": {
   "attempts": 2,
@@ -66,7 +66,7 @@
   "best_seed": 0,
   "best_tag": "nb160",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "chevron_2_4": {
   "attempts": 1,
@@ -75,7 +75,7 @@
   "best_seed": 0,
   "best_tag": "nb160",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "cut_square_r025": {
   "attempts": 2,
@@ -84,7 +84,7 @@
   "best_seed": 0,
   "best_tag": "nb320",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "cut_square_r05": {
   "attempts": 1,
@@ -93,10 +93,10 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "disk": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 13.749108698231668,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -110,7 +110,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "ellipse_a3": {
   "attempts": 1,
@@ -119,7 +119,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "ellipse_a4": {
   "attempts": 1,
@@ -128,10 +128,10 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "eq_tri": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.587905610817273,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -139,13 +139,13 @@
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 6,
-  "best_digits": 5.8147639875111565,
+  "attempts": 7,
+  "best_digits": 13.458329295634638,
   "best_n_basis": 120,
   "best_seed": 0,
-  "best_tag": "base",
-  "notes": "swap guard: system swap 6949MB exceeded baseline+4000MB",
-  "status": "short"
+  "best_tag": "generic",
+  "notes": "",
+  "status": "done"
  },
  "iso_tri_h05": {
   "attempts": 3,
@@ -154,7 +154,7 @@
   "best_seed": 0,
   "best_tag": "nb120",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "iso_tri_h1": {
   "attempts": 1,
@@ -163,7 +163,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "iso_tri_h16": {
   "attempts": 1,
@@ -172,7 +172,7 @@
   "best_seed": 0,
   "best_tag": "nb120",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "iso_tri_h4": {
   "attempts": 1,
@@ -181,7 +181,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "mushroom": {
   "attempts": 1,
@@ -190,7 +190,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "mushroom_neck01": {
   "attempts": 1,
@@ -199,7 +199,7 @@
   "best_seed": 0,
   "best_tag": "nb320",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "mushroom_thin": {
   "attempts": 1,
@@ -208,7 +208,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "parallelogram_60": {
   "attempts": 1,
@@ -217,7 +217,7 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "parallelogram_p127": {
   "attempts": 1,
@@ -226,7 +226,7 @@
   "best_seed": 1,
   "best_tag": "nb320s1",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "parallelogram_p65": {
   "attempts": 1,
@@ -235,10 +235,10 @@
   "best_seed": 0,
   "best_tag": "nb320",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "rect_near_deg_1e3": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.554513701644709,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -246,7 +246,7 @@
   "status": "done"
  },
  "rect_near_deg_1e5": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 13.60897335384163,
   "best_n_basis": 120,
   "best_seed": 0,
@@ -255,12 +255,13 @@
   "status": "done"
  },
  "rect_thin": {
-  "attempts": 6,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
-  "notes": "runaway memory not yet explained; survives all 3 cache fixes + depth cap. Parked, see NOTEBOOK.",
-  "status": "hard"
+  "attempts": 7,
+  "best_digits": 7.4746311209998355,
+  "best_n_basis": 240,
+  "best_seed": 0,
+  "best_tag": "generic",
+  "notes": "",
+  "status": "short"
  },
  "reg_ngon_5": {
   "attempts": 2,
@@ -269,7 +270,7 @@
   "best_seed": 0,
   "best_tag": "seeded",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "reg_ngon_6": {
   "attempts": 5,
@@ -278,7 +279,7 @@
   "best_seed": 1,
   "best_tag": "bases1",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "reg_ngon_7": {
   "attempts": 2,
@@ -286,7 +287,7 @@
   "best_n_basis": 240,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "reg_ngon_8": {
   "attempts": 4,
@@ -295,7 +296,7 @@
   "best_seed": 0,
   "best_tag": "nb120",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "right_trapezoid": {
   "attempts": 1,
@@ -304,16 +305,16 @@
   "best_seed": 0,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "sector_reflex": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.601153877303108,
   "best_n_basis": 240,
   "best_seed": 0,
   "best_tag": "seeded",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "sector_sharp_p133": {
   "attempts": 2,
@@ -322,7 +323,7 @@
   "best_seed": 0,
   "best_tag": "seeded",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "sector_sharp_p65": {
   "attempts": 2,
@@ -330,7 +331,7 @@
   "best_n_basis": 240,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "sector_slit": {
   "attempts": 2,
@@ -339,7 +340,7 @@
   "best_seed": 0,
   "best_tag": "seeded",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "spiral": {
   "attempts": 1,
@@ -348,22 +349,22 @@
   "best_seed": 0,
   "best_tag": "nb320",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "spiral_t25": {
   "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "rc=1",
-  "status": "failed"
+  "notes": "",
+  "status": "pending"
  },
  "square": {
-  "attempts": 6,
+  "attempts": 7,
   "best_digits": 13.650280064739077,
   "best_n_basis": 120,
   "best_tag": "base",
-  "notes": "rc=1",
+  "notes": "",
   "status": "done"
  },
  "stadium": {
@@ -373,7 +374,7 @@
   "best_seed": 0,
   "best_tag": "nb120",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  },
  "stadium_L2": {
   "attempts": 2,
@@ -382,6 +383,6 @@
   "best_seed": 0,
   "best_tag": "nb120",
   "notes": "",
-  "status": "short"
+  "status": "pending"
  }
 }
