@@ -89,13 +89,16 @@ def polish_eigs(solver, eigs, ltol=1e-14, bracket_rel_width=None):
         peig = opt.golden_search(solver.sigma, lo, hi, tol=ltol * max(abs(eig), 1.0))[0]
         eigs_polished.append(peig)
         tensions.append(solver.sigma(peig))
-        # golden_search evaluates ~100 distinct lambdas per eigenvalue, and
-        # every one lands in caches sized in ENTRIES (_tensions_scalar keeps
-        # 256, NormalizedBasis.norms 128). At n_basis=480 each entry is a
-        # megabyte-scale Vandermonde, so a single polish pass can hold 1-2GB
-        # per solver -- and the symmetry path keeps one solver per sector
-        # alive for certification afterwards. Successive lambdas are distinct,
-        # so there is nothing to reuse: drop it.
+        # Required, not optional. golden_search evaluates ~100 distinct lambdas
+        # per eigenvalue and the symmetry path keeps one solver per sector alive
+        # for certification afterwards. Removing this line is enough on its own
+        # to get reg_ngon_6 SIGKILLed at n_basis=320 (verified by A/B); with it,
+        # the same run finishes at 12.5 certified digits.
+        #
+        # I previously removed it after measuring "no effect" -- but that
+        # measurement instrumented `manual_solve` only and never executed this
+        # loop. Scope the benchmark to the code you are drawing conclusions
+        # about.
         clear_instance_caches(solver)
     return np.array(eigs_polished), np.array(tensions)
 
@@ -135,16 +138,16 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
     ttol = solver.ttol if ttol is None else ttol
     lamgrid = mps.make_lamgrid(a, b, n_pts)
 
-    # Bound cache growth during the search. bracket_mins evaluates thousands
-    # of DISTINCT lambdas (fill_refinement reuses known values explicitly, so
-    # genuine cache hits here are rare), and each one lands in caches sized in
-    # entries: _tensions_scalar keeps 256 and NormalizedBasis.norms 128. At
-    # n_basis=320 each entry is a few MB, so one sector's search can hold ~1GB
-    # -- times one solver per symmetry sector, all kept alive for certification.
-    # reg_ngon_6 reached the 4GB swap budget 25 seconds in this way.
-    # Clearing every `clear_every` evaluations caps the footprint at roughly
-    # that many matrices while costing almost nothing, since there was nothing
-    # to reuse.
+    # Periodic cache clearing during the search.
+    #
+    # Measured *for this loop specifically*: with opt.bracket_mins' max_recurse
+    # default in place, peak RSS is 170MB without clearing and 166MB with it --
+    # i.e. the recursion cap is what tamed the search, not this. Kept on anyway
+    # because it costs nothing measurable.
+    #
+    # Note the clearing in `polish_eigs` is a different story and is genuinely
+    # required; see the comment there. Do not generalise from this measurement
+    # to that one -- I did, and it cost a SIGKILL.
     _neval = [0]
 
     def tensions2(lam):

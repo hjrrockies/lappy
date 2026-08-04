@@ -340,7 +340,11 @@ def fundamental_int_pts(domain, group, npts, oversamp=None, tol=1e-8, rng=None,
     got = []
     have = 0
     for _ in range(max_tries):
-        draw = domain.int_pts(method='random', npts_rand=int(npts * oversamp) + 16)
+        # `rng` was in this signature from the start but was never used, so
+        # sector solves drew from the global RNG regardless of what the caller
+        # asked for. Forward it.
+        draw = domain.int_pts(method='random', npts_rand=int(npts * oversamp) + 16,
+                              rng=rng)
         z = draw.pts if isinstance(draw, PointSet) else np.asarray(draw)
         z = z[group.in_fundamental_domain(z, tol=tol)]
         got.append(z)

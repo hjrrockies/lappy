@@ -153,10 +153,18 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
     return x_tmp, y_tmp, fevals
 
 def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
-                 max_recurse=None):
+                 max_recurse=8):
     """Bracket the minima of f(x)[0] using a gridsearch. Returns a list of brackets which (hopefully!) each 
     contain a single local minimum of the first component of f. Uses the local minima 
-    of f(x)[1] to guide refinement."""
+    of f(x)[1] to guide refinement.
+
+    ``max_recurse`` bounds the refinement depth (default 8; ``None`` disables
+    the bound). Without it a noisy objective can refine indefinitely: the
+    "too many local minima" guard below only fires at ``nrecurse == 0``, so
+    deeper levels happily flag spurious minima and each flagged run spawns
+    another, ``shrink`` times finer, level. Cost compounds across levels *and*
+    across runs.
+    """
     tabs = min(nrecurse,5)*"\t" # tab spacing for verbose mode
     if verbose > 0:
         print(tabs+f"bracket_mins on [{x[1]:.5e},{x[-2]:.5e}] (len={x[-2]-x[1]:.2e}, npts={len(x)})")
@@ -179,10 +187,12 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
     # iso_right_tri: 11 live levels of recursion, driving a 16GB machine to a
     # 59.8GB footprint and 40GB of swap.
     #
-    # Default stays None (unbounded), so existing behavior is untouched.
-    # Callers that must not be able to run away pass a finite max_recurse; at
-    # the cap we keep the intervals we have as brackets rather than discarding
-    # them, so the caller still gets candidates to polish.
+    # Default is 8, i.e. ~256x the initial grid spacing -- far finer than any
+    # sensible xtol needs, and empirically free: eq_tri gives identical
+    # eigenvalues (13.6 certified / 14.5 true) with the cap and without. Pass
+    # max_recurse=None to restore unbounded recursion. At the cap we keep the
+    # intervals we have as brackets rather than discarding them, so the caller
+    # still gets candidates to polish.
     if max_recurse is not None and nrecurse >= max_recurse:
         out = [(x[i-1:i+2], y[0, i-1:i+2]) for i in y0_min_idx
                if 0 < i < len(x) - 1]

@@ -2,6 +2,10 @@ from .core import BaseEigenproblem, BaseEigensolver
 from .mps import MPSEigensolver
 from .utils import complex_form
 from .bounds import faber_krahn as _faber_krahn
+
+# Relative slack applied to a sharp lower bound before using it as a search
+# endpoint. Far below any accuracy of interest; costs one extra grid point.
+_WINDOW_PAD = 1e-6
 from .asymp import weyl_est as _weyl_est, weyl_count_check as _weyl_count_check
 from .bases import ParticularBasis
 from .geometry import PointSet, Domain
@@ -164,7 +168,16 @@ class Eigenproblem(BaseEigenproblem):
             ltol = solver_kwargs['ltol']
 
         if bc_type == 'dir':
-            a = _faber_krahn(area=self.domain.area)
+            # Nudge the lower edge strictly below the bound. Faber-Krahn is
+            # *sharp* -- equality holds exactly for the disk -- so for a disk
+            # (and to within rounding for near-circular domains) the raw bound
+            # coincides with lambda_1. The bracketing search finds minima via
+            # opt.discrete_locmin_idx, which ignores the endpoints of the grid
+            # by construction, so a minimum sitting on the lower edge cannot be
+            # found at any basis size. The unit disk returned modes 2..k+1:
+            # every value correct to ~14 digits, every certificate valid, and
+            # nothing in the pipeline able to detect the omission.
+            a = _faber_krahn(area=self.domain.area) * (1.0 - _WINDOW_PAD)
             k_search = k
         else:  # 'neu'
             a = ltol

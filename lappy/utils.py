@@ -79,9 +79,33 @@ def boundary_pts_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     from .quad import boundary_nodes_polygon
     return boundary_nodes_polygon(vertices,n_pts,rule,skip)
 
-def rand_interior_points(vertices, m, oversamp=2):
+def as_generator(rng):
+    """Normalize an rng argument.
+
+    ``None`` means "use numpy's legacy global RNG", preserving the behaviour of
+    callers that rely on ``np.random.seed``. Anything else (int, SeedSequence,
+    Generator) becomes a ``Generator``.
+    """
+    if rng is None:
+        return None
+    if isinstance(rng, np.random.Generator):
+        return rng
+    return np.random.default_rng(rng)
+
+
+def rand_uniform(rng, n):
+    """``n`` uniform [0,1) draws from ``rng``, or the global RNG if None."""
+    return np.random.rand(n) if rng is None else rng.random(n)
+
+
+def rand_interior_points(vertices, m, oversamp=2, rng=None):
     """Computes random interior points for a polygon with vertices in complex form,
-    ordered counter-clockwise."""
+    ordered counter-clockwise.
+
+    ``rng`` (int or Generator) makes the draw reproducible. Left as ``None``
+    the global RNG is used, so existing ``np.random.seed`` callers are
+    unaffected.
+    """
     from shapely.geometry import Polygon
     from shapely import points
     vertices = complex_form(vertices)
@@ -90,14 +114,15 @@ def rand_interior_points(vertices, m, oversamp=2):
     y_min, y_max = np.min(vertices.imag), np.max(vertices.imag)
     box_area = (x_max-x_min)*(y_max-y_min)
     npts = int(np.ceil(m*oversamp*box_area/poly_area))
-    x_i = (x_max-x_min)*np.random.rand(npts)+x_min
-    y_i = (y_max-y_min)*np.random.rand(npts)+y_min
+    rng = as_generator(rng)
+    x_i = (x_max-x_min)*rand_uniform(rng, npts)+x_min
+    y_i = (y_max-y_min)*rand_uniform(rng, npts)+y_min
 
     poly = Polygon(np.array([vertices.real,vertices.imag]).T)
     pts = points(np.array([x_i,y_i]).T)
     mask = poly.contains(pts)
     if mask.sum() < m:
-        return rand_interior_points(vertices, m, oversamp=2*oversamp)
+        return rand_interior_points(vertices, m, oversamp=2*oversamp, rng=rng)
     return x_i[mask][:m] + 1j*y_i[mask][:m]
 
 def plot_polygon(vertices,ax=None,**plotkwargs):

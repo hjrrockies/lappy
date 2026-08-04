@@ -886,3 +886,57 @@ that domain in this run — and `parallelogram_p65` over the bar on every seed.
 Both are in the table, both reproducible.
 
 Final table: **27 domains at >=8 certified digits.**
+
+---
+
+## Implementing fixes 1-4: one correction, one retraction-of-a-retraction
+
+**Fix 1 — sharp bound as a search endpoint.** `evp.py` took the window's lower
+edge straight from `bounds.faber_krahn`, which is attained exactly by the disk.
+Nudged by a relative 1e-6 at the *use site*; the bound itself is mathematically
+correct and left alone. `Eigenproblem.solve` now recovers the disk's ground
+state.
+
+**Fix 2 — `opt.bracket_mins` depth cap is now the default** (`max_recurse=8`,
+`None` restores unbounded). `mps.solve_interval` already forwards
+`**bracket_kwargs`, so it stays overridable.
+
+**Fix 3 — NOT the change I recommended.** I proposed sizing the LRU caches in
+bytes. Measuring first (hit rates across both the search and certification)
+showed: `norms` 50-59% hits holding small vectors, `_tensions_scalar` 19.5%
+holding small arrays, `_weighted_eval` **0.0% hits** — it can only ever miss,
+because `norms` is cached above it. So the caches were never holding gigabytes
+and a byte budget was not justified. Dropped the dead cache instead.
+
+**Then I over-corrected.** On the strength of a 170MB-vs-166MB measurement I
+also removed the `clear_instance_caches` calls from the benchmarks pipeline,
+concluding they had been treating a symptom. `reg_ngon_6` was then SIGKILLed
+end-to-end. A/B against stashed changes isolated it: **the clearing in
+`polish_eigs` is genuinely required** — removing that one line is sufficient to
+kill the run; restoring it gives 12.5 certified digits.
+
+My measurement had instrumented `manual_solve` and never executed `polish_eigs`
+at all. The `manual_solve` conclusion was correct *for `manual_solve`*; I
+generalised it to a loop I had not measured. `golden_search` runs ~100 distinct
+lambdas per eigenvalue and the symmetry path keeps one solver per sector alive
+for certification afterwards, which is a completely different retention profile
+from the search.
+
+Certification-side clearing turned out to be genuinely unnecessary — the
+verified run includes certification and passes without it. So of the three
+places I had added clearing, exactly one was load-bearing.
+
+**Lesson, stated plainly:** scope a benchmark to the code you intend to draw
+conclusions about, and re-run end-to-end before believing a removal is safe.
+The unit tests (731) passed throughout — only the full solve caught this.
+
+**Fix 4 — reproducible interior points.** `rng` threaded through
+`utils.rand_interior_points`, `Domain.int_pts`, `Polygon.int_pts`, and
+`symmetry.fundamental_int_pts` (which advertised an `rng` argument from the
+start and ignored it). `rng=None` keeps the legacy global RNG so
+`np.random.seed` callers are unaffected.
+
+Regression tests in `tests/test_solver_robustness.py` (10 tests) cover all four.
+They save and restore numpy's global RNG state, because other test modules draw
+interior points from it unseeded and reseeding changed their results depending
+on test order — itself an argument for threading `rng` everywhere.

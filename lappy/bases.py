@@ -268,7 +268,6 @@ class NormalizedBasis(ParticularBasis):
             return A * pts.sqrt_wts
         return A
 
-    @instance_lru_cache(maxsize=4)
     def _weighted_grad_eval(self, lam, pts):
         """basis._grad_pointset with row-weighting baked in (if pts has weights)."""
         Ag = self.basis._grad_pointset(lam, pts)

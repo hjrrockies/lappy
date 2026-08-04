@@ -203,13 +203,6 @@ def certify_solver(solver, domain, eigs, mult=None, n_per_seg=400, deg=10,
                 best = rec
         best['mult'] = int(m)
         out.append(best)
-        # Each eigenfunction is evaluated over the full degree-`deg` cubature
-        # mesh and the refined boundary mesh, and those Vandermondes land in
-        # per-instance LRU caches sized in entries (128 for
-        # NormalizedBasis.norms, 256 for _tensions_scalar). Certifying ten
-        # eigenvalues across several sectors that way exhausts memory on a 16GB
-        # machine. Nothing here is reused at the next lambda, so drop it.
-        clear_instance_caches(solver)
         if verbose:
             print(f'  lam={lam:.15f}  mult={int(m)}  eps={best["eps"]:.3e}  '
                   f'|dlam|<={best["abs_bound"]:.3e}  '

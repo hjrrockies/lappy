@@ -1,6 +1,6 @@
 from .core import BaseSegment, BaseDomain
 from .utils import (polygon_area, polygon_diameter, complex_form, real_form, rand_interior_points,
-                    interior_angles, edge_lengths)
+                    interior_angles, edge_lengths, as_generator, rand_uniform)
 from shapely.geometry import Polygon as ShapelyPolygon
 from shapely import points as shapely_points
 from .opt import find_all_roots
@@ -1593,9 +1593,17 @@ class Domain(BaseDomain):
         return bdry_pts, bdry_normals, bc_param
     
     def int_pts(self, method='random', weights=False, kind='dunavant', deg=4, mesh_kwargs={}, n_bdry=100, 
-                npts_rand=50, oversamp=2):
-        """Gets interior points for the domain."""
+                npts_rand=50, oversamp=2, rng=None):
+        """Gets interior points for the domain.
+
+        ``rng`` (int or numpy Generator) makes ``method='random'`` reproducible.
+        Interior collocation points feed straight into the MPS pencil, and the
+        draw genuinely moves the answer -- iso_right_tri spanned 2.5 to 5.8
+        certified digits across draws -- so anything producing reference values
+        should pass one. ``None`` keeps the global RNG.
+        """
         if method == 'random':
+            rng = as_generator(rng)
             pt = self.bdry.segments[0].p0
             xmin, xmax = pt.real - self.diameter, pt.real + self.diameter
             ymin, ymax = pt.imag - self.diameter, pt.imag + self.diameter
@@ -1606,8 +1614,8 @@ class Domain(BaseDomain):
                 if len(pts) >= npts_rand:
                     break
                 npts = int(np.ceil(npts_rand*oversamp*box_area/self.area))
-                x = (xmax-xmin)*np.random.rand(npts)+xmin
-                y = (ymax-ymin)*np.random.rand(npts)+ymin
+                x = (xmax-xmin)*rand_uniform(rng, npts)+xmin
+                y = (ymax-ymin)*rand_uniform(rng, npts)+ymin
                 z = x + 1j*y
                 pts_new = z[self.contains(z)]
                 pts = np.concatenate((pts, pts_new))
@@ -1749,9 +1757,10 @@ class Polygon(Domain):
     def corner_idx(self):
         return np.arange(self.n_vertices)
     
-    def int_pts(self, method='random', weights=False, kind='dunavant', deg=4, mesh_size=1, npts_rand=50, oversamp=2):
+    def int_pts(self, method='random', weights=False, kind='dunavant', deg=4, mesh_size=1, npts_rand=50, oversamp=2,
+                rng=None):
         if method == 'random':
-            pts = rand_interior_points(self.vertices, npts_rand, oversamp)
+            pts = rand_interior_points(self.vertices, npts_rand, oversamp, rng=rng)
             if weights: int_pts = PointSet(pts, np.full(npts_rand, self.area / npts_rand))
             else: int_pts = PointSet(pts)
 
