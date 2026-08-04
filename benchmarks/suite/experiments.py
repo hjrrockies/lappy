@@ -123,6 +123,64 @@ def cmd_rank_curve(args):
     return 0
 
 
+def cmd_mid_support(args):
+    """Test the section-2 mechanism: does support BETWEEN sharp corners help?
+
+    `make_default_basis` gives multi-singular-corner domains a Fourier--Bessel
+    block plus a `FundamentalBasis.by_corners` block -- and `by_corners`
+    clusters its sources at the corners, so the whole basis is corner-localized
+    and the middle of the domain is represented only by slowly-decaying tails.
+    Here we swap the corner-clustered fundamental block for `by_boundary`,
+    which distributes sources along an offset boundary and so actually covers
+    the region between the corners.
+    """
+    import numpy as np
+    from lappy import bases, mps, asymp, MPSEigensolver
+    from lappy.symmetry import (SymmetrizedBasis, prune_columns,
+                                fundamental_bdry_pts, fundamental_int_pts)
+    from benchmarks.suite.domains import SUITE
+    from common import manual_solve, polish_eigs, lambda_window
+    from certify import certify_solver
+
+    np.random.seed(args.seed)
+    entry = SUITE[args.key]
+    dom = entry.domain()
+    n_basis, n_eigs = args.n_basis or entry.n_basis, entry.n_eigs
+
+    n_fs = int(round(args.fs_frac * n_basis))
+    n_fb = n_basis - n_fs
+    fb_orders = bases.fb_corner_orders(dom, n_fb)
+    fb = bases.FourierBesselBasis.from_domain(dom, fb_orders)
+    n_seg = len(dom.bdry.segments)
+    # by_boundary wants a per-segment count array, not a scalar
+    per_seg = np.full(n_seg, max(n_fs // n_seg, 1), dtype=int)
+    fs = bases.FundamentalBasis.by_boundary(dom, per_seg, d=args.fs_d)
+    basis = fb + fs
+
+    n_per_seg = mps.pts_per_seg(dom, basis, mult=2)
+    bdry_pts = dom.bdry_pts(n_per_seg)
+    int_pts = dom.int_pts(method='random', npts_rand=max(2 * n_basis, 500))
+    basis = basis.to_normalized((bdry_pts, int_pts))
+    solver = MPSEigensolver(basis, bdry_pts, int_pts, rtol=1e-14, ttol=1e-3)
+
+    a, b = lambda_window(dom, n_eigs)
+    e, mults, _ = manual_solve(solver, a, b, max(11 * n_eigs, 50), n_workers=1)
+    if not len(e):
+        print(f'{args.key}: no eigenvalues found'); return 1
+    eigs, tens = polish_eigs(solver, e, ltol=1e-14, bracket_rel_width=1e-9)
+    eigs, tens, mults = eigs[:n_eigs], tens[:n_eigs], mults[:n_eigs]
+    recs = certify_solver(solver, dom, eigs, mult=mults, verbose=False)
+    eps = np.array([r['eps'] for r in recs])
+    dig = float(-np.log10(eps.max()))
+    _record(dict(experiment='mid_support', key=args.key, fs_frac=args.fs_frac,
+                 fs_d=args.fs_d, n_basis=n_basis, seed=args.seed,
+                 min_digits=dig, n_found=len(eigs),
+                 eigs=[float(x) for x in eigs]))
+    print(f'{args.key} by_boundary fs_frac={args.fs_frac} d={args.fs_d} '
+          f'nb={n_basis} certified_digits={dig:.1f} found={len(eigs)}/{n_eigs}')
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -135,6 +193,14 @@ def main(argv=None):
     b.add_argument('key')
     b.add_argument('--sizes', default='60,120,240,320')
     b.set_defaults(func=cmd_rank_curve)
+
+    c = sub.add_parser('mid_support')
+    c.add_argument('key')
+    c.add_argument('--fs-frac', type=float, default=0.5)
+    c.add_argument('--fs-d', type=float, default=1.0)
+    c.add_argument('--n-basis', type=int, default=None)
+    c.add_argument('--seed', type=int, default=0)
+    c.set_defaults(func=cmd_mid_support)
 
     args = ap.parse_args(argv)
     return args.func(args)

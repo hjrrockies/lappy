@@ -126,13 +126,58 @@ re-measured, not trusted.
   cuts (`corner_branch_cut_polyline: no valid polyline cut found`).
 - **`rect_thin`.** Unexplained memory runaway surviving every fix. Open.
 
+## 8. CONFIRMED IMPROVEMENT: distribute the fundamental sources
+
+The §2 mechanism makes a concrete prediction, and it holds.
+
+`make_default_basis`'s multi-singular-corner branch builds its fundamental block
+with `FundamentalBasis.by_corners`, which places sources on outward rays
+**exponentially clustered at the corners**. So the entire basis — both blocks —
+is corner-localized, and the region between two distant sharp corners is
+represented only by expansion tails that are numerically zero there.
+
+Replacing that block with `FundamentalBasis.by_boundary`, which distributes
+sources along an offset boundary, on `parallelogram_p65` at n_basis=320:
+
+    seed        by_corners (default)    by_boundary
+      0               7.1                   9.0
+      1               7.9                   9.0
+      2               7.4                   8.7
+    mean              7.5                   8.9
+    spread            0.8                   0.3
+
+**+1.4 digits on average, over the 8-digit bar on every seed, and the seed
+spread drops from 0.8 to 0.3.** Accuracy and conditioning improve together,
+which is precisely what §1 predicts should happen if the near-null space is the
+cause. Note that simply raising `fs_frac` does nothing (7.6/7.1/7.4/7.0 across
+0.3-0.85) — because it trades corner-localized functions for *other*
+corner-localized functions. The placement is the lever, not the fraction.
+
+**Scope, honestly stated.** The gain does NOT transfer to chevron:
+
+    domain              default   by_boundary (0.5 / 0.7)
+    parallelogram_p65     7.1        9.0
+    chevron_1_15          5.6        5.4 / 5.9
+    chevron_2_3           4.1        3.3 / 3.9
+
+The distinguishing feature is the reentrant corner, which chevron has and the
+parallelogram does not. When a reentrant corner is present it, not the
+middle-of-domain gap, is the binding constraint — consistent with §2's finding
+that reentrant corners are the more expensive kind. So this is a real fix for
+the **two-sharp-corner, no-reentrant** case and not a general one.
+
+**Proposed change** (not made — it alters existing behaviour): in
+`make_default_basis`, the multi-singular-corner branch should distribute its
+fundamental sources rather than cluster them at corners, or blend the two. The
+current default is close to worst-case for any domain whose singular corners
+are far apart relative to the wavelength.
+
 ## What to try next, in priority order
 
-1. **More interior/fundamental-solution support for multi-sharp-corner domains.**
-   §2 predicts the fix is basis functions supported *in the middle* of the
-   domain, not more Fourier--Bessel orders at the corners — the opposite of what
-   earlier tuning tried, and consistent with its finding that corner reweighting
-   made chevron worse. `make_default_basis(fs_frac=...)` already exposes this.
+1. **Land §8 properly.** Decide between `by_boundary`, a blend, or a
+   separation-aware rule, and test across the suite rather than one domain.
+   Then re-measure the domains that sit just under the bar
+   (`mushroom_thin` 7.4, `cut_square_r025` 7.2, `GWW2` 7.7).
 2. **A seed-spread sweep across the suite**, as a conditioning map. Cheap, needs
    no reference values, and directly tests §1.
 3. **Rellich orthonormalization and Cauchy singularity subtraction**
