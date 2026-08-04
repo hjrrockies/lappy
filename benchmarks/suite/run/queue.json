@@ -1,6 +1,6 @@
 {
  "GWW1": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -16,12 +16,12 @@
   "status": "pending"
  },
  "H_shape": {
-  "attempts": 1,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
-  "notes": "",
-  "status": "running"
+  "attempts": 3,
+  "best_digits": 9.874791076670066,
+  "best_n_basis": 480,
+  "best_tag": "base",
+  "notes": "swap guard: system swap 8189MB exceeded baseline+4000MB",
+  "status": "done"
  },
  "L_shape": {
   "attempts": 1,
@@ -128,12 +128,12 @@
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 2,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 3,
+  "best_digits": 4.885913604395251,
+  "best_n_basis": 120,
+  "best_tag": "base",
   "notes": "swap guard: system swap 6949MB exceeded baseline+4000MB",
-  "status": "failed"
+  "status": "short"
  },
  "iso_tri_h05": {
   "attempts": 0,
@@ -232,12 +232,12 @@
   "status": "done"
  },
  "rect_thin": {
-  "attempts": 2,
+  "attempts": 5,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "swap guard: system swap 5970MB exceeded baseline+4000MB",
-  "status": "failed"
+  "notes": "swap guard: system swap 5432MB exceeded baseline+4000MB",
+  "status": "running"
  },
  "reg_ngon_5": {
   "attempts": 0,

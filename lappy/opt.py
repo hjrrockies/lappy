@@ -152,7 +152,8 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
         x_tmp, y_tmp = x_tmp2, y_tmp2
     return x_tmp, y_tmp, fevals
 
-def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
+def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
+                 max_recurse=None):
     """Bracket the minima of f(x)[0] using a gridsearch. Returns a list of brackets which (hopefully!) each 
     contain a single local minimum of the first component of f. Uses the local minima 
     of f(x)[1] to guide refinement."""
@@ -168,6 +169,27 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
         print("number of local minima:",len(y0_min_idx))
     if nrecurse==0 and len(y0_min_idx) > len(x)/3:
         raise EigensolverFailure("f has too many local minima")
+
+    # Optional depth cap. Unbounded recursion here is a real hazard: the
+    # "too many local minima" check above fires only at nrecurse==0, so once
+    # sigma is numerical noise over part of the window, every level finds
+    # spurious minima, flags them all for refinement, and each flagged run
+    # spawns another level whose grid is `shrink` times finer. The cost
+    # compounds across levels *and* across flagged runs. Observed on
+    # iso_right_tri: 11 live levels of recursion, driving a 16GB machine to a
+    # 59.8GB footprint and 40GB of swap.
+    #
+    # Default stays None (unbounded), so existing behavior is untouched.
+    # Callers that must not be able to run away pass a finite max_recurse; at
+    # the cap we keep the intervals we have as brackets rather than discarding
+    # them, so the caller still gets candidates to polish.
+    if max_recurse is not None and nrecurse >= max_recurse:
+        out = [(x[i-1:i+2], y[0, i-1:i+2]) for i in y0_min_idx
+               if 0 < i < len(x) - 1]
+        if verbose > 0:
+            print(tabs + f"depth cap {max_recurse} reached, "
+                         f"returning {len(out)} unrefined brackets")
+        return out, 0
 
     # get refinement flags (based on proximity of y1_mins/y2_mins relative to y0_mins)
     refine_flag = flag_refinement_intervals(len(x)-1, y0_min_idx, y1_min_idx)
@@ -215,7 +237,9 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0):
                 else:
                     if verbose > 0:
                         print(tabs+"recursing...")
-                    bracks, fe = bracket_mins(f, x_tmp, y_tmp, xtol, shrink, nrecurse+1, verbose)
+                    bracks, fe = bracket_mins(f, x_tmp, y_tmp, xtol, shrink,
+                                              nrecurse+1, verbose,
+                                              max_recurse=max_recurse)
                     brackets += bracks
                     fevals += fe
     if verbose > 0 and nrecurse == 0:

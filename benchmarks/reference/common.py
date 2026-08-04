@@ -11,6 +11,8 @@ All domains here are pure Dirichlet, so boundary normals are never built --
 they only matter for Neumann/Robin boundary rows (``bc_param != 0``).
 """
 import numpy as np
+
+from lappy.cache import clear_instance_caches
 from lappy import geometry, bases, mps, opt, bounds, asymp
 from lappy import MPSEigensolver, Eigenproblem
 
@@ -87,10 +89,19 @@ def polish_eigs(solver, eigs, ltol=1e-14, bracket_rel_width=None):
         peig = opt.golden_search(solver.sigma, lo, hi, tol=ltol * max(abs(eig), 1.0))[0]
         eigs_polished.append(peig)
         tensions.append(solver.sigma(peig))
+        # golden_search evaluates ~100 distinct lambdas per eigenvalue, and
+        # every one lands in caches sized in ENTRIES (_tensions_scalar keeps
+        # 256, NormalizedBasis.norms 128). At n_basis=480 each entry is a
+        # megabyte-scale Vandermonde, so a single polish pass can hold 1-2GB
+        # per solver -- and the symmetry path keeps one solver per sector
+        # alive for certification afterwards. Successive lambdas are distinct,
+        # so there is nothing to reuse: drop it.
+        clear_instance_caches(solver)
     return np.array(eigs_polished), np.array(tensions)
 
 
 def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
+                 max_recurse=8,
                   ttol=None, n_workers=1, verbose=0):
     """Find eigenvalues in [a, b] by calling opt.bracket_mins /
     opt.minimize_on_bracket / mps.estimate_multiplicity directly, instead of
@@ -136,8 +147,13 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
         tensiongrid = np.array([tensions2(lam) for lam in lamgrid]).T
     fevals = len(lamgrid)
 
+    # max_recurse guards against runaway refinement where sigma is numerical
+    # noise: opt.bracket_mins' "too many local minima" check fires only at
+    # depth 0, so deeper levels can branch without bound. Eight levels is
+    # ~256x the initial grid spacing, far finer than bracket_xtol needs, and
+    # polish_eigs re-refines each bracket properly afterwards.
     brackets, fe = opt.bracket_mins(tensions2, lamgrid, tensiongrid, xtol=bracket_xtol,
-                                     verbose=verbose)
+                                     verbose=verbose, max_recurse=max_recurse)
     fevals += fe
 
     eig_brackets = []
