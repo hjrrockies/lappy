@@ -17,12 +17,14 @@ from lappy import geometry, bases, mps, opt, bounds, asymp
 from lappy import MPSEigensolver, Eigenproblem
 
 
-def build_solver(domain, n_basis, rtol=1e-14, ttol=1e-3, bdry_mult=2, int_npts=None,
+def build_solver(domain, n_basis, rtol=None, ttol=1e-3, bdry_mult=2, int_npts=None,
                   **basis_kwargs):
     """Manually assemble an MPSEigensolver for `domain` at basis size `n_basis`.
 
     No bdry_normals, no cauchy_data -- Dirichlet eigenvalues only.
     """
+    if rtol is None:
+        rtol = mps.rtol_default      # inherit, do not pin
     basis = bases.make_default_basis(domain, n_basis, **basis_kwargs)
 
     n_per_seg = mps.pts_per_seg(domain, basis, mult=bdry_mult)
@@ -277,7 +279,7 @@ def diagnose(solver, eig, rtol=None, verbose=True):
     return d
 
 
-def cross_check(domain, basis, eig, bdry_mult=2, int_npts=50, rtol=1e-14, n_trials=3, verbose=True):
+def cross_check(domain, basis, eig, bdry_mult=2, int_npts=50, rtol=None, n_trials=3, verbose=True):
     """Build fresh, independent bdry_pts/int_pts draws (same already-built
     `basis`, no re-normalization) and report sigma(eig) on each -- large
     variation across independent collocation samples flags overfitting to
@@ -319,7 +321,7 @@ def lambda_window(domain, n_eigs, pad=1e-6):
     return a, b
 
 
-def solve_domain(domain, n_basis, n_eigs, ppl=10, ttol=1e-3, rtol=1e-14, verbose=1,
+def solve_domain(domain, n_basis, n_eigs, ppl=10, ttol=1e-3, rtol=None, verbose=1,
                   **basis_kwargs):
     """Build a solver, solve for the first n_eigs Dirichlet eigenvalues, and
     polish them via golden search on the tension. Returns (eigs, tensions)."""
@@ -330,7 +332,7 @@ def solve_domain(domain, n_basis, n_eigs, ppl=10, ttol=1e-3, rtol=1e-14, verbose
 
 
 def escalate_and_solve(domain, n_basis_list, n_eigs, target_tension=1e-12, ppl=10,
-                        ttol=1e-3, rtol=1e-14, verbose=1, **basis_kwargs):
+                        ttol=1e-3, rtol=None, verbose=1, **basis_kwargs):
     """Try increasing basis sizes from n_basis_list, stopping as soon as every
     eigenvalue's tension clears `target_tension`, or after exhausting the list.
 
@@ -353,7 +355,7 @@ def escalate_and_solve(domain, n_basis_list, n_eigs, target_tension=1e-12, ppl=1
 
 
 def solve_domain_v2(domain, n_basis, n_eigs, bracket_xtol=1e-5, minimize_tol=1e-12,
-                     polish_bracket_rel_width=1e-9, ttol=1e-3, rtol=1e-14, n_pts_per_eig=11,
+                     polish_bracket_rel_width=1e-9, ttol=1e-3, rtol=None, n_pts_per_eig=11,
                      n_workers=4, verbose=0, **basis_kwargs):
     """Corrected standard pipeline: build_solver + manual_solve (decoupled
     bracket/minimize/merge tolerances, see manual_solve's docstring) +

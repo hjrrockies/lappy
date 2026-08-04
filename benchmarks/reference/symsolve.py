@@ -18,7 +18,7 @@ from lappy.symmetry import (SymmetrizedBasis, prune_columns, fundamental_bdry_pt
 from common import manual_solve, polish_eigs, lambda_window
 
 
-def build_sym_solver(domain, group, sector, n_basis, rtol=1e-14, ttol=1e-3,
+def build_sym_solver(domain, group, sector, n_basis, rtol=None, ttol=1e-3,
                      bdry_mult=2, int_npts=None, prune=True, lam_ref=None,
                      prune_kill_tol=1e-8, prune_dup_tol=1e-14, **basis_kwargs):
     """One MPS solver for a single symmetry sector.
@@ -29,6 +29,8 @@ def build_sym_solver(domain, group, sector, n_basis, rtol=1e-14, ttol=1e-3,
     (the projection is ``|G|``-to-one on basis columns) to recover the cubic
     GSVD saving.
     """
+    if rtol is None:
+        rtol = mps.rtol_default
     basis = bases.make_default_basis(domain, n_basis, **basis_kwargs)
 
     # `bdry_mult` is scaled up by |G| because roughly 1/|G| of the generated

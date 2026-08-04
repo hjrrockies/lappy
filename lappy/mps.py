@@ -18,7 +18,19 @@ from gsvd4py import gsvd, gsvdvals
 from tqdm import tqdm
 
 ### tolerance defaults
-rtol_default = 1e-14
+# rtol truncates the regularized pencil: larger discards more near-dependent
+# columns. 1e-12 rather than 1e-14 because a basis of particular solutions is
+# genuinely redundant -- rect(1,1) drops 27 of 120 columns, GWW1 (eight
+# Fourier-Bessel corner blocks) far more -- and retaining directions below the
+# level at which the matrix entries are known injects noise into the tension
+# curve, which is what produces spurious minima and runaway bracket refinement.
+#
+# It is a compromise, not an optimum: measured over 12 domains, GWW1 gains 0.7
+# digits and chevron 0.2, while mushroom loses 1.4 and L_shape 0.1. The right
+# value is domain-dependent and there is no spectral gap to find it from (the
+# largest consecutive drop in the singular values is only 0.4-0.7 decades --
+# smooth decay, no rank cliff). See benchmarks/suite/run/NOTEBOOK.md.
+rtol_default = 1e-12
 ttol_default = 1e-3
 ltol_default = 1e-8
 
