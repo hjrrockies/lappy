@@ -26,9 +26,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, 'benchmarks', 'reference'))
-for _v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
-           'VECLIB_MAXIMUM_THREADS'):
-    os.environ.setdefault(_v, '1')
+from benchmarks.suite import guards
+guards.pin_blas()
 
 OUT = os.path.join(HERE, 'run', 'buckets.jsonl')
 
@@ -171,7 +170,14 @@ def main(argv=None):
     ap.add_argument('--preflight-only', action='store_true')
     ap.add_argument('--tag', default='')
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--swap-mb', type=float, default=None,
+                    help='abort if system swap grows this far past baseline')
+    ap.add_argument('--timeout', type=float, default=None,
+                    help='abort after this many seconds')
     args = ap.parse_args(argv)
+    # Abort rather than take the machine down: swap growth and wall time are
+    # the two ways a solve has gone wrong in this run. See guards.py.
+    guards.install(swap_mb=args.swap_mb, timeout_s=args.timeout, label=args.key)
     np.random.seed(args.seed)
     run(args.key, args.n_basis, args.rtol, args.int_npts, args.bdry_mult,
         args.preflight_pts, args.n_eigs, args.preflight_only, args.tag)

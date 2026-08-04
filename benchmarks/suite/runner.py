@@ -276,7 +276,8 @@ def main(argv=None):
     n_basis = args.n_basis or entry.n_basis
     n_eigs = args.n_eigs or entry.n_eigs
 
-    _cap_address_space()
+    from benchmarks.suite import guards
+    guards.install(label=args.key)
     # Interior collocation points come from domain.int_pts(method='random'),
     # which uses numpy's GLOBAL RNG (lappy.geometry:1609). Without seeding,
     # every run draws a different sample and the answer moves: iso_right_tri
