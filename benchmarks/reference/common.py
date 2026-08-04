@@ -261,10 +261,23 @@ def cross_check(domain, basis, eig, bdry_mult=2, int_npts=50, rtol=1e-14, n_tria
     return sigmas
 
 
-def lambda_window(domain, n_eigs):
+def lambda_window(domain, n_eigs, pad=1e-6):
     """Same [a, b] window Eigenproblem.solve would use internally, for
-    feeding into manual_solve/solver.solve_interval directly."""
-    a = bounds.faber_krahn(domain)
+    feeding into manual_solve/solver.solve_interval directly.
+
+    The lower edge is nudged below the Faber--Krahn bound. Faber--Krahn is
+    *sharp*, attained exactly by the disk, so for a disk (and nearly so for
+    near-circular domains) the raw bound coincides with lambda_1 to machine
+    precision. `bracket_mins`/`discrete_locmin_idx` ignore the endpoints of the
+    grid by construction, so a minimum sitting exactly on the lower edge is
+    unfindable: the disk silently returned modes 2..11, every value correct and
+    certified, the list simply missing its ground state. Only the closed-form
+    comparison caught it.
+
+    A relative nudge of 1e-6 is far below any accuracy we care about and costs
+    one extra grid point.
+    """
+    a = bounds.faber_krahn(domain) * (1.0 - pad)
     b = asymp.weyl_est(n_eigs + 1, domain)
     return a, b
 

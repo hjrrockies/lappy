@@ -764,3 +764,44 @@ has no representation of the region between them beyond whatever the corner
 expansions' slowly-decaying tails provide — which at `p ~ 6.5` is nearly
 nothing. That is a concrete, checkable deficiency in `make_default_basis`, and a
 better-specified proposal than "raise fs_frac".
+
+---
+
+## The Faber--Krahn edge bug: the disk cannot find its own ground state
+
+The seeded re-run of `disk` certified **13.6 digits** while agreeing with its
+closed form to **-0.2**. Not a bad draw — a structural bug:
+
+    found: 14.68197 14.68197 26.37462 26.37462 30.47126 40.70647 ...
+    exact:  5.78319 14.68197 14.68197 26.37462 26.37462 30.47126 ...
+
+Every returned value is correct to ~14 digits. The list is simply missing
+`lambda_1 = 5.7831859629` and returns modes 2..11.
+
+Cause. `lambda_window` takes its lower edge from `bounds.faber_krahn`, and
+**Faber--Krahn is sharp — the disk is the extremal domain.** So for the disk:
+
+    lambda_window(disk, 10) lower edge = 5.7831859629
+    exact lambda_1                     = 5.7831859629
+
+identical to all printed digits. `bracket_mins` finds minima via
+`discrete_locmin_idx`, which "ignores endpoints (assumes use of ghost points)".
+A minimum sitting exactly *on* the lower edge therefore cannot be found, ever,
+at any basis size or seed.
+
+Fixed by nudging the lower edge to `faber_krahn * (1 - 1e-6)`.
+
+**Why this one matters out of proportion to its size.** It is the cleanest
+example in the run of the §5 warning: every individual value carried a valid
+Moler--Payne certificate, the count was exactly the ten requested, and the Weyl
+discrepancy was ~1 — under any threshold that does not also fire on correct
+tables. Tension was fine. Nothing in the pipeline could see it. Only comparison
+against a closed form revealed that the table was wrong in every entry.
+
+It is also a reminder that sharp bounds are dangerous as search endpoints: the
+better the bound, the more likely the extremal case lands exactly on it. Any
+near-circular domain is at risk, and the failure is silent.
+
+The unseeded `disk` run (14.5 true digits) got the right answer only because its
+different interior sample happened to shift the tension curve enough for the
+edge minimum to register. That is luck, not correctness.

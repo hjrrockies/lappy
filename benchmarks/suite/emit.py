@@ -39,9 +39,34 @@ def load_best():
         if not r.get('ok'):
             continue
         key = r['key']
-        if key not in best or r['min_digits'] > best[key]['min_digits']:
+        cur = best.get(key)
+        if cur is None or _rank(r) > _rank(cur):
             best[key] = r
     return best
+
+
+def _rank(r):
+    """Prefer reproducible results, then accuracy.
+
+    A run made before the RNG was seeded cannot be reproduced -- the interior
+    collocation points came from an unseeded global RNG, and this run showed
+    spreads of over 3 digits between draws. A seeded run that clears the bar is
+    worth more as a reference value than an unseeded run that clears it by
+    slightly more, because only the former can be checked.
+    """
+    seeded = r.get('seed') is not None
+    meets = r['min_digits'] >= TARGET
+
+    # Correctness outranks reproducibility. A seeded run that misses an
+    # eigenvalue is worse than an unseeded run that does not: `disk` on seed 0
+    # certifies 13.6 digits while agreeing with its closed form to -0.2, i.e.
+    # the list is misaligned by a dropped mode. Preferring it purely because it
+    # is reproducible would bank a table that is wrong in every entry after the
+    # gap -- with a valid certificate on each surviving value.
+    a = r.get('analytic_min_digits')
+    sane = a is None or a >= r['min_digits'] - 2.0
+
+    return (sane, sane and seeded and meets, r['min_digits'], seeded)
 
 
 def checks(key, r):

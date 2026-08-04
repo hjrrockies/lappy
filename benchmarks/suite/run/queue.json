@@ -16,7 +16,7 @@
   "status": "short"
  },
  "H_shape": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 9.874791076670066,
   "best_n_basis": 480,
   "best_tag": "base",
@@ -24,10 +24,11 @@
   "status": "done"
  },
  "L_shape": {
-  "attempts": 1,
-  "best_digits": 13.550123245763105,
+  "attempts": 2,
+  "best_digits": 13.583357950171157,
   "best_n_basis": 240,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "seeded",
   "notes": "",
   "status": "done"
  },
@@ -95,7 +96,7 @@
   "status": "done"
  },
  "disk": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 13.749108698231668,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -130,7 +131,7 @@
   "status": "done"
  },
  "eq_tri": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 13.587905610817273,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -237,7 +238,7 @@
   "status": "short"
  },
  "rect_near_deg_1e3": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 13.554513701644709,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -245,10 +246,11 @@
   "status": "done"
  },
  "rect_near_deg_1e5": {
-  "attempts": 1,
-  "best_digits": 13.355688741801819,
+  "attempts": 2,
+  "best_digits": 13.60897335384163,
   "best_n_basis": 120,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "seeded",
   "notes": "",
   "status": "done"
  },
@@ -261,12 +263,12 @@
   "status": "hard"
  },
  "reg_ngon_5": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 12.293169480506116,
   "best_n_basis": 240,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "running"
  },
  "reg_ngon_6": {
   "attempts": 5,
