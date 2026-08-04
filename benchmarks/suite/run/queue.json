@@ -133,7 +133,7 @@
   "best_n_basis": null,
   "best_tag": null,
   "notes": "",
-  "status": "running"
+  "status": "pending"
  },
  "iso_tri_h05": {
   "attempts": 0,
@@ -224,15 +224,15 @@
   "status": "done"
  },
  "rect_near_deg_1e5": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 13.355688741801819,
+  "best_n_basis": 120,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "rect_thin": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,

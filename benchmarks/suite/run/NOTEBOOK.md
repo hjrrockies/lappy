@@ -95,3 +95,53 @@ degeneracy. Affects `square`, the regular n-gons (D_n vs D2), `disk` (O(2)),
 
 `eq_tri` and `disk` agreeing to 14+ digits against closed forms is a good sign
 for the pipeline itself: where the bookkeeping is right, the numbers are right.
+
+---
+
+## Hypothesis correction: the n_reg truncation is NOT a scaling artifact
+
+`PROTOCOL.md` listed "per-column normalization" as the most promising unexploited
+lever, on the theory that FB columns at a sharp corner differ by hundreds of
+orders of magnitude (chevron reaches exponent ~334) and the GSVD discards them as
+noise.
+
+**That lever is already pulled.** `common.build_solver` ends with
+
+    basis = basis.to_normalized((bdry_pts, int_pts))
+
+i.e. `NormalizedBasis(..., max_scale=True)`: every column is rescaled by its max
+and then normalized to unit L2 norm over the collocation points, at each lambda.
+So the columns entering the GSVD are already well-scaled.
+
+That makes the `n_reg/n ~ 60-70%` figure in `TUNING_LOG.md` much more
+interesting, and points at a different mechanism:
+
+**Revised hypothesis — near-dependence is intrinsic and precision-bound.** At an
+11-degree corner the FB functions go like `r**(m*15.9)`. Successive `m` differ
+only in a neighbourhood of the corner whose radius shrinks geometrically; away
+from it every one of them is zero to many digits. Normalization rescales each to
+unit norm, but that *amplifies the rounding noise along with the signal* — after
+normalization the columns are nearly parallel not because of bad scaling but
+because, in double precision, they carry almost no independent information about
+the domain. More basis functions cannot help: each new one is numerically a
+copy of its neighbours.
+
+If true this predicts, sharply:
+
+1. Extended precision at the *same* `n_basis` should gain many digits on chevron
+   (the information is in the functions; double precision cannot see it).
+2. Denser collocation should do nothing — confirmed already in `TUNING_LOG.md`.
+3. Corner *reweighting* should hurt — confirmed already (it made chevron worse).
+4. The effect should scale with the corner exponent `p`, not with the number of
+   corners.
+
+Prediction 4 is directly testable against exact truth, because `disk_sector`
+sweeps `p` with a closed form: `sector_sharp_p65` (p=6.5) should be measurably
+better than `sector_sharp_p133` (p=13.3), with the *same* single-corner
+geometry, same symmetry, same everything else. That is the experiment to run,
+and it is the reason the analytic tier exists.
+
+Extended precision is a diagnostic here, not a proposed fix (per instructions).
+If it confirms the mechanism, the fix to look for is a *better-conditioned
+representation* of the same space -- e.g. orthogonalizing the FB block against
+its own lower orders before collocation -- not more terms and not more points.

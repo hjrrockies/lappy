@@ -67,3 +67,39 @@ def instance_lru_cache(maxsize=128):
         wrapper.__qualname__ = method.__qualname__
         return wrapper
     return decorator
+
+
+def clear_instance_caches(obj, recurse=('basis', 'bases', 'solver')):
+    """Drop every ``instance_lru_cache`` on ``obj`` (and, by default, on the
+    basis/solver objects it holds).
+
+    The caches are sized in *entries*, not bytes, which is the right trade for
+    repeated scalar evaluations at the same lambda but not for evaluations over
+    a large point set: one Vandermonde over a degree-10 cubature mesh is
+    megabytes, and ``NormalizedBasis.norms`` alone keeps 128 of them. Certifying
+    ten eigenvalues across four symmetry sectors that way is enough to exhaust
+    memory on a 16GB machine.
+
+    This does not change any default -- nothing calls it unless asked. Use it
+    between eigenvalues in a long certification loop to bound peak memory to
+    roughly one evaluation.
+
+    Returns the number of caches cleared.
+    """
+    n = 0
+    for key, val in list(getattr(obj, '__dict__', {}).items()):
+        if key.startswith('_icache_'):
+            try:
+                val.cache_clear()
+            except AttributeError:
+                pass
+            del obj.__dict__[key]
+            n += 1
+    for name in recurse:
+        child = getattr(obj, name, None)
+        if child is None:
+            continue
+        for c in (child if isinstance(child, (list, tuple)) else [child]):
+            if hasattr(c, '__dict__'):
+                n += clear_instance_caches(c, recurse=recurse)
+    return n

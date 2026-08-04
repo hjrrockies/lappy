@@ -1,0 +1,472 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{parskip}
+
+\geometry{margin=1.25in}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{teal},
+  frame=single,
+  framexleftmargin=4pt,
+  xleftmargin=8pt,
+  breaklines=true,
+}
+
+\newtheorem{remark}{Remark}
+\newcommand{\Nbasis}{N_{\mathrm{basis}}}
+\newcommand{\Nosc}{N_{\mathrm{osc}}}
+\newcommand{\ltol}{\texttt{ltol}}
+\newcommand{\rtol}{\texttt{rtol}}
+\newcommand{\ppl}{\texttt{ppl}}
+
+\title{MPS Settings Strategy: Preliminary Heuristics}
+\author{lappy}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document develops a principled basis for choosing \texttt{lappy} solver
+settings---primarily \texttt{n\_basis}, \texttt{n\_fb}, \texttt{n\_fs},
+\texttt{rtol}, \texttt{ltol}, and \texttt{ppl}---as functions of the desired
+accuracy, the number of eigenvalues requested, and the geometry of the domain.
+The analysis is preliminary; the benchmark sweeps are designed to refine the
+constants and validate the functional forms.
+\end{abstract}
+
+\tableofcontents
+\bigskip
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Background: the MPS tension function}
+
+The Method of Particular Solutions (MPS) finds Laplacian eigenvalues as
+approximate zeros of a \emph{tension function} $\sigma(\lambda)$.  Given a
+basis of $N$ particular solutions $\{\varphi_1,\ldots,\varphi_N\}$---exact
+solutions to $(\Delta+\lambda)u=0$ in $\mathbb{R}^2$---the tension at $\lambda$
+is
+\begin{equation}\label{eq:tension}
+  \sigma(\lambda)
+  =
+  \min_{\|c\|=1}
+  \frac{\bigl\|\sum_i c_i\varphi_i\bigr\|_{L^2(\partial\Omega)}}
+       {\bigl\|\sum_i c_i\varphi_i\bigr\|_{L^2(\Omega)}}.
+\end{equation}
+$\sigma(\lambda)$ is small when there exists a linear combination that nearly
+vanishes on $\partial\Omega$ while remaining non-trivial in the interior,
+i.e.\ when $\lambda$ is near a true Dirichlet eigenvalue.  In the GSVD
+formulation used here, $\sigma(\lambda)$ equals the smallest generalised
+singular value of the pair (boundary evaluation matrix, interior evaluation
+matrix).
+
+The eigenvalue error is bounded by the tension:
+\begin{equation}\label{eq:error_bound}
+  \frac{|\hat\lambda - \lambda|}{\lambda}
+  \;\lesssim\;
+  C\,\sigma(\hat\lambda),
+\end{equation}
+where $C$ depends on the local spectral gap.  Achieving relative accuracy
+$\ltol$ therefore requires $\sigma(\lambda)\lesssim\ltol$.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Why convergence is exponential in \texorpdfstring{$N$}{N}}
+
+The key theoretical fact underlying MPS is that the tension decays
+\emph{exponentially} in $N$ for a well-chosen basis,
+\begin{equation}\label{eq:exp_conv}
+  \sigma(\lambda) \sim \exp(-\gamma N),
+\end{equation}
+where $\gamma>0$ is a geometry-dependent convergence rate.  This follows from
+approximation theory for analytic functions.
+
+\paragraph{Fourier--Bessel (FB) basis.}
+At a corner with interior angle $\alpha$, the Dirichlet eigenfunctions have the
+form
+\begin{equation}\label{eq:fb_expansion}
+  u(r,\theta) = \sum_{n\geq 1} a_n\, r^{n\pi/\alpha}\sin\!\left(\frac{n\pi\theta}{\alpha}\right)
+\end{equation}
+in local polar coordinates $(r,\theta)$ centred at the corner.  This is the
+\emph{exact} singular form dictated by the geometry.  The FB basis at that
+corner consists precisely of $J_{n\pi/\alpha}(\sqrt{\lambda}\,r)
+\sin(n\pi\theta/\alpha)$, which matches this structure term by term.  The
+residual after including $N$ terms is therefore the tail of an analytic series,
+\begin{equation}
+  \|u - u_N\| \sim C\exp(-\gamma_{\mathrm{corner}} N),
+\end{equation}
+where $\gamma_{\mathrm{corner}}$ is determined by the analyticity radius of $u$
+away from that corner.  Since the eigenfunction is analytic everywhere except at
+corners, and the FB basis handles the corner singularities exactly, the
+remaining boundary residual falls off exponentially fast.
+
+\paragraph{Fundamental Solution (FS) basis.}
+Sources placed at distance $d$ outside the boundary generate functions that are
+analytic on all of $\overline\Omega$.  For a smooth domain (or as a supplement
+to FB functions on a polygon), $N$ such sources achieve
+\begin{equation}
+  \|u - u_N\| \sim C\exp(-\gamma_{\mathrm{fs}} N),
+\end{equation}
+where $\gamma_{\mathrm{fs}} \sim \pi d/L$ for sources distributed at distance
+$d$ from a boundary of length $L$.  The convergence rate decreases as $d\to 0$,
+so source placement matters.
+
+\paragraph{Consequence for basis sizing.}
+The tension target $\ltol$ requires
+\begin{equation}\label{eq:N_accuracy}
+  N \;\gtrsim\; \frac{|\log(\ltol)|}{\gamma}.
+\end{equation}
+This is a lower bound from the accuracy requirement alone.  As we will see, the
+oscillation count often dominates in practice.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{The oscillation count argument}
+
+The $n$-th eigenfunction oscillates at spatial frequency $\sqrt{\lambda_n}$.
+Along a boundary segment of length $\ell$ it executes roughly
+$\ell\sqrt{\lambda_n}/(2\pi)$ oscillations.  A basis of $N$ functions centred
+at a single point can accurately represent at most $O(N)$ oscillation modes.
+To capture the first $k$ eigenvalues across all boundary segments we need the
+basis to span the oscillations at scale $\sqrt{\lambda_k}$.  Summing over all
+corners or source locations,
+\begin{equation}\label{eq:Nosc}
+  \Nosc \sim C\,\frac{P\sqrt{\lambda_k}}{2\pi},
+\end{equation}
+where $P$ is the perimeter.  Substituting Weyl's law
+$\lambda_k \sim 4\pi k/A$ gives $\sqrt{\lambda_k} \sim 2\sqrt{\pi k/A}$, and
+hence
+\begin{equation}\label{eq:Nosc_weyl}
+  \Nosc \sim C\,\frac{P}{\sqrt{A}}\,\sqrt{k}.
+\end{equation}
+The factor $P/\sqrt{A}$ is the \emph{isoperimetric ratio}.  It equals
+$2\sqrt\pi\approx 3.54$ for a circle and grows for elongated or geometrically
+complex domains.  Representative values: a square has $P/\sqrt{A}=4$; an
+$L$-shape has $P/\sqrt{A}\approx 5$--$6$; the GWW isospectral domains have
+$P/\sqrt{A}\approx 7$--$9$.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{The combined \texorpdfstring{$\Nbasis$}{N\_basis} heuristic}
+
+The two constraints---accuracy \eqref{eq:N_accuracy} and oscillation count
+\eqref{eq:Nosc_weyl}---combine as
+\begin{equation}\label{eq:heuristic}
+  \Nbasis
+  \;\sim\;
+  C\,\frac{P}{\sqrt{A}}\,\sqrt{k}\;F_{\mathrm{geom}}\;f(\ltol),
+\end{equation}
+where we now describe each factor.
+
+\subsection{Accuracy factor \texorpdfstring{$f(\ltol)$}{f(ltol)}}
+
+Once $N$ exceeds the oscillation count, the tension drops rapidly.  Because
+convergence is exponential, each additional basis function buys a fixed
+multiplicative improvement.  A reasonable approximation is
+\[
+  f(\ltol) = \max\!\left(1,\;\alpha\,|\log(\ltol)|^\beta\right),
+  \quad \beta\in[0.5,\,1.0].
+\]
+The benchmark data shows that going from $\ltol=10^{-10}$ to $10^{-16}$ requires
+only 30--50\% more basis functions, consistent with $\beta\approx 0.5$.  We
+conservatively use $\beta=1$ (linear in $|\log(\ltol)|$) until more data are
+available.
+
+\subsection{Geometric difficulty factor \texorpdfstring{$F_{\mathrm{geom}}$}{F\_geom}}
+
+\paragraph{Re-entrant corners ($\alpha>\pi$).}
+The singularity exponent $\pi/\alpha<1$ means the eigenfunction is less smooth
+at the corner; more FB terms are needed to resolve it.  A rough per-corner
+factor is $(\alpha/\pi)^{1/2}$ for $\alpha>\pi$, giving
+\begin{equation}
+  F_{\mathrm{corners}}
+  = \prod_{\substack{i\,:\,\text{corner }i\\\alpha_i>\pi}}
+    \left(\frac{\alpha_i}{\pi}\right)^{1/2}.
+\end{equation}
+For example, the $L$-shape has one $270^\circ$ corner ($\alpha=3\pi/2$), giving
+$F_{\mathrm{corners}}=\sqrt{3/2}\approx 1.22$.  This is consistent with
+needing $N\approx 120$ for the $L$-shape versus $N\approx 60$--$80$ for
+rectangles and triangles.
+
+\paragraph{Irrational corner angles.}
+If $\pi/\alpha_i$ is irrational, the required FB orders are non-integer-order
+Bessel functions with slower convergence than integer-order ones.  The disk
+sector at $\theta=\pi\sqrt{2}/2$ is the clearest example in the benchmark data;
+it struggles even at $\Nbasis=160$.  For irrational angles the convergence
+rate $\gamma$ is degraded and a larger empirical multiplier is needed.
+
+\paragraph{Smooth curved boundaries.}
+Domains with curved sides but no corners (disk, ellipse, stadium) require no FB
+functions.  The FS convergence rate depends on the source placement distance
+$d$ relative to the inradius $r_{\mathrm{in}}$:
+$\gamma_{\mathrm{fs}} \sim \pi d/r_{\mathrm{in}} / P_{\mathrm{norm}}$.
+A source distance of $d\approx 0.15\,r_{\mathrm{in}}$ is the current default;
+the \texttt{fs\_placement} sweep will quantify the optimal value.
+
+\subsection{Summary and comparison with data}
+
+Putting it together, the working preliminary heuristic is
+\begin{equation}\label{eq:heuristic_final}
+  \Nbasis
+  \;\approx\;
+  \mathrm{round}\!\left(
+    C\,\frac{P}{\sqrt{A}}\,\sqrt{k}\;F_{\mathrm{geom}}\;|\log_{10}(\ltol)|
+  \right),
+\end{equation}
+with $C\approx 2$--$4$ to be fit from the benchmark data.  Table~\ref{tab:predictions}
+compares predictions to preliminary observations.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Domain & $P/\sqrt{A}$ & $F_{\mathrm{geom}}$ & Predicted $N$ ($k=10$, $\ltol=10^{-14}$) & Observed $N$ \\
+\midrule
+rect ($2\times 1$)  & 4.2 & 1.0  & 55--70   & $\approx 60$  \\
+iso\_right\_tri     & 4.6 & 1.0  & 60--75   & $\approx 70$  \\
+eq\_tri             & 4.6 & 1.0  & 60--75   & $\approx 60$  \\
+L\_shape            & 5.5 & 1.22 & 85--110  & $\approx 120$ \\
+GWW1                & $\approx 8$ & $\approx 1.5$ & 150--200 & $>160$ (tbc) \\
+\bottomrule
+\end{tabular}
+\caption{Predicted versus observed basis sizes required for $k=10$ eigenvalues
+at relative accuracy $\ltol=10^{-14}$.  Predictions use
+\eqref{eq:heuristic_final} with $C=3$.}
+\label{tab:predictions}
+\end{table}
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Role of \texorpdfstring{$k$}{k} (number of requested eigenvalues)}
+
+The number of requested eigenvalues $k$ enters through the $\sqrt{k}$ scaling
+of the oscillation count in \eqref{eq:Nosc_weyl}.  Key implications:
+
+\paragraph{Sublinear cost growth.}
+Doubling $k$ requires only $\sqrt{2}\approx 41\%$ more basis functions, not
+double.  This is one of the attractive properties of MPS relative to finite
+element methods, which typically scale as $O(k)$ or worse in practice.
+
+\paragraph{Sizing for the largest eigenvalue.}
+The basis must be sized for $\lambda_k$, the \emph{largest} eigenvalue requested.
+Using a basis sized for $k=10$ when $k=25$ eigenvalues are requested will
+reliably find the first few but miss or inaccurately compute the upper range.
+This is open issue~2.7 (adaptive basis sizing): currently \texttt{evp.solve(k)}
+uses whatever basis was constructed at initialization regardless of $k$.
+
+\paragraph{Practical lower bound.}
+\begin{equation}
+  \Nbasis \;\geq\; N_{\min}(k)
+  = \mathrm{round}\!\left(C\,\frac{P}{\sqrt{A}}\,\sqrt{k}\;F_{\mathrm{geom}}\right),
+\end{equation}
+with $C\approx 4$--$6$ as a conservative starting point.  The GSVD cost scales
+as $O(N^2 n_{\mathrm{pts}})$, so there is a penalty for over-sizing, but it is
+not catastrophic for moderate $N$.
+
+\paragraph{Interaction with \ppl.}
+The \ppl\ parameter (points per level in the bracket search) also interacts with
+$k$.  The solver searches for $k$ tension minima on $[\lambda_{\min},\lambda_{\max}]$.
+With too few points per level (\texttt{ppl}$=5$), eigenvalues can be missed
+entirely---this is the primary cause of solver failures in the benchmark data at
+small $\Nbasis$.  The recommended minimum is \texttt{ppl}$=10$; for difficult
+domains or large $k$, \texttt{ppl}$=15$--$20$ is safer.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{The FB/FS split}
+
+Given a total budget of $\Nbasis$ functions, how should they be divided between
+Fourier-Bessel (\texttt{n\_fb}) and Fundamental Solutions (\texttt{n\_fs})?
+
+\paragraph{Pure polygon, no curved sides.}
+FB only (\texttt{n\_fs}$=0$).  The FB basis exactly matches the singularity
+structure; FS functions add smooth global corrections that are redundant once the
+FB orders are high enough.
+
+\paragraph{Pure smooth domain (no corners).}
+FS only (\texttt{n\_fb}$=0$).  There is no singularity structure for the FB
+basis to capture.
+
+\paragraph{Mixed domain (polygon with curved sides).}
+Use both.  FB functions handle corner singularities; FS functions supplement the
+smooth regions.
+
+\paragraph{FB order allocation across corners.}
+With $n_{\mathrm{fb}}$ functions distributed across $n_c$ corners, the
+\texttt{fb\_strategy} parameter controls allocation:
+\begin{itemize}
+  \item \texttt{singular\_angle\_weighted} (default): allocates more orders to
+    corners with larger (more re-entrant) angles.  This is theoretically
+    motivated since more singular corners require more FB terms.
+  \item \texttt{uniform}: equal orders per corner.  Suboptimal when corner
+    angles vary widely.
+  \item \texttt{singular\_only}: all orders at non-regular corners (those where
+    $\pi/\alpha$ is not an integer), zero at regular corners.  Aggressive but
+    correct in theory for polygons with a mix of regular and singular corners.
+\end{itemize}
+The \texttt{fb\_corner\_sweep} will quantify the accuracy difference between
+strategies.  The preliminary expectation is that for domains with one dominant
+singular corner (such as the $L$-shape), \texttt{singular\_only} and
+\texttt{singular\_angle\_weighted} will outperform \texttt{uniform}.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Collocation points}
+
+The boundary and interior collocation points affect accuracy and stability, but
+are less sensitive than basis size.
+
+\paragraph{Boundary points (\texttt{bdry\_pts\_factor}).}
+The linear system is overdetermined: we use
+$\texttt{bdry\_pts\_factor}\times\Nbasis$ boundary points.  A factor of $2.0$
+(the default) is standard for MPS and gives good conditioning.  Going below
+$1.5$ risks an underdetermined system; going above $3.0$ adds cost without
+meaningful benefit.  Points should be distributed proportionally to segment
+length.  Gauss--Legendre quadrature points are preferable to uniform spacing
+because they avoid endpoint clustering artifacts.
+
+\paragraph{Interior points (\texttt{int\_pts\_factor}).}
+Used for basis normalisation ($L^2$ norm over $\Omega$).  A factor of $1.0$ is
+typically sufficient; the normalisation is not sensitive to this choice as long
+as the points are reasonably distributed.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Regularisation: \texttt{rtol} and \texttt{ltol}}
+
+The GSVD-based MPS involves two tolerance parameters with different roles.
+
+\paragraph{\rtol\ (regularisation tolerance).}
+Singular values of the basis matrix below $\rtol\times\sigma_{\max}$ are
+discarded.  This controls ill-conditioning from near-linearly-dependent basis
+functions.
+\begin{itemize}
+  \item Too small: numerical noise dominates and the tension function becomes
+    noisy, causing missed or spurious eigenvalues.
+  \item Too large: legitimate but small singular values (corresponding to weakly
+    excited modes) are discarded, causing missed eigenvalues.
+\end{itemize}
+Preliminary results from the \texttt{regularization\_sweep} suggest the sweet
+spot is $\rtol\in[10^{-12},10^{-14}]$ for well-conditioned domains.  The GWW
+domain degrades significantly below $\rtol=10^{-12}$, suggesting the basis
+becomes ill-conditioned at large $N$ for complex geometries.
+
+A geometry-motivated heuristic is
+\begin{equation}
+  \rtol \;\sim\; C_r\exp(-\gamma\,\Nbasis),
+\end{equation}
+i.e., set \rtol\ to the expected tension floor for the given basis size and
+geometry.  In practice $\rtol=10^{-14}$ is a safe default; tighten to
+$10^{-16}$ only if the basis is verified to be well-conditioned.
+
+\paragraph{\ltol\ (eigenvalue acceptance threshold).}
+A tension minimum is accepted as an eigenvalue only if $\sigma(\hat\lambda)<\ltol$.
+This should be set relative to the accuracy the basis is expected to achieve:
+\begin{equation}
+  \ltol \;\sim\; 10\times\exp(-\gamma\,\Nbasis) \;\sim\; 10\times\sigma_{\mathrm{floor}}(\Nbasis).
+\end{equation}
+Setting $\ltol$ too tight causes real eigenvalues to be rejected; too loose
+accepts noise peaks as eigenvalues.  The current default of $\ltol=10^{-15}$ is
+aggressive; for small bases ($N<50$) or complex domains,
+$\ltol=10^{-10}$--$10^{-12}$ is more reliable.
+
+\paragraph{The \rtol/\ltol\ relationship.}
+Both tolerances should be set consistently.  A rough guideline is
+\begin{equation}
+  \ltol \;\approx\; 100\times\rtol,
+\end{equation}
+which ensures that basis regularisation does not create artificial tension minima
+above the eigenvalue acceptance threshold.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Practical recommendations (preliminary)}
+
+Until the benchmark sweeps are complete, the following settings are conservative
+starting points.
+
+\paragraph{Step 1: estimate $\Nbasis$.}
+
+\begin{lstlisting}
+import numpy as np
+
+def estimate_n_basis(domain, k, ltol=1e-14):
+    P = domain.perim
+    A = domain.area
+    iso_ratio = P / np.sqrt(A)
+    # geometric difficulty from re-entrant corners
+    angles = domain.int_angles
+    F_geom = np.prod([np.sqrt(a / np.pi) for a in angles if a > np.pi]) or 1.0
+    C = 5.0   # conservative constant; refine from benchmarks
+    return round(C * iso_ratio * np.sqrt(k) * F_geom * abs(np.log10(ltol)))
+\end{lstlisting}
+
+\paragraph{Step 2: set the FB/FS split.}
+\begin{itemize}
+  \item Polygon with all straight sides: \texttt{n\_fs}$=0$, \texttt{n\_fb}$=\Nbasis$.
+  \item Smooth domain: \texttt{n\_fb}$=0$, \texttt{n\_fs}$=\Nbasis$.
+  \item Mixed: \texttt{n\_fb}$=\mathrm{round}(0.5\,\Nbasis)$,
+    \texttt{n\_fs}$=\Nbasis-\texttt{n\_fb}$.
+\end{itemize}
+
+\paragraph{Step 3: set tolerances.}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Use case & \rtol & \ltol & \ppl \\
+\midrule
+Quick / exploratory         & $10^{-10}$ & $10^{-8}$  & 10 \\
+Standard                    & $10^{-12}$ & $10^{-10}$ & 10 \\
+High accuracy               & $10^{-14}$ & $10^{-12}$ & 15 \\
+Near-degenerate eigenvalues & $10^{-14}$ & $10^{-12}$ & 20 \\
+\bottomrule
+\end{tabular}
+\caption{Recommended tolerance settings by use case.}
+\end{table}
+
+\paragraph{Step 4: check the result.}
+A result should be treated as reliable if:
+\begin{itemize}
+  \item \texttt{len(eigs) == k} (all requested eigenvalues found),
+  \item \texttt{max(tensions) < ltol} (all eigenvalues accepted with margin),
+  \item \texttt{median(rel\_errors) < ltol} (when reference eigenvalues are
+    available).
+\end{itemize}
+If \texttt{len(eigs) < k}, increase $\Nbasis$ by 25--50\% and/or increase
+\ppl.
+
+%% ─────────────────────────────────────────────────────────────────────────────
+\section{Open questions for the benchmark data}
+
+The following will be addressed as more sweep results become available.
+
+\begin{enumerate}
+  \item \textbf{The constant $C$.}  The current range $C\approx 2$--$6$ is too
+    wide.  The \texttt{basis\_size} sweep will pin this down per domain class.
+
+  \item \textbf{The accuracy exponent $\beta$.}  Is $f(\ltol)\sim|\log(\ltol)|$
+    or $\sim|\log(\ltol)|^{1/2}$?  The \texttt{regularization\_sweep} data will
+    answer this.
+
+  \item \textbf{Optimal FB/FS ratio for mixed domains.}  The
+    \texttt{basis\_size} sweep covers \texttt{fb\_fraction}$\in\{0,\,0.25,\,0.5,\,0.75,\,1.0\}$;
+    we expect a clear optimum around $0.5$--$0.75$ for polygons.
+
+  \item \textbf{FS source distance scaling.}  The \texttt{fs\_placement} sweep
+    will determine how accuracy depends on \texttt{fs\_d\_scale}.  The current
+    theoretical prediction is $\gamma_{\mathrm{fs}}\sim\pi d/r_{\mathrm{in}}$;
+    the data will test this.
+
+  \item \textbf{The irrational angle case.}  The disk sector at
+    $\theta=\pi\sqrt{2}/2$ is a red flag.  We need to understand whether this
+    is a basis sizing issue, an FB order allocation issue, or a fundamental
+    limitation of the FB convergence rate.
+
+  \item \textbf{The $\sqrt{k}$ scaling exponent.}  The $\sqrt{k}$ prediction
+    from Weyl's law should be directly testable from the \texttt{n\_eigs} sweep.
+\end{enumerate}
+
+\end{document}

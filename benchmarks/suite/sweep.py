@@ -10,6 +10,7 @@ fresh context can see exactly where things stand. Prints one line per domain.
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -44,7 +45,29 @@ def save_queue(q):
     os.replace(tmp, QUEUE)   # atomic; a crash mid-write can't corrupt the queue
 
 
-def run_one(key, tag, n_basis, n_eigs, timeout, no_sym=False, workers=4):
+def swap_used_mb():
+    """System-wide swap in use, MB. macOS only; 0.0 elsewhere."""
+    try:
+        out = subprocess.run(['sysctl', '-n', 'vm.swapusage'],
+                             capture_output=True, text=True, timeout=5).stdout
+        # "total = 2048.00M  used = 619.62M  free = 1428.38M  (encrypted)"
+        used = out.split('used =')[1].split()[0]
+        return float(used.rstrip('MG')) * (1024 if used.endswith('G') else 1)
+    except Exception:
+        return 0.0
+
+
+# Guard the *machine*, not the process. macOS refuses to lower RLIMIT_AS or
+# RLIMIT_DATA ("current limit exceeds maximum limit") and `ulimit -v` is a
+# no-op, so a hard per-process cap is not available. Worse, an RSS-based
+# watchdog is actively misleading here: memory is compressed, so a runaway
+# `rect_thin` read 4.7GB resident while its real footprint was 59.8GB with
+# 40GB of swap. Swap growth is the signal that actually correlates with the
+# machine becoming unusable, and it catches every cause at once.
+SWAP_LIMIT_MB = float(os.environ.get('LAPPY_RUN_SWAP_MB', '4000'))
+
+
+def run_one(key, tag, n_basis, n_eigs, timeout, no_sym=False, workers=1):
     os.makedirs(LOGS, exist_ok=True)
     cmd = [sys.executable, '-m', 'benchmarks.suite.runner', key,
            '--tag', tag, '--workers', str(workers)]
@@ -56,13 +79,34 @@ def run_one(key, tag, n_basis, n_eigs, timeout, no_sym=False, workers=4):
         cmd += ['--no-sym']
     log = os.path.join(LOGS, f'{key}__{tag}.log')
     t0 = time.time()
+    baseline = swap_used_mb()
+    budget = baseline + SWAP_LIMIT_MB
+    rc, note = None, ''
     with open(log, 'w') as fh:
-        try:
-            p = subprocess.run(cmd, cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT,
-                               timeout=timeout)
-            rc, note = p.returncode, ''
-        except subprocess.TimeoutExpired:
-            rc, note = -9, f'timeout after {timeout}s'
+        p = subprocess.Popen(cmd, cwd=ROOT, stdout=fh,
+                             stderr=subprocess.STDOUT, start_new_session=True)
+        while True:
+            try:
+                rc = p.wait(timeout=5)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if time.time() - t0 > timeout:
+                note = f'timeout after {timeout}s'
+                break
+            sw = swap_used_mb()
+            if sw > budget:
+                note = (f'swap guard: system swap {sw:.0f}MB exceeded '
+                        f'baseline+{SWAP_LIMIT_MB:.0f}MB')
+                break
+        if rc is None:
+            # kill the whole process group: manual_solve may have forked
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except Exception:
+                p.kill()
+            p.wait(timeout=30)
+            rc = -9
     return rc, note, time.time() - t0
 
 
@@ -85,7 +129,7 @@ def main(argv=None):
     ap.add_argument('--n-basis', type=int, default=None)
     ap.add_argument('--n-eigs', type=int, default=None)
     ap.add_argument('--timeout', type=int, default=900)
-    ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--no-sym', action='store_true')
     ap.add_argument('--redo', action='store_true',
                     help='rerun even if already done')
@@ -108,7 +152,8 @@ def main(argv=None):
     if not args.redo:
         keys = [k for k in keys if q.get(k, {}).get('status') != 'done']
 
-    print(f'# {len(keys)} domains, tag={args.tag}, timeout={args.timeout}s')
+    print(f'# {len(keys)} domains, tag={args.tag}, timeout={args.timeout}s',
+          flush=True)
     for i, key in enumerate(keys, 1):
         ent = q.setdefault(key, dict(status='pending', attempts=0,
                                      best_digits=None, best_tag=None,
@@ -133,11 +178,13 @@ def main(argv=None):
             if 'analytic_min_digits' in res:
                 extra = f" analytic={res['analytic_min_digits']:.1f}"
             print(f'[{i}/{len(keys)}] {key:20s} {ent["status"]:6s} '
-                  f'digits={dig:5.1f}{extra} nb={res["n_basis"]} {secs:.0f}s')
+                  f'digits={dig:5.1f}{extra} nb={res["n_basis"]} {secs:.0f}s',
+                  flush=True)
         else:
             ent['status'] = 'failed'
             ent['notes'] = (note or f'rc={rc}')[:200]
-            print(f'[{i}/{len(keys)}] {key:20s} FAILED {ent["notes"]} {secs:.0f}s')
+            print(f'[{i}/{len(keys)}] {key:20s} FAILED {ent["notes"]} '
+                  f'{secs:.0f}s', flush=True)
         save_queue(q)
 
     return 0

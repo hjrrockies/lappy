@@ -23,6 +23,52 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, 'benchmarks', 'reference'))
 
+# --- memory discipline -----------------------------------------------------
+# A single solve is small (~170MB peak: solver 152MB, certification 169MB).
+# The danger is multiplicative. The symmetry path builds one solver PER SECTOR
+# (4 for a D2 group), and manual_solve forks `n_workers` processes per sector,
+# each copy-on-writing the cached basis matrices as it touches them. At
+# n_workers=4 that is 16 live copies, which took one runner to 2.35GB and the
+# machine to 13GB of swap -- where it thrashed instead of computing.
+#
+# Two guards, both here so every entry point inherits them:
+#   1. Pin BLAS to one thread. With per-lambda process parallelism already in
+#      manual_solve, threaded BLAS only oversubscribes (load 17 on 10 cores)
+#      and adds a thread-local workspace per fork.
+#   2. A hard RSS ceiling, checked from a watchdog thread; the process aborts
+#      itself rather than pushing the machine into swap.
+for _v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
+           'VECLIB_MAXIMUM_THREADS', 'NUMEXPR_NUM_THREADS'):
+    os.environ.setdefault(_v, '1')
+
+MEM_LIMIT_MB = int(os.environ.get('LAPPY_RUN_MEM_MB', '6000'))
+
+
+def _cap_address_space(limit_mb=MEM_LIMIT_MB):
+    """Hard-cap this process's address space so a runaway allocation raises
+    MemoryError instead of driving the machine into swap.
+
+    An observational watchdog is not enough on macOS: memory is compressed, so
+    `ru_maxrss` reports the *resident* size while the real footprint can be an
+    order of magnitude larger. A `rect_thin` run was killed by an RSS watchdog
+    at 4.7GB while Activity Monitor showed a 59.8GB footprint and 40GB of swap
+    -- by which point the damage was done.
+
+    RLIMIT_AS makes the allocation itself fail, at the point of the bad malloc,
+    with a traceback pointing at the culprit. That turns an unbounded swap
+    event into an ordinary recorded failure for one domain.
+    """
+    import resource
+    n = limit_mb * 1024 * 1024
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        cap = n if hard in (resource.RLIM_INFINITY, -1) else min(n, hard)
+        resource.setrlimit(resource.RLIMIT_AS, (cap, hard))
+        return cap
+    except (ValueError, OSError) as exc:
+        sys.stderr.write(f'could not cap address space: {exc}\n')
+        return None
+
 RUN = os.path.join(HERE, 'run')
 RESULTS = os.path.join(RUN, 'results')
 
@@ -123,7 +169,7 @@ def main(argv=None):
     ap.add_argument('--tag', default='base',
                     help='label distinguishing configs of the same domain')
     ap.add_argument('--no-sym', action='store_true')
-    ap.add_argument('--workers', type=int, default=4)
+    ap.add_argument('--workers', type=int, default=1)
     args = ap.parse_args(argv)
 
     from benchmarks.suite.domains import SUITE
@@ -131,6 +177,7 @@ def main(argv=None):
     n_basis = args.n_basis or entry.n_basis
     n_eigs = args.n_eigs or entry.n_eigs
 
+    _cap_address_space()
     os.makedirs(RESULTS, exist_ok=True)
     path = os.path.join(RESULTS, f'{args.key}__{args.tag}.json')
     t0 = time.time()
