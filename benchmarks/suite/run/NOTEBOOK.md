@@ -704,3 +704,22 @@ functions that are supported in the middle of the domain (more
 fundamental-solution sources), not more Fourier--Bessel orders at the corners.
 That is the opposite of what the earlier tuning sessions tried, and consistent
 with their finding that corner reweighting made chevron worse.
+
+### The interaction, completed
+
+`parallelogram_p127` (two sharp corners, p=12.7) came in at **4.0** digits
+against `parallelogram_p65`'s 7.1. So:
+
+                    p ~ 6.5     p ~ 13
+    one corner       14.5        14.5      (disk_sector, true error)
+    two corners       7.1         4.0      (parallelogram, certified)
+
+Sharpness is **free with one corner and costly with two**, and the cost grows
+with p only in the two-corner case. That is an interaction, not a main effect —
+which is why every attempt to explain chevron in terms of "sharp corners are
+hard" failed, including mine. A single corner of *any* sharpness is fine; two
+corners whose expansions cannot see each other are not.
+
+The two families hold symmetry order (2), basis construction, and n_basis
+fixed while differing in corner count, so the comparison is about as controlled
+as this gets without building domains specifically for it.

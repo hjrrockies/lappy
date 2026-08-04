@@ -1,0 +1,14 @@
+{
+ "key": "spiral_t25",
+ "n_basis": 320,
+ "n_eigs": 10,
+ "ok": false,
+ "error": "RuntimeError: corner_branch_cut_polyline: no valid polyline cut found for corner 0",
+ "traceback": "Traceback (most recent call last):\n  File \"/Users/hringer/projects/python/lappy/benchmarks/suite/runner.py\", line 217, in main\n    out = solve_and_certify(entry, n_basis, n_eigs,\n                            use_sym=not args.no_sym, n_workers=args.workers,\n    ...<2 lines>...\n                            int_npts=args.int_npts,\n                            bdry_mult=args.bdry_mult)\n  File \"/Users/hringer/projects/python/lappy/benchmarks/suite/runner.py\", line 115, in solve_and_certify\n    solver = build_solver(dom, n_basis, bdry_mult=bdry_mult,\n                          int_npts=int_npts or max(2 * n_basis, 500))\n  File \"/Users/hringer/projects/python/lappy/benchmarks/reference/common.py\", line 26, in build_solver\n    basis = bases.make_default_basis(domain, n_basis, **basis_kwargs)\n  File \"/Users/hringer/projects/python/lappy/lappy/bases.py\", line 71, in make_default_basis\n    fb_basis = FourierBesselBasis.from_domain(domain, fb_orders)\n  File \"/Users/hringer/projects/python/lappy/lappy/bases.py\", line 530, in from_domain\n    branch_cuts, branch_polylines = cls._corner_branch_data(dom, polyline_cuts)\n                                    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/hringer/projects/python/lappy/lappy/bases.py\", line 513, in _corner_branch_data\n    verts, beta = corner_branch_cut_polyline(dom, int(i))\n                  ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"/Users/hringer/projects/python/lappy/lappy/geometry.py\", line 1360, in corner_branch_cut_polyline\n    raise RuntimeError(\n        f\"corner_branch_cut_polyline: no valid polyline cut found for corner {i}\")\nRuntimeError: corner_branch_cut_polyline: no valid polyline cut found for corner 0\n",
+ "tag": "nb320",
+ "seed": 0,
+ "int_npts": null,
+ "bdry_mult": 2,
+ "seconds": 0.009110689163208008,
+ "use_sym": true
+}

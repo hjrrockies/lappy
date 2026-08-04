@@ -220,11 +220,12 @@
  },
  "parallelogram_p127": {
   "attempts": 1,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "best_digits": 3.9932987006018874,
+  "best_n_basis": 320,
+  "best_seed": 1,
+  "best_tag": "nb320s1",
   "notes": "",
-  "status": "running"
+  "status": "short"
  },
  "parallelogram_p65": {
   "attempts": 1,
@@ -335,20 +336,21 @@
   "status": "done"
  },
  "spiral": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 1.5843593330390235,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "nb320",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "spiral_t25": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "",
-  "status": "pending"
+  "notes": "rc=1",
+  "status": "failed"
  },
  "square": {
   "attempts": 4,

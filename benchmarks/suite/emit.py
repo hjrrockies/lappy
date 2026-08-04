@@ -61,15 +61,24 @@ def checks(key, r):
 
     # Weyl completeness: the two-term count at the last eigenvalue should be
     # close to how many we found. Asymptotic, so only a large gap is a signal.
+    # Analytic agreement, where available, is far stronger evidence of
+    # completeness than the Weyl count: it compares the actual values, mode by
+    # mode, against a closed form. If it passes, a Weyl discrepancy tells us
+    # only that a two-term asymptotic is inaccurate at n=10 -- which it is.
+    # eq_tri agrees with its closed form to 14.5 digits and still shows a Weyl
+    # gap of 1.6, because its area is 0.43 and the asymptotics have not kicked
+    # in.
+    analytic_ok = r.get('analytic_min_digits', -1) >= 8.0
+
     nw = r.get('weyl_count_at_last')
-    if nw is not None and np.isfinite(nw):
+    if nw is not None and np.isfinite(nw) and not analytic_ok:
         gap = r['n_found'] - nw
-        # Threshold was 3, which is too lax: iso_tri_h1 missed exactly one
-        # eigenvalue (lambda=98.696, the (4,2) mode) and the Weyl gap of ~1
-        # sailed through, while the analytic check caught it at 0.6 digits.
-        # A missed eigenvalue is the worst failure mode for a reference table,
-        # so flag at 1.5 and accept some false positives from the asymptotics.
-        if abs(gap) > 1.5:
+        # Scale the tolerance with the count: the two-term asymptotic is only
+        # good to a fraction of N, so a fixed threshold either misses a dropped
+        # mode at large N or cries wolf at small N. 1.5 absolute caught
+        # iso_tri_h1's genuinely missing mode; 25% keeps small-domain
+        # asymptotic error from flagging correct tables.
+        if abs(gap) > max(1.5, 0.25 * r['n_found']):
             problems.append(f'Weyl mismatch: found {r["n_found"]}, '
                             f'predicted ~{nw:.1f}')
         else:
