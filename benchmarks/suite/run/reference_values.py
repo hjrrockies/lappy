@@ -65,6 +65,11 @@ REFERENCE = {
         certified_digits=9.66,
         n_basis=480, method='symmetry(H_shape half-turn, |G|=2)',
     ),
+    'GWW2': dict(
+        eigs=np.array([2.53794399979855, 3.65550971352615, 5.17555935622823, 6.53755744376565, 7.24807786256727, 9.20929499842482, 10.5969856913674, 11.5413953956008, 12.3370055013617, 13.0536540557402]),
+        certified_digits=9.35,
+        n_basis=320, method='full domain',
+    ),
     'reg_ngon_5': dict(
         eigs=np.array([7.95708938934952, 20.1062816449084, 20.1062816449085, 35.6546942178268, 35.6546942178268, 41.313935812799, 55.7007982882069, 55.7007982882071, 64.5218829508989, 64.5218829508993]),
         certified_digits=12.81,
@@ -105,6 +110,11 @@ REFERENCE = {
         certified_digits=12.69,
         n_basis=240, method='symmetry(parallelogram half-turn, |G|=2)',
     ),
+    'parallelogram_p65': dict(
+        eigs=np.array([48.9439173733571, 58.4604262220068, 73.5434238138874, 92.8849153724109, 114.722716622591, 137.867571039264, 162.828651329489, 186.859653818909, 190.688191039044, 198.904142919713]),
+        certified_digits=8.30,
+        n_basis=320, method='full domain',
+    ),
     'right_trapezoid': dict(
         eigs=np.array([15.1972519264543, 29.5214811141449, 44.9484877813511, 49.3480220054469, 65.3765357098457, 71.5726796803367, 92.306906763049, 97.3807226460221, 98.6960440108933, 115.520173094668]),
         certified_digits=13.30,
@@ -141,14 +151,12 @@ REFERENCE = {
 #   rect_thin: no run
 #   iso_right_tri: 5.8 digits
 #   GWW1: 6.3 digits
-#   GWW2: 7.7 digits
 #   chevron_1_15: 5.6 digits
 #   chevron_1_2: 3.3 digits
 #   chevron_2_3: 4.1 digits
 #   chevron_2_4: 4.8 digits
 #   chevron_1_125: 4.7 digits
 #   iso_tri_h05: 2.7 digits
-#   parallelogram_p65: 7.9 digits
 #   parallelogram_p127: 4.0 digits
 #   spiral: found 3 of 10; Weyl mismatch: found 3, predicted ~11.1
 #   spiral_t25: no run

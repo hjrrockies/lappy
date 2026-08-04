@@ -87,8 +87,10 @@ def weyl_count(domain, lam):
 
 def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
                       max_recurse=8, n_pts_per_eig=11, int_npts=None,
-                      bdry_mult=2, basis_kwargs=None):
+                      bdry_mult=2, basis_kwargs=None, fs_placement='default',
+                      fs_frac=0.5, fs_d=1.0):
     """Returns a result dict. Raises on failure; the caller records that."""
+    from lappy import bases, mps, MPSEigensolver
     from lappy.symmetry import domain_symmetry
     from common import build_solver, manual_solve, polish_eigs, lambda_window
     from symsolve import solve_sym
@@ -97,6 +99,26 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
     dom = entry.domain()
     grp = entry.group() if use_sym else None
     bkw = basis_kwargs or {}
+
+    def _build_basis(d, nb):
+        """Basis for this run.
+
+        `default` is `make_default_basis`. `boundary` replaces its
+        corner-clustered `FundamentalBasis.by_corners` block with
+        `by_boundary`, which distributes sources along an offset boundary.
+        The default basis puts *every* function at the corners, so a domain
+        whose singular corners are far apart has no representation of the
+        region between them; distributing the sources is worth ~1.4 digits on
+        parallelogram_p65 and halves its seed spread. See FINDINGS.md section 8.
+        """
+        if fs_placement == 'default':
+            return bases.make_default_basis(d, nb, **bkw)
+        n_fs = int(round(fs_frac * nb))
+        fb = bases.FourierBesselBasis.from_domain(
+            d, bases.fb_corner_orders(d, nb - n_fs))
+        n_seg = len(d.bdry.segments)
+        per_seg = np.full(n_seg, max(n_fs // n_seg, 1), dtype=int)
+        return fb + bases.FundamentalBasis.by_boundary(d, per_seg, d=fs_d)
 
     if grp is not None:
         # int_npts defaults inside build_sym_solver to n_basis//|G|, i.e.
@@ -113,9 +135,18 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
         method = f'symmetry({grp.name}, |G|={grp.order})'
         mults = None
     else:
-        solver = build_solver(dom, n_basis, bdry_mult=bdry_mult,
-                              int_npts=int_npts or max(2 * n_basis, 500),
-                              **bkw)
+        if fs_placement == 'default':
+            solver = build_solver(dom, n_basis, bdry_mult=bdry_mult,
+                                  int_npts=int_npts or max(2 * n_basis, 500),
+                                  **bkw)
+        else:
+            basis = _build_basis(dom, n_basis)
+            n_per_seg = mps.pts_per_seg(dom, basis, mult=bdry_mult)
+            bp = dom.bdry_pts(n_per_seg)
+            ip = dom.int_pts(method='random',
+                             npts_rand=int_npts or max(2 * n_basis, 500))
+            basis = basis.to_normalized((bp, ip))
+            solver = MPSEigensolver(basis, bp, ip, rtol=1e-14, ttol=1e-3)
         a, b = lambda_window(dom, n_eigs)
         e, mults, _ = manual_solve(solver, a, b,
                                    max(n_pts_per_eig * n_eigs, 50),
@@ -190,6 +221,12 @@ def main(argv=None):
                     help='interior collocation points (per sector); '
                          'default is ~1 per basis column')
     ap.add_argument('--bdry-mult', type=int, default=2)
+    ap.add_argument('--fs-placement', default='default',
+                    choices=('default', 'boundary'),
+                    help="'boundary' distributes fundamental sources along "
+                         'an offset boundary instead of clustering them at '
+                         'corners (FINDINGS.md section 8)')
+    ap.add_argument('--fs-d', type=float, default=1.0)
     ap.add_argument('--fs-frac', type=float, default=None,
                     help='fraction of the basis given to fundamental solutions;\n'
                          'make_default_basis default is 0.5')
@@ -227,7 +264,12 @@ def main(argv=None):
                                 bdry_mult=args.bdry_mult,
                                 basis_kwargs=({'fs_frac': args.fs_frac}
                                               if args.fs_frac is not None
-                                              else None))
+                                              and args.fs_placement == 'default'
+                                              else None),
+                                fs_placement=args.fs_placement,
+                                fs_frac=(args.fs_frac
+                                         if args.fs_frac is not None else 0.5),
+                                fs_d=args.fs_d)
         out['ok'] = True
     except Exception as exc:
         out = dict(key=args.key, n_basis=n_basis, n_eigs=n_eigs, ok=False,
@@ -238,6 +280,7 @@ def main(argv=None):
     out['int_npts'] = args.int_npts
     out['bdry_mult'] = args.bdry_mult
     out['fs_frac'] = args.fs_frac
+    out['fs_placement'] = args.fs_placement
     out['seconds'] = time.time() - t0
     out['use_sym'] = not args.no_sym
     with open(path, 'w') as fh:

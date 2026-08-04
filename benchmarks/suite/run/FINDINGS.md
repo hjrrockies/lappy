@@ -153,7 +153,43 @@ cause. Note that simply raising `fs_frac` does nothing (7.6/7.1/7.4/7.0 across
 0.3-0.85) — because it trades corner-localized functions for *other*
 corner-localized functions. The placement is the lever, not the fraction.
 
-**Scope, honestly stated.** The gain does NOT transfer to chevron:
+**Scope: it is NOT a safe default.** Applied across the near-miss domains the
+result is strongly domain-dependent, and the isospectral pair settles it:
+
+    domain              default   distributed   delta
+    GWW2                  7.7        9.4        +1.7
+    parallelogram_p65     7.1        8.3-9.0    +1.2 to +1.9
+    cut_square_r025       7.2        7.1         0.0
+    mushroom_thin         7.4        6.5        -0.9
+    GWW1                  6.3        2.1        -4.2
+
+`GWW1` and `GWW2` are **isospectral** and geometrically near-identical — same
+area, same perimeter, same corner angles, same absence of symmetry. They
+responded in opposite directions by 1.7 and -4.2 digits. Whatever the offset
+boundary is doing, it is sensitive to something incidental about where the
+sources land relative to that particular boundary, not to a robust property of
+the domain class.
+
+So §8 is **a knob worth trying per domain, not a better default.** The
+mechanism in §2 is still supported (it predicts *when* placement should matter,
+and it does), but "distribute the sources" is not the general fix I claimed one
+paragraph ago. A principled version would choose source positions from the
+geometry — see the corner-separation experiment in "what to try next" — rather
+than from a fixed offset.
+
+Two things it did buy, which are real:
+
+- **`GWW2` at 9.4 certified, agreeing with Driscoll's published table to 11.2
+  digits.** The best value for that domain in this run by a wide margin.
+- **`parallelogram_p65` over the 8-digit bar** on every seed tried.
+
+**The earlier scoping claim was wrong.** I first wrote that the gain fails when
+a reentrant corner is present, based on chevron. `GWW1`/`GWW2` are
+reentrant-dominated and gave the largest gain *and* the largest loss, so that
+explanation does not survive. The honest statement is that the effect is large
+and unpredictable on domains with several spread-out singular corners.
+
+**The original chevron observation still stands:**
 
     domain              default   by_boundary (0.5 / 0.7)
     parallelogram_p65     7.1        9.0

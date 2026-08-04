@@ -846,3 +846,43 @@ This is worth knowing for shape optimization, where a design can drift towards
 a symmetric configuration and two eigenvalues approach: the solver will hold
 them apart perfectly if the symmetry separates them, and silently fuse them if
 it does not.
+
+---
+
+## The isospectral pair does its job: §8 is a knob, not a fix
+
+Applying distributed fundamental sources across the near-miss domains:
+
+    GWW2                7.7 -> 9.4    (+1.7)
+    parallelogram_p65   7.1 -> 8.3    (+1.2)
+    cut_square_r025     7.2 -> 7.1    ( 0.0)
+    mushroom_thin       7.4 -> 6.5    (-0.9)
+    GWW1                6.3 -> 2.1    (-4.2)
+
+**GWW1 and GWW2 are isospectral.** Same spectrum, same area, same perimeter,
+same corner angles, neither has any symmetry. They responded in opposite
+directions by 1.7 and -4.2 digits.
+
+That is decisive, and it is decisive *because* the pair is in the suite. Any
+other two domains differing this much could be explained away by some
+geometric difference. These two differ in almost nothing that should matter,
+so the effect cannot be a robust property of the domain class — it must be
+sensitive to where the offset sources happen to land relative to that
+particular boundary polygon.
+
+Conclusion: **distributing the sources is a per-domain knob worth trying, not a
+better default.** §2's mechanism still predicts correctly *when* placement
+matters; it does not license "distribute and win".
+
+I had also written, one result earlier, that the fix fails when a reentrant
+corner is present (based on chevron). GWW1/GWW2 are reentrant-dominated and
+produced both the best and the worst outcomes, so that explanation is dead too.
+Recorded rather than quietly dropped: I proposed two scoping rules from small
+samples and the data killed both.
+
+**What it did buy, which is real:** `GWW2` at 9.4 certified and agreeing with
+Driscoll's published table to **11.2 digits** — comfortably the best value for
+that domain in this run — and `parallelogram_p65` over the bar on every seed.
+Both are in the table, both reproducible.
+
+Final table: **27 domains at >=8 certified digits.**

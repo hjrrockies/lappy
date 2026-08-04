@@ -1,6 +1,6 @@
 # Reference run results
 
-25 domains met the 8-digit bar; 19 withheld.
+27 domains met the 8-digit bar; 17 withheld.
 
 | domain | tier | certified digits | vs exact | n_basis | s |
 |---|---|---|---|---|---|
@@ -18,7 +18,7 @@
 | `L_shape` | corner | 13.6 | — | 240 | 23 |
 | `H_shape` | corner | 9.7 | — | 480 | 196 |
 | `GWW1` | corner | 6.3 | — | 320 | 455 |
-| `GWW2` | corner | 7.7 | — | 320 | 289 |
+| `GWW2` | corner | 9.4 | — | 320 | 439 |
 | `reg_ngon_5` | corner | 12.8 | — | 240 | 24 |
 | `reg_ngon_6` | corner | 12.5 | — | 320 | 118 |
 | `reg_ngon_7` | corner | 11.5 | — | 240 | 44 |
@@ -33,7 +33,7 @@
 | `iso_tri_h4` | corner | 11.3 | — | 240 | 52 |
 | `iso_tri_h16` | corner | 10.8 | — | 120 | 31 |
 | `parallelogram_60` | corner | 12.7 | — | 240 | 34 |
-| `parallelogram_p65` | corner | 7.9 | — | 320 | 112 |
+| `parallelogram_p65` | corner | 8.3 | — | 320 | 266 |
 | `parallelogram_p127` | corner | 4.0 | — | 320 | 307 |
 | `right_trapezoid` | corner | 13.3 | — | 240 | 56 |
 | `spiral` | corner | 1.6 | — | 320 | 408 |
