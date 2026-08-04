@@ -132,6 +132,8 @@ def main(argv=None):
     ap.add_argument('--timeout', type=int, default=900)
     ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--retries', type=int, default=2,
+                    help='on failure, retry on seed+1, seed+2, ...')
     ap.add_argument('--no-sym', action='store_true')
     ap.add_argument('--redo', action='store_true',
                     help='rerun even if already done')
@@ -168,17 +170,35 @@ def main(argv=None):
         ent['attempts'] = ent.get('attempts', 0) + 1
         save_queue(q)
 
-        rc, note, secs = run_one(key, args.tag, args.n_basis, args.n_eigs,
-                                 args.timeout, args.no_sym, args.workers,
-                                 seed=args.seed)
-        res = read_result(key, args.tag) if rc == 0 else None
+        # Retry a failure on a different seed. Interior collocation points are
+        # drawn randomly, and an unlucky draw can produce a badly conditioned
+        # system whose tension curve is noisy enough to send the bracket search
+        # (and its memory) out of control: reg_ngon_6 reaches 12.8 digits on
+        # some draws and trips the swap guard on seed 0. Seeding made that
+        # deterministic, which is right for reproducibility but means a single
+        # bad seed would permanently lose the domain.
+        res = None
+        for attempt in range(args.retries + 1):
+            seed = args.seed + attempt
+            tag = args.tag if attempt == 0 else f'{args.tag}s{seed}'
+            rc, note, secs = run_one(key, tag, args.n_basis, args.n_eigs,
+                                     args.timeout, args.no_sym, args.workers,
+                                     seed=seed)
+            res = read_result(key, tag) if rc == 0 else None
+            if res and res.get('ok'):
+                args_tag_used = tag
+                break
+            if attempt < args.retries:
+                print(f'      {key}: seed {seed} failed ({note or rc}), '
+                      f'retrying on seed {seed + 1}', flush=True)
 
         if res and res.get('ok'):
             dig = res['min_digits']
             best = ent.get('best_digits')
             if best is None or dig > best:
-                ent.update(best_digits=dig, best_tag=args.tag,
-                           best_n_basis=res['n_basis'])
+                ent.update(best_digits=dig, best_tag=res.get('tag', args.tag),
+                           best_n_basis=res['n_basis'],
+                           best_seed=res.get('seed'))
             ent['status'] = 'done' if (ent['best_digits'] or 0) >= TARGET_DIGITS \
                 else 'short'
             extra = ''

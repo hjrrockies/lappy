@@ -553,3 +553,62 @@ Note `eq_tri` also sits at ratio 1.00 yet reaches 14.5 digits, so a starved
 interior block is not *sufficient* to cause trouble — it presumably only bites
 when the basis is otherwise poorly conditioned. That is testable in the same
 experiment by including a domain from each camp.
+
+### Seed variance is not only interior starvation
+
+`GWW2` came back at **7.7** digits having previously given 5.7 — 2.0 digits of
+spread, the same magnitude as `iso_right_tri`. But GWW runs full-domain with
+`int_npts = 2 x n_basis` (ratio 2.0), so it is *not* interior-starved. Whatever
+drives the seed sensitivity is therefore more general than the starvation
+hypothesis: both a starved (`iso_right_tri`) and a well-fed (`GWW`) case show
+~2 digits of it. The starvation experiment is still worth running, but it is
+now a candidate contributor rather than the explanation.
+
+Collected spreads so far:
+
+    iso_right_tri   2.5 - 4.9   (2.4 digits)
+    GWW1            4.4 - 6.6   (2.2 digits)
+    GWW2            5.7 - 7.7   (2.0 digits)
+
+All three are among the least accurate domains in the suite. The well-converged
+domains have not been re-run at multiple seeds yet, so the correlation between
+"low accuracy" and "high seed variance" is suggestive but not established —
+that is exactly what the seed-spread sweep will settle.
+
+### Taking the best over seeds is legitimate here
+
+Worth stating because it looks like cherry-picking and is not. Each run carries
+its **own** Moler--Payne certificate, computed from that run's eigenfunctions.
+A run certifying 7.7 digits has produced values good to 7.7 digits, regardless
+of how many other runs did worse. So selecting the best-certified run over
+several seeds is sound, in a way that selecting the best run by *agreement with
+a hoped-for answer* would not be.
+
+What it is NOT is a claim about the method's typical behaviour. The table
+should therefore report both: the best certified result (the reference value)
+and the spread across seeds (the honest statement of reliability). A domain
+that reaches 8 digits on one seed in five is not a domain you can trust to
+8 digits.
+
+### Seeding turned an intermittent failure into a permanent one
+
+`reg_ngon_6` reached 12.8 certified digits standalone after the cache fix, then
+tripped the swap guard in the sweep at 65s. Nothing else was running. The
+difference was the seeding patch: the successful run was an unseeded lucky
+draw, and **seed 0 is a bad draw for this domain**.
+
+That is a genuine interaction worth recording. Seeding is correct — reference
+values must be reproducible — but it converts "fails sometimes" into "fails
+always", and a single unlucky seed would otherwise lose a domain permanently.
+
+It also sharpens the picture of what the seed is doing. An unlucky interior
+sample does not merely cost a digit or two of accuracy; it can make the tension
+curve noisy enough that the bracket search refines pathologically and the run
+dies on memory. Accuracy variance and resource blowups are the same phenomenon
+seen at different severities: **a badly conditioned collocation system produces
+a sigma curve full of spurious local minima, and everything downstream —
+refinement depth, cache pressure, runtime, accuracy — degrades together.**
+
+`sweep.py` now retries a failed domain on seed+1, seed+2 (`--retries`, default
+2), tagging each attempt so the successful seed is recorded in the result and in
+`queue.json`. Reproducibility is preserved because the winning seed is stored.

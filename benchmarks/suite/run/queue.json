@@ -9,11 +9,11 @@
  },
  "GWW2": {
   "attempts": 2,
-  "best_digits": 5.6802840628421185,
+  "best_digits": 7.70151777396386,
   "best_n_basis": 320,
   "best_tag": "base",
   "notes": "",
-  "status": "running"
+  "status": "short"
  },
  "H_shape": {
   "attempts": 3,
@@ -248,12 +248,12 @@
   "status": "done"
  },
  "reg_ngon_6": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "",
-  "status": "pending"
+  "notes": "swap guard: system swap 6640MB exceeded baseline+4000MB",
+  "status": "failed"
  },
  "reg_ngon_7": {
   "attempts": 1,
@@ -264,12 +264,12 @@
   "status": "done"
  },
  "reg_ngon_8": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
   "notes": "",
-  "status": "pending"
+  "status": "running"
  },
  "right_trapezoid": {
   "attempts": 0,
