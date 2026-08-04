@@ -1180,3 +1180,117 @@ consider merging when `|e1 - e0| / e < ltol` (or the caller's target precision)
 -- then use `estimate_multiplicity` to confirm. That keeps what the rewrite
 wanted (degeneracy confirmed from tension structure rather than assumed from
 proximity) and restores the bound it dropped. `rect_near_deg_1e5` is the test.
+
+---
+
+## Session 6 — chasing the tension noise
+
+Started from the user's observation that a hand-written script
+(`scripts/near_degen_rect.py`) reached 14.5 digits on `rect(1,1+1e-5)` where the
+benchmark got 4.8. It differed in two settings, and unpicking why took most of
+the session.
+
+### The actual bug: bracket_xtol vs merge_rtol
+
+`manual_solve` hard-coded `bracket_xtol=1e-5` while merging at `merge_rtol=1e-9`
+-- four orders apart. The bracket floor is `bracket_xtol * lam`, so at
+`lam ~ 128` it is 1.3e-3, while `rect(1,1.00001)`'s pair there is 9.9e-4 apart.
+**One bracket held both eigenvalues**, `minimize_on_bracket` returned a single
+minimizer between them, and the polish converged to 128.303891 -- not an
+eigenvalue at all. Cost 8.6 digits.
+
+Fixed by defaulting `bracket_xtol` to `merge_rtol`. The two answer the same
+question (how close can eigenvalues be and still be told apart) and must agree.
+User's diagnosis, and correct.
+
+### Three dead ends, recorded so they are not re-explored
+
+**1. rtol=1e-12 as a global default.** Loosening from 1e-14 appeared to fix the
+same domain, which sent me chasing regularization. Coincidence -- it perturbs
+the search enough to split the bracket differently. And it is a bad trade
+globally: measured over 12 domains, `mushroom` loses 1.4 digits (12.9 -> 11.5)
+and `L_shape` 0.1, while `GWW1` gains 0.7 and `chevron` 0.2. rtol is genuinely
+domain-dependent; no single value wins.
+
+**2. adapt_rtol.** Validated on request and it is **non-functional**: returns
+`rtol_min` for every domain tested, including ones where that value is
+demonstrably wrong. Two independent reasons. Its 15-point grid spans the whole
+window, so it never samples near an eigenvalue -- sigma stays in [2e-2, 7e-1]
+while the floor is 1e-16. And its `||d2 sigma||/||d sigma||` statistic is
+scale-invariant: 0.5345 at *every* rtol even when sampled tightly around an
+eigenvalue, while the floor moves from 4e-8 to 7e-16. It measures the shape of
+the well, which barely changes; the floor is what changes.
+
+**3. A spectral-gap rule for rtol.** The idea: cut where the singular values
+separate real information from redundancy. The user predicted the decay would
+not be clean, and it is not:
+
+    domain            best_rtol   largest drop at   drop size (decades)
+    GWW1                  1e-12           1.4e-11          0.42
+    chevron_1_15          1e-12           3.7e-13          0.65
+    mushroom              1e-14           7.5e-14          0.48
+    L_shape               1e-14           3.4e-14          0.41
+    cut_square_r025       1e-14           1.5e-12          0.66
+    stadium               1e-14           5.6e-21          8.11
+
+Largest consecutive drop is 0.4-0.7 decades -- a factor of 2.5-5, i.e. the
+ordinary roughness of smooth decay, not a rank cliff. `stadium`'s genuine
+8-decade gap sits at 5.6e-21, far below any usable cut. And the location does
+not predict the optimum: `cut_square_r025`'s largest drop is at 1.5e-12 while
+its measured best rtol is 1e-14, off by 150x.
+
+There is no well-defined numerical rank to find. The basis functions have a
+continuum of usefulness.
+
+### solve_interval vs manual_solve: refactor dropped
+
+`manual_solve`'s stated justification (working around a `bracket_mins` hang)
+expired when the noise-floor stop landed, and it had produced four bugs today,
+so replacing it with the library's `solve_interval` looked attractive. Measured
+over 8 hard domains at ltol 1e-12 and 1e-14:
+
+    L_shape 13.5/13.4/13.5   mushroom 12.9/12.9/12.9   chevron 5.3/5.3/5.3
+    cut_square 7.2/7.2/7.2   stadium 2.9/2.9/2.9       iso_tri_h05 11.3/11.4/11.4
+    GWW1 8.2/7.1/7.1         reg_ngon_8 crash/2.8/crash
+
+Six ties, one loss (GWW1, -1.1), one domain that fails both ways. Not worth 1.1
+digits for tidiness. It also refutes my "one tolerance for all three roles"
+argument: on a noisy curve, bracket width and merge distance genuinely want
+different values, which is exactly what `manual_solve`'s decoupling provides.
+
+Separately: **ltol=1e-8 (the lappy default) costs `L_shape` 4.3 digits**
+(13.5 -> 9.2) through `solve_interval`. The coarse estimate is then only good to
+1e-8 while `polish_eigs` searches +-1e-9 around it -- a bracket narrower than the
+estimate's own uncertainty, so the polish cannot reach the true root. Same
+failure `TUNING_LOG.md` recorded, via a different entry point. The invariant
+`bracket_rel_width >= ltol` should be asserted somewhere; it is silent when
+violated and looks exactly like a basis-resolution problem. Benchmarks now use
+ltol=1e-14 to take this off the table (not a lappy default change -- lappy
+targets 8 digits).
+
+### Open: a genuine lappy crash on reg_ngon_8
+
+    UserWarning: Eigenvalue may have deficient multiplicity (3.891e+05>1.000e-03)
+    TypeError: 'NoneType' object does not support item ...
+
+Something in the deficient-multiplicity path returns `None` and a caller
+subscripts it. `rellich.lowdin_transform` documents exactly this contract
+("Returns None (after warning) if G is deficient ... callers should fall back to
+the raw values"), so a caller is likely ignoring it. Crash rather than graceful
+degradation, on the suite's most degenerate domain. Traceback being collected.
+
+### Where this leaves the noise problem
+
+The user's architecture: detect, abort, or repair noisy solvers *before*
+`solve_interval`, so the search does not have to manage noise. (My noise-floor
+stop in `bracket_mins` is the wrong shape of fix by that standard -- the search
+managing noise. Keep as a safety net, not load-bearing.)
+
+Detection needs a signal. The spectrum does not provide one. The remaining
+candidate is **the accuracy of the matrix entries**: singular values below the
+level at which `A` is actually known are indistinguishable from perturbations of
+it, so that level -- not machine epsilon, not a spectral feature -- is where the
+cut belongs. It is domain-dependent for a concrete reason (GWW1: eight
+high-order Fourier--Bessel blocks, each evaluated with its own error; mushroom:
+an arc served by well-conditioned fundamental solutions), and it is directly
+measurable via `bases.ExPrecFBBasis` rather than estimated.
