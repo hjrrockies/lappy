@@ -104,7 +104,7 @@ def polish_eigs(solver, eigs, ltol=1e-14, bracket_rel_width=None):
 
 
 def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
-                 max_recurse=8, clear_every=32,
+                 max_recurse=30, clear_every=32, merge_rtol=1e-9,
                   ttol=None, n_workers=1, verbose=0):
     """Find eigenvalues in [a, b] by calling opt.bracket_mins /
     opt.minimize_on_bracket / mps.estimate_multiplicity directly, instead of
@@ -121,15 +121,26 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
     - `minimize_tol` (tight, e.g. 1e-12): per-bracket minimizer convergence,
       independent of the loose bracketing width -- this is what actually
       controls the precision of each returned eigenvalue location.
-    - merging: rather than a separate distance threshold, every adjacent
-      pair of accepted brackets is tested with mps.estimate_multiplicity
-      itself (already ttol-based library logic, unaffected by either
-      tolerance above) by treating them as one candidate degenerate
-      eigenvalue and checking whether >=2 tension indices are
-      simultaneously small there. This reuses the same degeneracy
-      definition the codebase already applies for multiplicity, rather than
-      an arbitrary width cutoff that could conflate two distinct
-      close-but-not-degenerate eigenvalues.
+    - merging (`merge_rtol`): two adjacent brackets are merged only if they
+      are BOTH within `merge_rtol` of each other AND `mps.estimate_multiplicity`
+      confirms >=2 tension indices are simultaneously small at their midpoint.
+      Distance bounds the claim; tension structure confirms it.
+
+      This function originally dropped the distance test entirely, on the
+      argument that a width cutoff "could conflate two distinct
+      close-but-not-degenerate eigenvalues". That reasoning inverted the
+      actual risk: with no distance bound, *any* two adjacent brackets merge
+      whenever both tensions dip below `ttol` (default 1e-3) at their
+      midpoint, which is a far weaker condition than being degenerate.
+      `rect_near_deg_1e5` (a pair 1.2e-5 apart, eight orders of magnitude
+      wider than the requested precision) merged and lost the domain 13.6 ->
+      3.7 certified digits.
+
+      `mps.solve_interval` had it right all along -- `sort_merge_brackets`
+      keys the merge distance to `ltol`, and `estimate_multiplicity` then
+      reports multiplicity separately. This restores that bound while keeping
+      the improvement the rewrite was after: degeneracy *confirmed* from
+      tension structure rather than *assumed* from proximity.
 
     Returns (eigs, mults, fevals) like MPSEigensolver.solve_interval, but
     with eigenvalue *location* precision governed by `minimize_tol`, not by
@@ -199,8 +210,16 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
                 a1, e1, b1 = eig_brackets[i + 1]
                 cand_a, cand_b = min(a0, a1), max(b0, b1)
                 cand_eig = (e0 + e1) / 2
-                mult = mps.estimate_multiplicity(solver.tensions, cand_eig, cand_a, cand_b, ttol)
-                if mult >= 2:
+                # Distance guard first: two minima further apart than the
+                # target precision are distinct eigenvalues, whatever the
+                # tension does at their midpoint. Only inside that radius is
+                # it meaningful to ask whether they are one degenerate
+                # eigenvalue, and only then do we pay for the test.
+                close = abs(e1 - e0) <= merge_rtol * max(abs(cand_eig), 1.0)
+                mult = (mps.estimate_multiplicity(solver.tensions, cand_eig,
+                                                  cand_a, cand_b, ttol)
+                        if close else 0)
+                if close and mult >= 2:
                     merged.append([cand_a, cand_eig, cand_b])
                     i += 2
                     changed = True

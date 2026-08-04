@@ -66,25 +66,61 @@ def test_disk_ground_state_is_found():
 
 # --- 2. bounded bracket refinement -----------------------------------------
 
-def test_bracket_mins_is_depth_bounded_by_default():
-    assert opt.bracket_mins.__defaults__ is not None
-    import inspect
-    assert inspect.signature(opt.bracket_mins).parameters['max_recurse'].default == 8
+def test_bracket_mins_has_a_generous_depth_backstop():
+    """Depth is a backstop, not the control.
 
-
-def test_bracket_mins_terminates_on_pure_noise():
-    """A noisy objective must not refine forever.
-
-    The "too many local minima" guard fires only at nrecurse == 0, so before
-    the depth cap every deeper level could flag spurious minima and spawn
-    another, finer, level -- compounding across levels and across runs.
+    A tight cap throttles well-resolved problems to protect against noisy
+    ones, and has a bad regime in the middle: on rect(1, 1.00001), whose
+    eigenvalues come in pairs 1.2e-5 apart, capping at 8 leaves them
+    unresolved (4.8 true digits) while 12 resolves them partially and
+    misaligns the list (0.2 digits). The noise test is the real control.
     """
+    import inspect
+    default = inspect.signature(opt.bracket_mins).parameters['max_recurse'].default
+    assert default is None or default >= 20
+
+
+def test_bracket_mins_stops_on_a_noise_floor():
+    """A curve that is roundoff wiggle must stop refining.
+
+    Models a real tension floor: values scattered around a small positive
+    level and bounded away from zero. Every apparent minimum there is
+    spurious, so subdividing only manufactures more of them.
+
+    Two outcomes are acceptable and both correct: abort outright (the existing
+    "too many local minima" guard, the right response to an unusable curve), or
+    terminate cheaply via the noise test. What must not happen is unbounded
+    refinement.
+    """
+    from lappy.core import EigensolverFailure
     rng = np.random.default_rng(0)
     x = np.linspace(1.0, 2.0, 101)
-    y = np.abs(rng.standard_normal((2, len(x)))) * 1e-14
-    brackets, fevals = opt.bracket_mins(
-        lambda t: np.abs(rng.standard_normal(2)) * 1e-14, x, y, xtol=1e-12)
+    floor = 1e-14
+
+    def noisy(t):
+        return floor * (1.0 + 0.5 * rng.random(2))
+
+    y = floor * (1.0 + 0.5 * rng.random((2, len(x))))
+    try:
+        brackets, fevals = opt.bracket_mins(noisy, x, y, xtol=1e-12)
+    except EigensolverFailure:
+        return          # aborted rather than guessing -- the desired behaviour
     assert fevals < 200000, f'refinement ran away: {fevals} evaluations'
+
+
+def test_bracket_mins_still_resolves_a_genuine_well():
+    """The noise test must not stop refinement on real structure."""
+    x = np.linspace(0.0, 2.0, 51)
+
+    def f(t):
+        v = abs(t - 1.0) + 1e-16
+        return np.array([v, v])
+
+    y = np.vstack([np.abs(x - 1.0) + 1e-16] * 2)
+    brackets, _ = opt.bracket_mins(f, x, y, xtol=1e-12)
+    assert brackets, 'lost a genuine minimum'
+    lo, mid, hi = brackets[0][0]
+    assert lo <= 1.0 <= hi
 
 
 def test_degenerate_bracket_does_not_raise():

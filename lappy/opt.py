@@ -153,17 +153,29 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
     return x_tmp, y_tmp, fevals
 
 def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
-                 max_recurse=8):
+                 max_recurse=30, noise_factor=4.0):
     """Bracket the minima of f(x)[0] using a gridsearch. Returns a list of brackets which (hopefully!) each 
     contain a single local minimum of the first component of f. Uses the local minima 
     of f(x)[1] to guide refinement.
 
-    ``max_recurse`` bounds the refinement depth (default 8; ``None`` disables
-    the bound). Without it a noisy objective can refine indefinitely: the
-    "too many local minima" guard below only fires at ``nrecurse == 0``, so
-    deeper levels happily flag spurious minima and each flagged run spawns
-    another, ``shrink`` times finer, level. Cost compounds across levels *and*
-    across runs.
+    Refinement stops on two conditions, and the distinction matters:
+
+    ``noise_factor`` is the real control. A run whose objective varies by no
+    more than ``noise_factor`` times its own minimum has nothing left to
+    resolve -- that is what a tension curve looks like once it is down to
+    roundoff wiggle, where every "minimum" is spurious and subdividing only
+    manufactures more of them. A genuine well varies by orders of magnitude
+    above its floor and keeps refining.
+
+    ``max_recurse`` is only a backstop against true non-termination, and is
+    deliberately generous. A tight depth cap is the wrong instrument: it
+    throttles well-resolved problems to protect against noisy ones, and it has
+    a bad regime in the middle. On ``rect(1, 1.00001)``, whose eigenvalues come
+    in pairs 1.2e-5 apart, capping at 8 leaves the pairs unresolved (4.8 true
+    digits), 12 resolves them *partially* and misaligns the list (0.2 digits),
+    and 16 or unbounded gives 5.9. Depth is a proxy for "is refinement still
+    informative"; the noise test asks that question directly, per run rather
+    than globally.
     """
     tabs = min(nrecurse,5)*"\t" # tab spacing for verbose mode
     if verbose > 0:
@@ -237,11 +249,38 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
                     print(tabs+f"refine on [{x[start]:.5e},{x[end]:.5e}], shrink={shrink}")
                 # check for flat objective at this scale
                 mindiff = np.abs(np.diff(y_tmp[0])).min()
-                if mindiff == 0:
+
+                # Noise-limited? A run whose spread is no more than
+                # `noise_factor` times its own floor carries no structure left
+                # to resolve: this is roundoff wiggle, where every apparent
+                # minimum is spurious and subdividing manufactures more of
+                # them. A genuine well sits orders of magnitude below its own
+                # spread and fails this test, so it keeps refining. Asked per
+                # run, so a domain can be noise-limited in one part of the
+                # window and still resolve cleanly elsewhere.
+                # Spread relative to the floor. A genuine well spans orders of
+                # magnitude between its surroundings and its minimum, so
+                # ptp >> floor and it keeps refining -- this holds even when
+                # the run brackets *two* close minima, because the tension
+                # still rises well above the floor between them. Roundoff
+                # wiggle has ptp comparable to the floor itself.
+                #
+                # Comparing the floor to the run's *median* instead was tried
+                # and is too aggressive: once a run narrows onto a tight
+                # cluster most of its values are small, so the median collapses
+                # toward the floor and real pairs get declared noise
+                # (rect_near_deg_1e5 fell from 11 resolved eigenvalues to 7).
+                y_run = y_tmp[0]
+                y_floor = y_run.min()
+                noisy = (noise_factor is not None
+                         and np.ptp(y_run) <= noise_factor * y_floor)
+
+                if mindiff == 0 or noisy:
                     half_idx = int((end+start)/2)
                     brackets.append((x[[start,half_idx,end]],y[0,[start,half_idx,end]]))
                     if verbose > 1:
-                        print(tabs+f"+[{x[start]:.5e},{x[end]:.5e}] (flat objective)")
+                        why = 'flat objective' if mindiff == 0 else 'noise-limited'
+                        print(tabs+f"+[{x[start]:.5e},{x[end]:.5e}] ({why})")
 
                 # recurse, extending the list of brackets and incrementing the function evaluations
                 else:
@@ -249,7 +288,8 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
                         print(tabs+"recursing...")
                     bracks, fe = bracket_mins(f, x_tmp, y_tmp, xtol, shrink,
                                               nrecurse+1, verbose,
-                                              max_recurse=max_recurse)
+                                              max_recurse=max_recurse,
+                                              noise_factor=noise_factor)
                     brackets += bracks
                     fevals += fe
     if verbose > 0 and nrecurse == 0:
