@@ -153,7 +153,7 @@ def fill_refinement(f, x, y, start, end, shrink, verbose=0):
     return x_tmp, y_tmp, fevals
 
 def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
-                 max_recurse=30, noise_factor=4.0):
+                 max_recurse=30, noise_factor=4.0, max_minima=None):
     """Bracket the minima of f(x)[0] using a gridsearch. Returns a list of brackets which (hopefully!) each 
     contain a single local minimum of the first component of f. Uses the local minima 
     of f(x)[1] to guide refinement.
@@ -187,7 +187,28 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
 
     if verbose > 0:
         print("number of local minima:",len(y0_min_idx))
-    if nrecurse==0 and len(y0_min_idx) > len(x)/3:
+
+    # Abort on an objective that is numerical noise rather than structure.
+    #
+    # This is the *detector* for an ill-posed instance. Depth is not: an
+    # ill-posed problem does not recurse deeper than a well-posed one with
+    # repeated or near-repeated eigenvalues -- it branches wider, from many
+    # spurious minima. So count minima, and count them at every level, since
+    # noise usually appears only in part of the window and only once the grid
+    # is fine enough to resolve the wiggle.
+    #
+    # `max_minima` is the calibrated form: the caller knows how many minima to
+    # expect (for MPS, the eigenvalue count in the window, from asymp.weyl_est)
+    # and passes a multiple of it. With `None` we fall back to the original
+    # grid-fraction heuristic, which scales with sampling density rather than
+    # with the problem -- kept only so existing callers are unaffected.
+    if max_minima is not None:
+        if len(y0_min_idx) > max_minima:
+            raise EigensolverFailure(
+                f"f has too many local minima ({len(y0_min_idx)} > {max_minima}) "
+                f"on [{x[1]:.6g}, {x[-2]:.6g}] at recursion depth {nrecurse}: "
+                f"the objective is noise, not structure")
+    elif nrecurse == 0 and len(y0_min_idx) > len(x)/3:
         raise EigensolverFailure("f has too many local minima")
 
     # Optional depth cap. Unbounded recursion here is a real hazard: the
@@ -289,7 +310,8 @@ def bracket_mins(f, x, y, xtol=1e-8, shrink=2, nrecurse=0, verbose=0,
                     bracks, fe = bracket_mins(f, x_tmp, y_tmp, xtol, shrink,
                                               nrecurse+1, verbose,
                                               max_recurse=max_recurse,
-                                              noise_factor=noise_factor)
+                                              noise_factor=noise_factor,
+                                              max_minima=max_minima)
                     brackets += bracks
                     fevals += fe
     if verbose > 0 and nrecurse == 0:

@@ -653,11 +653,23 @@ class MPSEigensolver(BaseEigensolver):
         return cond
 
     def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None,
-                       ltol=None, minsolver='parabolic', n_workers=1, verbose=0):
-        """solves for all eigenvalues in [a,b] using MPS"""
+                       ltol=None, minsolver='parabolic', bracket_kwargs={},
+                       n_workers=1, verbose=0):
+        """solves for all eigenvalues in [a,b] using MPS
+
+        ``bracket_kwargs`` is forwarded to ``opt.bracket_mins`` (the
+        module-level ``solve_interval`` already accepted it; this method did
+        not, so there was no way to reach the bracketing guards from a solver
+        instance). Use it to pass ``max_minima`` -- an abort threshold on the
+        number of discrete local minima, which is how an ill-posed instance
+        announces itself: it does not recurse *deeper* than a well-posed one
+        with near-repeated eigenvalues, it *branches* wider from spurious
+        minima.
+        """
         reg_type, rtol, ttol, ltol = self._get_params(reg_type, rtol, ttol, ltol)
         return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
-                              ltol, ttol, minsolver, n_workers=n_workers, verbose=verbose)
+                              ltol, ttol, minsolver, bracket_kwargs=bracket_kwargs,
+                              n_workers=n_workers, verbose=verbose)
     
     def plot_tensions(self, low, high, nlam, n_angle=1, rtol=None, reg_type=None,
                       ax=None, **plot_kwargs):

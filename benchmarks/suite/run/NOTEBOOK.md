@@ -1294,3 +1294,59 @@ cut belongs. It is domain-dependent for a concrete reason (GWW1: eight
 high-order Fourier--Bessel blocks, each evaluated with its own error; mushroom:
 an arc served by well-conditioned fundamental solutions), and it is directly
 measurable via `bases.ExPrecFBBasis` rather than estimated.
+
+---
+
+## Session 7 — the failsafe, calibrated (and my labels corrected)
+
+Goal: an abort test for ill-posed instances, calibrated before any bucketing.
+The signal is the count of discrete local minima in the tension curve against
+the Weyl-expected eigenvalue count, measured on a 300-point scan with no search.
+
+**First result looked like failure.** Of four instances I labelled "noisy", only
+one separated. `reg_ngon_8` @ rtol=1e-14 -- which produced `mult=0` and a crash
+-- read *cleaner* than `L_shape`.
+
+**Looking at the curves showed my labels were wrong, not the metric.** Rendering
+sigma(lambda) to PNG and actually inspecting it:
+
+    GWW1 @1e-14    23 minima = ~11 deep wells + ~12 shallow wiggles sitting on
+                   TOP of the humps at sigma~1e-1, while real wells plunge to
+                   1e-3. Genuinely ill-conditioned. Ratio 2.02.
+    reg_ngon_8     7 clean deep wells, nothing spurious. Its crash was a
+                   multiplicity failure at a legitimate well, not noise.
+                   (7 wells vs Weyl 10.8 because D8 doubles share wells.)
+    stadium        11 clean well-formed wells, bottoming at ~4e-4. Clean curve,
+                   shallow floor.
+    chevron_1_15   12 clean wells. Same.
+
+With corrected labels the metric separates cleanly:
+
+    clean curves       ratio 0.54 - 1.08   (eq_tri, square, reg_ngon_8, L_shape,
+                                            chevron, stadium, mushroom)
+    ill-conditioned    ratio 2.02          (GWW1 @ 1e-14)
+
+**Threshold: 1.5.** Guard set to `max_minima = ceil(1.5 * weyl_expected)`.
+
+### Each taxonomy class has a distinct visual signature
+
+This is the useful part, and it is what the taxonomy was for:
+
+- **#1 basis insufficiency** -- wells are clean and well-formed but the *floor*
+  is too high. `stadium`'s wells bottom at 4e-4; the folklore
+  `digits ~ -log10(sigma) - 1` predicts 2.4-3.4 against its measured 2.9. The
+  curve looks correct; it just does not descend far enough.
+- **#2 ill-conditioning** -- *extra* minima, shallow, riding near the local
+  maxima rather than the floor. Count separates them; depth separates them even
+  more sharply (prominence would be the refined statistic).
+- **#4 search failure** -- clean deep wells and the search still fails.
+  `reg_ngon_8` is the example: the curve gives the minimizer everything it needs.
+
+### Caveat on well depth from a coarse scan
+
+`sigma_min` over a 300-point grid is only meaningful for *wide* wells. `eq_tri`
+reads 3.8e-4 yet solves to 14.4 digits -- 300 points over a window of width ~175
+is a spacing of 0.58, far wider than its wells, so the grid never lands near a
+bottom. It matched exactly for `stadium`, whose wells are wide and genuinely
+shallow. So: **minima count is the sound pre-flight signal; well depth needs a
+zoom pass to measure**, and I should not read #1 off a coarse scan.

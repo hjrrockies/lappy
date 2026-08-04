@@ -88,11 +88,11 @@ def weyl_count(domain, lam):
 def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
                       max_recurse=None, n_pts_per_eig=11, int_npts=None,
                       bdry_mult=2, basis_kwargs=None, fs_placement='default',
-                      fs_frac=0.5, fs_d=1.0):
+                      fs_frac=0.5, fs_d=1.0, preflight_pts=300):
     """Returns a result dict. Raises on failure; the caller records that."""
     from lappy import bases, mps, MPSEigensolver
     from lappy.symmetry import domain_symmetry
-    from common import build_solver, manual_solve, polish_eigs, lambda_window
+    from common import build_solver, lambda_window   # manual_solve/polish_eigs retired
     from symsolve import solve_sym
     from certify import certify_sym, certify_solver
 
@@ -149,14 +149,27 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
             basis = basis.to_normalized((bp, ip))
             solver = MPSEigensolver(basis, bp, ip, rtol=1e-14, ttol=1e-3)
         a, b = lambda_window(dom, n_eigs)
-        e, mults, _ = manual_solve(solver, a, b,
-                                   max(n_pts_per_eig * n_eigs, 50),
-                                   n_workers=n_workers,
-                                   **({} if max_recurse is None
-                                      else {'max_recurse': max_recurse}))
-        eigs, tens = polish_eigs(solver, e, ltol=1e-14, bracket_rel_width=1e-9)
-        eigs, tens = eigs[:n_eigs], tens[:n_eigs]
-        mults = mults[:n_eigs]
+
+        # Pre-flight: characterize the tension curve BEFORE searching. An
+        # ill-posed instance breaks the minimizer no matter how it is tuned, so
+        # the minimizer should never see one. Records the verdict either way,
+        # and supplies the abort threshold the search runs under.
+        from benchmarks.suite import preflight as pf
+        lam_scan, sig_scan = pf.scan(solver, a, b, n_pts=preflight_pts)
+        pre = pf.metrics(dom, lam_scan, sig_scan, a, b)
+        pre.update(key=entry.key, n_basis=n_basis, rtol=solver.rtol)
+        noisy = pf.is_noisy(pre)
+
+        # solve_interval with ltol=1e-14, so the minimizer extracts the best
+        # answer the instance supports and any shortfall is attributable to the
+        # instance (taxonomy #1-#3) rather than to the search (#4).
+        e, mults, _ = solver.solve_interval(
+            a, b, max(n_pts_per_eig * n_eigs, 50), ltol=1e-14,
+            bracket_kwargs={'max_minima': pf.max_minima_for(pre)},
+            n_workers=n_workers)
+        eigs = np.asarray(e)[:n_eigs]
+        tens = np.array([solver.sigma(x) for x in eigs])
+        mults = np.asarray(mults)[:n_eigs]
         sectors = None
         recs = certify_solver(solver, dom, eigs, mult=mults, verbose=False)
         method = 'full domain'
@@ -193,6 +206,8 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
         sectors=[list(map(int, s)) for s in sectors] if sectors else None,
         mult=[int(m) for m in mults] if mults is not None else None,
         weyl_count_at_last=weyl_count(dom, float(eigs[-1])) if len(eigs) else None,
+        preflight=(pre if not use_sym else None),
+        preflight_noisy=(bool(noisy) if not use_sym else None),
     )
 
     # Strongest possible check: direct error against a closed form.
@@ -239,6 +254,7 @@ def main(argv=None):
                     help='interior collocation points (per sector); '
                          'default is ~1 per basis column')
     ap.add_argument('--bdry-mult', type=int, default=2)
+    ap.add_argument('--preflight-pts', type=int, default=300)
     ap.add_argument('--fs-placement', default='default',
                     choices=('default', 'boundary'),
                     help="'boundary' distributes fundamental sources along "
@@ -287,7 +303,8 @@ def main(argv=None):
                                 fs_placement=args.fs_placement,
                                 fs_frac=(args.fs_frac
                                          if args.fs_frac is not None else 0.5),
-                                fs_d=args.fs_d)
+                                fs_d=args.fs_d,
+                                preflight_pts=args.preflight_pts)
         out['ok'] = True
     except Exception as exc:
         out = dict(key=args.key, n_basis=n_basis, n_eigs=n_eigs, ok=False,
