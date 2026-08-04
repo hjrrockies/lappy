@@ -162,20 +162,32 @@ def _take_k_from_grid(eig_fn, m_vals, n_vals, k):
 
 
 def _bessel_zero(nu, n):
-    """n-th positive zero of J_nu, located by scanning for sign changes.
+    """n-th positive zero of J_nu, to full double precision.
 
-    Scans J_nu on a coarse grid (step π/4) to find the n-th sign change,
-    then refines with brentq. Correct for all nu ≥ 0, n ≥ 1.
+    Computed in extended precision with ``mpmath.besseljzero`` and rounded
+    once. These values define the *reference* spectra for sector and disk
+    domains, so they must be more accurate than anything checked against
+    them -- otherwise a reference error is misread as a solver error.
+
+    That is not hypothetical. The previous implementation scanned for a sign
+    change and refined with ``scipy.optimize.brentq`` at its default
+    tolerance, which is fine at integer order but loses 2-3 digits at
+    fractional order, where ``scipy.special.jv`` is itself less accurate:
+
+        nu = 4/3   |J_nu(z)| = 1.1e-13 at the returned zero (should be ~1e-16)
+        nu = 1.512 |J_nu(z)| = 6.5e-14
+        nu = 2, 4, 6                    ~1e-16, i.e. correct
+
+    Fractional orders are exactly what the sector domains need
+    (``nu = m*pi/alpha``), and the resulting eigenvalues were off by up to
+    1.4e-13 relative. That made `disk_sector` solves look like they had
+    *violated* their own Moler--Payne bound -- certified 13.7 digits against a
+    "true" error of 12.9 -- when the solver was right and the reference was
+    wrong. mpmath brings the residuals back to ~1e-16 at every order.
     """
-    x_max = (n + nu / 2 + 3) * np.pi
-    step = np.pi / 4
-    xs = np.arange(0.5, x_max + step, step)
-    ys = jv(nu, xs)
-    crossings = np.where(ys[:-1] * ys[1:] < 0)[0]
-    if len(crossings) < n:
-        raise ValueError(f"Could not find {n}-th zero of J_{nu}")
-    idx = crossings[n - 1]
-    return brentq(lambda x: jv(nu, x), xs[idx], xs[idx + 1])
+    import mpmath as mp
+    with mp.workdps(40):
+        return float(mp.besseljzero(mp.mpf(float(nu)), int(n)))
 
 
 # ── Isosceles right triangle (legs a, Dirichlet) ──────────────────────────────

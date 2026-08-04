@@ -1350,3 +1350,39 @@ is a spacing of 0.58, far wider than its wells, so the grid never lands near a
 bottom. It matched exactly for `stadium`, whose wells are wide and genuinely
 shallow. So: **minima count is the sound pre-flight signal; well depth needs a
 zoom pass to measure**, and I should not read #1 off a coarse scan.
+
+### The reference table was the least accurate thing in the loop
+
+`sector_reflex` and `sector_slit` appeared to certify *above* their true error
+(13.7 vs 12.9, 13.6 vs 13.1) -- i.e. to violate Moler--Payne. Three candidate
+explanations, tested in order:
+
+1. **`boundary_sup` under-resolving the `r^p` corner** (p<1 has infinite slope,
+   so the sup could hide between samples). Measured: converges from 8.652e-16 at
+   n_per_seg=400 to 8.737e-16 at n=1600/grade=6, with drift falling to 0.0%. A
+   1% effect, not a 6x one. **Ruled out.**
+2. **`interior_l2` over-estimating on a curved domain** (mesh points outside the
+   true boundary, where basis functions grow). Cross-checked against a
+   Rellich-identity evaluation of the same norm -- boundary data only, no mesh:
+
+       sector_reflex (curved)   cubature 9.27720939e-02   rellich 9.27720939e-02
+       square (polygon)         cubature 9.79680314e-02   rellich 9.79681197e-02
+
+   Agreement to 7 and 6 digits. **Ruled out** -- and this independently
+   validates the Rellich Dirichlet branch, whose neglected `u != 0` boundary
+   term I had flagged as a concern.
+3. **The reference itself.** `_bessel_zero` scanned for a sign change and
+   refined with `brentq` at default tolerance. Exact at integer order; at
+   *fractional* order (which is precisely what sectors need, nu = m*pi/alpha)
+   the returned zeros have |J_nu(z)| ~ 1e-13 instead of ~1e-16. **This was it.**
+
+Replaced with `mpmath.besseljzero` at 40 dps. Residuals ~1e-16 at every order,
+and the two sectors moved to 14.6 and 15.2 true digits -- now pessimistic by
+0.9 and 1.6, in line with every other analytic domain.
+
+**The lesson is about instrument calibration, not Bessel functions.** The
+analytic tier is the ruler everything else is measured against, and part of it
+was less accurate than the thing being measured. Worth remembering that
+`rect_eigs`/`eq_tri_eigs`/`iso_right_tri_eigs` are closed-form and exact, while
+anything routed through a numerical root-find (sector, disk) is only as good as
+that root-find.
