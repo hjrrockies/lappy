@@ -1,0 +1,11 @@
+{
+ "key": "iso_tri_h1",
+ "n_basis": 240,
+ "n_eigs": 10,
+ "ok": false,
+ "error": "TypeError: solve_and_certify() got an unexpected keyword argument 'max_recurse'",
+ "traceback": "Traceback (most recent call last):\n  File \"/Users/hringer/projects/python/lappy/benchmarks/suite/runner.py\", line 190, in main\n    out = solve_and_certify(entry, n_basis, n_eigs,\n                            use_sym=not args.no_sym, n_workers=args.workers,\n                            max_recurse=args.max_recurse,\n                            n_pts_per_eig=args.pts_per_eig)\nTypeError: solve_and_certify() got an unexpected keyword argument 'max_recurse'\n",
+ "tag": "deep",
+ "seconds": 0.0002110004425048828,
+ "use_sym": true
+}

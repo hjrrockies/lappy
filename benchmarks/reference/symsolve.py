@@ -57,7 +57,7 @@ def build_sym_solver(domain, group, sector, n_basis, rtol=1e-14, ttol=1e-3,
 def solve_sym(domain, group, n_basis, n_eigs, a=None, b=None, bracket_xtol=1e-5,
               minimize_tol=1e-12, polish_bracket_rel_width=1e-9, ttol=1e-3,
               rtol=1e-14, n_pts_per_eig=11, n_workers=4, verbose=0,
-              return_solvers=False, **kwargs):
+              max_recurse=8, return_solvers=False, **kwargs):
     """Solve every symmetry sector over the same window and merge.
 
     Returns ``(eigs, sectors, tensions)`` sorted by eigenvalue, where
@@ -89,6 +89,7 @@ def solve_sym(domain, group, n_basis, n_eigs, a=None, b=None, bracket_xtol=1e-5,
                   f'{len(solver.bdry_pts)} bdry pts, {len(solver.int_pts)} int pts')
         eigs, mults, _ = manual_solve(solver, a, b, n_pts, bracket_xtol=bracket_xtol,
                                       minimize_tol=minimize_tol, ttol=ttol,
+                                      max_recurse=max_recurse,
                                       n_workers=n_workers, verbose=0)
         if len(eigs):
             eigs, tens = polish_eigs(solver, eigs, ltol=1e-14,

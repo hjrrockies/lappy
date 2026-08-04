@@ -361,3 +361,40 @@ of runs that could not afford to finish.**
    wrong with them, but they were not produced by the same pipeline as the rest.
    Before publishing, re-run everything once under the final configuration so
    the whole table is reproducible from one code state.
+
+### The depth cap is exonerated; two different real failures on the same shape
+
+`eq_tri` re-run *with* `max_recurse=8`: 13.6 certified / 14.5 true — identical
+to its pre-cap result. The cap does not cost accuracy. Good: the fix is clean
+and the 31 domains running under it are not compromised.
+
+So `iso_right_tri`'s ~5 digits is real. The suite happens to contain the same
+shape twice — `iso_tri(1)` is `iso_right_tri(sqrt 2)` up to similarity (both
+area 1.0) — which separates "property of the shape" from "property of my
+registration". Running both exposed **two different** failures:
+
+**`iso_tri_h1` misses an eigenvalue.** Found values match the closed form to 5
+decimals *except* that lambda = 98.69604 is absent, so everything after it
+shifts by one and the analytic comparison collapses to 0.6 digits. That value
+is pi^2*(4^2+2^2)/2, the (4,2) mode. Certified digits said 5.5 — the bound is
+perfectly valid for the values that *were* found, and says nothing about the
+one that was not.
+
+**`iso_right_tri` finds all ten** but modes 6, 8 and 10 are only ~5 digits
+(246.73792 vs 246.74011). Different problem: plain under-resolution at
+`n_basis=120` with `lambda_10 = 365`. Fixable by escalating.
+
+The closed form itself is **correct** — an independent derivation (the right
+isoceles triangle is the square folded on its diagonal, so
+`lambda = pi^2 (m^2+n^2)/l^2` for `m > n >= 1`) reproduces
+`reference.iso_right_tri_eigs` exactly. Worth checking before blaming a
+reference table.
+
+**Consequence for the completeness check.** The Weyl two-term count *should*
+have caught the missing mode, but the gap was ~1 and my threshold was 3, so it
+passed. Tightened to 1.5. Note what this means in general: for a domain with no
+closed form, a single missed eigenvalue in the middle of the list produces a
+table that is wrong in every entry after it, with a *valid* certified bound on
+each surviving value and only a ~1 discrepancy in the Weyl count. That is the
+most dangerous failure mode in this whole exercise, and the analytic tier is
+the only instrument that detects it reliably.

@@ -64,7 +64,12 @@ def checks(key, r):
     nw = r.get('weyl_count_at_last')
     if nw is not None and np.isfinite(nw):
         gap = r['n_found'] - nw
-        if abs(gap) > 3:
+        # Threshold was 3, which is too lax: iso_tri_h1 missed exactly one
+        # eigenvalue (lambda=98.696, the (4,2) mode) and the Weyl gap of ~1
+        # sailed through, while the analytic check caught it at 0.6 digits.
+        # A missed eigenvalue is the worst failure mode for a reference table,
+        # so flag at 1.5 and accept some false positives from the asymptotics.
+        if abs(gap) > 1.5:
             problems.append(f'Weyl mismatch: found {r["n_found"]}, '
                             f'predicted ~{nw:.1f}')
         else:

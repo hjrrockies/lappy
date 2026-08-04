@@ -85,7 +85,8 @@ def weyl_count(domain, lam):
     return float(n)
 
 
-def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=4):
+def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=1,
+                      max_recurse=8, n_pts_per_eig=11):
     """Returns a result dict. Raises on failure; the caller records that."""
     from lappy.symmetry import domain_symmetry
     from common import build_solver, manual_solve, polish_eigs, lambda_window
@@ -97,14 +98,17 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=True, n_workers=4):
 
     if grp is not None:
         eigs, sectors, tens, solvers = solve_sym(
-            dom, grp, n_basis, n_eigs, return_solvers=True, verbose=0)
+            dom, grp, n_basis, n_eigs, return_solvers=True, verbose=0,
+            max_recurse=max_recurse, n_pts_per_eig=n_pts_per_eig)
         recs = certify_sym(solvers, dom, eigs, sectors, verbose=False)
         method = f'symmetry({grp.name}, |G|={grp.order})'
         mults = None
     else:
         solver = build_solver(dom, n_basis, int_npts=max(2 * n_basis, 500))
         a, b = lambda_window(dom, n_eigs)
-        e, mults, _ = manual_solve(solver, a, b, max(11 * n_eigs, 50),
+        e, mults, _ = manual_solve(solver, a, b,
+                                   max(n_pts_per_eig * n_eigs, 50),
+                                   max_recurse=max_recurse,
                                    n_workers=n_workers)
         eigs, tens = polish_eigs(solver, e, ltol=1e-14, bracket_rel_width=1e-9)
         eigs, tens = eigs[:n_eigs], tens[:n_eigs]
@@ -170,6 +174,8 @@ def main(argv=None):
                     help='label distinguishing configs of the same domain')
     ap.add_argument('--no-sym', action='store_true')
     ap.add_argument('--workers', type=int, default=1)
+    ap.add_argument('--max-recurse', type=int, default=8)
+    ap.add_argument('--pts-per-eig', type=int, default=11)
     args = ap.parse_args(argv)
 
     from benchmarks.suite.domains import SUITE
@@ -183,7 +189,9 @@ def main(argv=None):
     t0 = time.time()
     try:
         out = solve_and_certify(entry, n_basis, n_eigs,
-                                use_sym=not args.no_sym, n_workers=args.workers)
+                                use_sym=not args.no_sym, n_workers=args.workers,
+                                max_recurse=args.max_recurse,
+                                n_pts_per_eig=args.pts_per_eig)
         out['ok'] = True
     except Exception as exc:
         out = dict(key=args.key, n_basis=n_basis, n_eigs=n_eigs, ok=False,
