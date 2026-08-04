@@ -86,7 +86,7 @@ def weyl_count(domain, lam):
 
 
 def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
-                      max_recurse=8, n_pts_per_eig=11, int_npts=None,
+                      max_recurse=None, n_pts_per_eig=11, int_npts=None,
                       bdry_mult=2, basis_kwargs=None, fs_placement='default',
                       fs_frac=0.5, fs_d=1.0):
     """Returns a result dict. Raises on failure; the caller records that."""
@@ -129,7 +129,8 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
         # of the seed variance on iso_right_tri and GWW.
         eigs, sectors, tens, solvers = solve_sym(
             dom, grp, n_basis, n_eigs, return_solvers=True, verbose=0,
-            max_recurse=max_recurse, n_pts_per_eig=n_pts_per_eig,
+            **({} if max_recurse is None else {'max_recurse': max_recurse}),
+            n_pts_per_eig=n_pts_per_eig,
             int_npts=int_npts, bdry_mult=bdry_mult, **bkw)
         recs = certify_sym(solvers, dom, eigs, sectors, verbose=False)
         method = f'symmetry({grp.name}, |G|={grp.order})'
@@ -150,8 +151,9 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
         a, b = lambda_window(dom, n_eigs)
         e, mults, _ = manual_solve(solver, a, b,
                                    max(n_pts_per_eig * n_eigs, 50),
-                                   max_recurse=max_recurse,
-                                   n_workers=n_workers)
+                                   n_workers=n_workers,
+                                   **({} if max_recurse is None
+                                      else {'max_recurse': max_recurse}))
         eigs, tens = polish_eigs(solver, e, ltol=1e-14, bracket_rel_width=1e-9)
         eigs, tens = eigs[:n_eigs], tens[:n_eigs]
         mults = mults[:n_eigs]
@@ -227,7 +229,12 @@ def main(argv=None):
     ap.add_argument('--no-sym', dest='use_sym', action='store_false',
                     help='deprecated; full-domain is now the default')
     ap.add_argument('--workers', type=int, default=1)
-    ap.add_argument('--max-recurse', type=int, default=8)
+    # Default None: defer to common.manual_solve, whose own default is a
+    # generous backstop (30) with the noise-floor test doing the real work.
+    # This used to hard-code 8, which silently overrode that and left
+    # near-degenerate pairs unresolved (rect_near_deg_1e5: 7 distinct
+    # eigenvalues instead of 11) even after the stopping rule was fixed.
+    ap.add_argument('--max-recurse', type=int, default=None)
     ap.add_argument('--int-npts', type=int, default=None,
                     help='interior collocation points (per sector); '
                          'default is ~1 per basis column')

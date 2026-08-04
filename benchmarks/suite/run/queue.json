@@ -101,7 +101,7 @@
   "best_n_basis": 120,
   "best_tag": "base",
   "notes": "",
-  "status": "done"
+  "status": "pending"
  },
  "ellipse_a2": {
   "attempts": 1,
@@ -131,7 +131,7 @@
   "status": "pending"
  },
  "eq_tri": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 13.587905610817273,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -139,13 +139,13 @@
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 7,
+  "attempts": 8,
   "best_digits": 13.458329295634638,
   "best_n_basis": 120,
   "best_seed": 0,
   "best_tag": "generic",
   "notes": "",
-  "status": "done"
+  "status": "running"
  },
  "iso_tri_h05": {
   "attempts": 3,
@@ -238,7 +238,7 @@
   "status": "pending"
  },
  "rect_near_deg_1e3": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 13.554513701644709,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -246,7 +246,7 @@
   "status": "done"
  },
  "rect_near_deg_1e5": {
-  "attempts": 4,
+  "attempts": 5,
   "best_digits": 13.60897335384163,
   "best_n_basis": 120,
   "best_seed": 0,
@@ -255,7 +255,7 @@
   "status": "done"
  },
  "rect_thin": {
-  "attempts": 7,
+  "attempts": 8,
   "best_digits": 7.4746311209998355,
   "best_n_basis": 240,
   "best_seed": 0,
@@ -360,7 +360,7 @@
   "status": "pending"
  },
  "square": {
-  "attempts": 7,
+  "attempts": 8,
   "best_digits": 13.650280064739077,
   "best_n_basis": 120,
   "best_tag": "base",
