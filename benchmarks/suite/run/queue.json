@@ -96,12 +96,12 @@
   "status": "pending"
  },
  "disk": {
-  "attempts": 4,
+  "attempts": 5,
   "best_digits": 13.749108698231668,
   "best_n_basis": 120,
   "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "ellipse_a2": {
   "attempts": 1,
@@ -131,21 +131,22 @@
   "status": "pending"
  },
  "eq_tri": {
-  "attempts": 4,
-  "best_digits": 13.587905610817273,
+  "attempts": 5,
+  "best_digits": 13.644972106836843,
   "best_n_basis": 120,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "v2",
   "notes": "",
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 8,
+  "attempts": 9,
   "best_digits": 13.458329295634638,
   "best_n_basis": 120,
   "best_seed": 0,
   "best_tag": "generic",
   "notes": "",
-  "status": "running"
+  "status": "done"
  },
  "iso_tri_h05": {
   "attempts": 3,
@@ -238,7 +239,7 @@
   "status": "pending"
  },
  "rect_near_deg_1e3": {
-  "attempts": 4,
+  "attempts": 5,
   "best_digits": 13.554513701644709,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -246,7 +247,7 @@
   "status": "done"
  },
  "rect_near_deg_1e5": {
-  "attempts": 5,
+  "attempts": 6,
   "best_digits": 13.60897335384163,
   "best_n_basis": 120,
   "best_seed": 0,
@@ -255,7 +256,7 @@
   "status": "done"
  },
  "rect_thin": {
-  "attempts": 8,
+  "attempts": 9,
   "best_digits": 7.4746311209998355,
   "best_n_basis": 240,
   "best_seed": 0,
@@ -308,33 +309,33 @@
   "status": "pending"
  },
  "sector_reflex": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 13.601153877303108,
   "best_n_basis": 240,
   "best_seed": 0,
   "best_tag": "seeded",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "sector_sharp_p133": {
-  "attempts": 2,
-  "best_digits": 12.995830742657986,
+  "attempts": 3,
+  "best_digits": 13.024841482309728,
   "best_n_basis": 320,
   "best_seed": 0,
-  "best_tag": "seeded",
+  "best_tag": "v2",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "sector_sharp_p65": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.134087453052944,
   "best_n_basis": 240,
   "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "sector_slit": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.681915173372271,
   "best_n_basis": 320,
   "best_seed": 0,
@@ -360,7 +361,7 @@
   "status": "pending"
  },
  "square": {
-  "attempts": 8,
+  "attempts": 9,
   "best_digits": 13.650280064739077,
   "best_n_basis": 120,
   "best_tag": "base",

@@ -103,7 +103,7 @@ def polish_eigs(solver, eigs, ltol=1e-14, bracket_rel_width=None):
     return np.array(eigs_polished), np.array(tensions)
 
 
-def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
+def manual_solve(solver, a, b, n_pts, bracket_xtol=None, minimize_tol=1e-12,
                  max_recurse=30, clear_every=32, merge_rtol=1e-9,
                   ttol=None, n_workers=1, verbose=0):
     """Find eigenvalues in [a, b] by calling opt.bracket_mins /
@@ -114,10 +114,23 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
     would also blunt eigenvalue precision and risk merging genuinely
     distinct close eigenvalues). Here the three roles are decoupled:
 
-    - `bracket_xtol` (loose, e.g. 1e-5): only controls when bracket_mins'
-      recursive refinement stops subdividing -- just enough to avoid the
-      pathological hang for near-degenerate clusters (e.g. reg_ngon's
-      dihedral double eigenvalues), not meant to be precise.
+    - `bracket_xtol`: how far bracket_mins subdivides. Defaults to
+      `merge_rtol`, because the two answer the same question and must agree.
+      Bracketing decides which eigenvalues can be *isolated*; merging decides
+      which are close enough to be *the same*. With the old hard-coded 1e-5
+      against merge_rtol=1e-9 they disagreed by four orders of magnitude,
+      leaving a band where a pair is declared distinct but can never be
+      separated: the bracket floor is `bracket_xtol * lam`, so at lam ~ 128 it
+      was 1.3e-3 while `rect(1, 1.00001)`'s pair there is 9.9e-4 apart. One
+      bracket held both, `minimize_on_bracket` returned a single minimizer
+      *between* them, and the polish converged to 128.303891 -- not an
+      eigenvalue at all. Cost 8.6 digits on that domain.
+
+      (Tightening `rtol` from 1e-14 to 1e-12 also masked this, which sent me
+      chasing regularization for a while. That was luck -- it perturbs the
+      search enough to split the bracket differently -- and it is a bad trade
+      besides: looser regularization inflates the tension floor and costs
+      `mushroom` 1.4 digits.)
     - `minimize_tol` (tight, e.g. 1e-12): per-bracket minimizer convergence,
       independent of the loose bracketing width -- this is what actually
       controls the precision of each returned eigenvalue location.
@@ -147,6 +160,8 @@ def manual_solve(solver, a, b, n_pts, bracket_xtol=1e-5, minimize_tol=1e-12,
     whatever `bracket_xtol` was needed to avoid a hang.
     """
     ttol = solver.ttol if ttol is None else ttol
+    if bracket_xtol is None:
+        bracket_xtol = merge_rtol
     lamgrid = mps.make_lamgrid(a, b, n_pts)
 
     # Periodic cache clearing during the search.
