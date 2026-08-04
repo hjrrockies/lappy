@@ -96,7 +96,7 @@
   "status": "done"
  },
  "disk": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.749108698231668,
   "best_n_basis": 120,
   "best_tag": "base",
@@ -246,7 +246,7 @@
   "status": "done"
  },
  "rect_near_deg_1e5": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 13.60897335384163,
   "best_n_basis": 120,
   "best_seed": 0,
@@ -264,11 +264,12 @@
  },
  "reg_ngon_5": {
   "attempts": 2,
-  "best_digits": 12.293169480506116,
+  "best_digits": 12.808831967619236,
   "best_n_basis": 240,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "seeded",
   "notes": "",
-  "status": "running"
+  "status": "done"
  },
  "reg_ngon_6": {
   "attempts": 5,
@@ -280,7 +281,7 @@
   "status": "done"
  },
  "reg_ngon_7": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 11.739214102847775,
   "best_n_basis": 240,
   "best_tag": "base",
@@ -306,23 +307,25 @@
   "status": "done"
  },
  "sector_reflex": {
-  "attempts": 1,
-  "best_digits": 13.524394309675683,
+  "attempts": 2,
+  "best_digits": 13.601153877303108,
   "best_n_basis": 240,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "seeded",
   "notes": "",
   "status": "done"
  },
  "sector_sharp_p133": {
-  "attempts": 1,
-  "best_digits": 12.930646414474156,
+  "attempts": 2,
+  "best_digits": 12.995830742657986,
   "best_n_basis": 320,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "seeded",
   "notes": "",
   "status": "done"
  },
  "sector_sharp_p65": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": 13.134087453052944,
   "best_n_basis": 240,
   "best_tag": "base",
@@ -330,10 +333,11 @@
   "status": "done"
  },
  "sector_slit": {
-  "attempts": 1,
-  "best_digits": 13.648491183843651,
+  "attempts": 2,
+  "best_digits": 13.681915173372271,
   "best_n_basis": 320,
-  "best_tag": "base",
+  "best_seed": 0,
+  "best_tag": "seeded",
   "notes": "",
   "status": "done"
  },
@@ -355,7 +359,7 @@
   "status": "failed"
  },
  "square": {
-  "attempts": 4,
+  "attempts": 6,
   "best_digits": 13.650280064739077,
   "best_n_basis": 120,
   "best_tag": "base",

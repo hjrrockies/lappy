@@ -805,3 +805,44 @@ near-circular domain is at risk, and the failure is silent.
 The unseeded `disk` run (14.5 true digits) got the right answer only because its
 different interior sample happened to shift the tension curve enough for the
 edge minimum to register. That is luck, not correctness.
+
+---
+
+## Near-degeneracy: the limit is within-sector, not numerical
+
+`rect_near_deg_1e5` (rect(1, 1.00001)) certifies 13.6 digits but agrees with its
+closed form to only 4.8. Per-mode:
+
+    idx        found              exact           rel err
+     1    49.347232449      49.347232449         1.9e-15
+     2    49.347824616      49.347824616         3.3e-15
+     4    98.694267509      98.694267509         2.6e-15
+     5    98.694267509      98.695846622         1.6e-05   <-- merged
+
+Nine of ten modes are exact to ~1e-15. **The pair at 49.347, split by 1.2e-5
+relative, is resolved perfectly. The pair at 98.694, split by 1.6e-5 — a
+*larger* gap — is merged**, returned as a double of the lower value.
+
+So the limit is not numerical resolution. It is the sector structure, and it is
+the same issue as Session 1's Finding 3:
+
+- (1,2)/(2,1) at 49.347 have opposite parities, so `rect D2` puts them in
+  **different sectors**. Each sector solve finds one, exactly, and they are
+  merged by the across-sector rule. Splitting is irrelevant.
+- (1,3)/(3,1) at 98.694 are both odd-odd, so they land in the **same sector**
+  (separating them needs the diagonal reflection D4 has and D2 does not). There
+  the only tool is `estimate_multiplicity`, which at `ttol=1e-3` reads a 1.6e-5
+  gap as a genuine double.
+
+**Practical statement of the limit.** Two eigenvalues distinguished by the
+registered symmetry group are resolved to full precision no matter how close
+they are. Two that are *not* distinguished are merged once their relative gap
+falls below roughly `ttol`. Improving this means either a larger real-character
+group (impossible here — D4's diagonal reflection has no real character on this
+basis), a tighter `ttol`, or resolving multiplicity from the tension curve's
+shape rather than a threshold.
+
+This is worth knowing for shape optimization, where a design can drift towards
+a symmetric configuration and two eigenvalues approach: the solver will hold
+them apart perfectly if the symmetry separates them, and silently fuse them if
+it does not.

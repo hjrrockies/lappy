@@ -4,24 +4,24 @@
 
 | domain | tier | certified digits | vs exact | n_basis | s |
 |---|---|---|---|---|---|
-| `square` | analytic | 13.4 | 14.5 | 120 | 50 |
-| `rect_near_deg_1e3` | analytic | 13.6 | 14.5 | 120 | 88 |
+| `square` | analytic | 13.6 | 14.5 | 120 | 28 |
+| `rect_near_deg_1e3` | analytic | 13.3 | 14.4 | 120 | 41 |
 | `rect_near_deg_1e5` | analytic | 13.4 | 14.5 | 120 | 47 |
 | `rect_thin` | analytic | — | — | — | — |
-| `eq_tri` | analytic | 13.6 | 14.5 | 120 | 12 |
+| `eq_tri` | analytic | 13.5 | 14.4 | 120 | 12 |
 | `iso_right_tri` | analytic | 5.8 | 6.4 | 120 | 141 |
-| `disk` | analytic | 13.7 | 14.5 | 120 | 75 |
-| `sector_reflex` | analytic | 13.5 | 12.9 | 240 | 30 |
-| `sector_sharp_p65` | analytic | 13.1 | 14.5 | 240 | 15 |
-| `sector_sharp_p133` | analytic | 12.9 | 14.5 | 320 | 16 |
-| `sector_slit` | analytic | 13.6 | 13.1 | 320 | 52 |
-| `L_shape` | corner | 13.6 | — | 240 | 22 |
-| `H_shape` | corner | 9.9 | — | 480 | 195 |
+| `disk` | analytic | 13.7 | 14.4 | 120 | 71 |
+| `sector_reflex` | analytic | 13.6 | 12.9 | 240 | 30 |
+| `sector_sharp_p65` | analytic | 13.1 | 14.4 | 240 | 15 |
+| `sector_sharp_p133` | analytic | 13.0 | 14.5 | 320 | 16 |
+| `sector_slit` | analytic | 13.7 | 13.1 | 320 | 51 |
+| `L_shape` | corner | 13.6 | — | 240 | 23 |
+| `H_shape` | corner | 9.7 | — | 480 | 196 |
 | `GWW1` | corner | 6.3 | — | 320 | 455 |
 | `GWW2` | corner | 7.7 | — | 320 | 289 |
-| `reg_ngon_5` | corner | 12.3 | — | 240 | 38 |
-| `reg_ngon_6` | corner | 12.8 | — | 320 | 197 |
-| `reg_ngon_7` | corner | 11.7 | — | 240 | 37 |
+| `reg_ngon_5` | corner | 12.8 | — | 240 | 24 |
+| `reg_ngon_6` | corner | 12.5 | — | 320 | 118 |
+| `reg_ngon_7` | corner | 11.5 | — | 240 | 44 |
 | `reg_ngon_8` | corner | 8.0 | — | 120 | 101 |
 | `chevron_1_15` | corner | 5.6 | — | 160 | 95 |
 | `chevron_1_2` | corner | 3.3 | — | 160 | 79 |
@@ -33,7 +33,7 @@
 | `iso_tri_h4` | corner | 11.3 | — | 240 | 52 |
 | `iso_tri_h16` | corner | 10.8 | — | 120 | 31 |
 | `parallelogram_60` | corner | 12.7 | — | 240 | 34 |
-| `parallelogram_p65` | corner | 7.1 | — | 320 | 149 |
+| `parallelogram_p65` | corner | 7.9 | — | 320 | 112 |
 | `parallelogram_p127` | corner | 4.0 | — | 320 | 307 |
 | `right_trapezoid` | corner | 13.3 | — | 240 | 56 |
 | `spiral` | corner | 1.6 | — | 320 | 408 |
