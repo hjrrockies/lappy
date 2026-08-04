@@ -469,3 +469,21 @@ innocent domains (`reg_ngon_8`, `chevron_1_15`, `chevron_1_2` — the last drove
 swap to 13GB). Those failures are artifacts of my own contention, not
 properties of those domains; all three were reset to pending and must be
 re-run. **One job at a time on this machine. No exceptions.**
+
+### Operational: an hour lost to a detached background job dying
+
+A sweep launched with `nohup ... &` from the tool shell was gone an hour later
+having completed nothing, while `queue.json` still showed one domain `running`.
+`setsid` does not exist on macOS, so the usual detach trick is unavailable.
+Fixed by launching through the harness's own background mechanism, which owns
+the process lifetime properly, and by *verifying the job is alive and has
+advanced* rather than assuming a successful launch.
+
+Also parked `rect_thin` as `status='hard'` and taught `sweep.py` to skip `hard`
+alongside `done`. It sorts first in the pending list and costs ~340s to fail,
+so every restart was paying six minutes for a known-bad domain.
+
+Net operational rules for this run, all learned the expensive way:
+  1. One compute job at a time on this machine.
+  2. Verify a background job is alive AND advancing before trusting it.
+  3. Park diagnosed failures so restarts do not re-pay for them.

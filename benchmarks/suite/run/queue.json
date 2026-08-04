@@ -128,12 +128,12 @@
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 4,
+  "attempts": 5,
   "best_digits": 4.885913604395251,
   "best_n_basis": 120,
   "best_tag": "base",
   "notes": "swap guard: system swap 6949MB exceeded baseline+4000MB",
-  "status": "short"
+  "status": "running"
  },
  "iso_tri_h05": {
   "attempts": 0,
@@ -232,12 +232,12 @@
   "status": "done"
  },
  "rect_thin": {
-  "attempts": 5,
+  "attempts": 6,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "",
-  "status": "pending"
+  "notes": "runaway memory not yet explained; survives all 3 cache fixes + depth cap. Parked, see NOTEBOOK.",
+  "status": "hard"
  },
  "reg_ngon_5": {
   "attempts": 1,

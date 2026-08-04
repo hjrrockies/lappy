@@ -150,7 +150,11 @@ def main(argv=None):
     if args.status:
         keys = [k for k in keys if q.get(k, {}).get('status') == args.status]
     if not args.redo:
-        keys = [k for k in keys if q.get(k, {}).get('status') != 'done']
+        # 'hard' means diagnosed and parked: re-running it each pass only burns
+        # time (rect_thin sorts first in the pending list and costs ~340s to
+        # fail). Use --redo, or --keys, to revisit one deliberately.
+        keys = [k for k in keys
+                if q.get(k, {}).get('status') not in ('done', 'hard')]
 
     print(f'# {len(keys)} domains, tag={args.tag}, timeout={args.timeout}s',
           flush=True)
