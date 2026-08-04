@@ -1,6 +1,6 @@
 {
  "GWW1": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 6.627659961401108,
   "best_n_basis": 320,
   "best_tag": "base",
@@ -8,7 +8,7 @@
   "status": "short"
  },
  "GWW2": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": 7.70151777396386,
   "best_n_basis": 320,
   "best_tag": "base",
@@ -40,7 +40,7 @@
   "status": "pending"
  },
  "chevron_1_15": {
-  "attempts": 1,
+  "attempts": 2,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -80,12 +80,13 @@
   "status": "pending"
  },
  "cut_square_r05": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 12.490178661741856,
+  "best_n_basis": 640,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "disk": {
   "attempts": 1,
@@ -96,28 +97,31 @@
   "status": "done"
  },
  "ellipse_a2": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 13.17963733280759,
+  "best_n_basis": 240,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "ellipse_a3": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 12.810207746646157,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "ellipse_a4": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 12.93128757889989,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "eq_tri": {
   "attempts": 1,
@@ -128,28 +132,30 @@
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 5,
-  "best_digits": 4.885913604395251,
+  "attempts": 6,
+  "best_digits": 5.8147639875111565,
   "best_n_basis": 120,
+  "best_seed": 0,
   "best_tag": "base",
   "notes": "swap guard: system swap 6949MB exceeded baseline+4000MB",
   "status": "short"
  },
  "iso_tri_h05": {
-  "attempts": 0,
+  "attempts": 2,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "",
-  "status": "pending"
+  "notes": "swap guard: system swap 7100MB exceeded baseline+5000MB",
+  "status": "failed"
  },
  "iso_tri_h1": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 13.401212220273536,
+  "best_n_basis": 240,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "iso_tri_h16": {
   "attempts": 0,
@@ -160,20 +166,22 @@
   "status": "pending"
  },
  "iso_tri_h4": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 11.31731254575838,
+  "best_n_basis": 240,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "mushroom": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 12.117120396660145,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "mushroom_neck01": {
   "attempts": 0,
@@ -184,20 +192,22 @@
   "status": "pending"
  },
  "mushroom_thin": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 7.448369076900832,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "parallelogram_60": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 12.685579414322214,
+  "best_n_basis": 240,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "parallelogram_p127": {
   "attempts": 0,
@@ -248,12 +258,13 @@
   "status": "done"
  },
  "reg_ngon_6": {
-  "attempts": 2,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
-  "notes": "swap guard: system swap 6640MB exceeded baseline+4000MB",
-  "status": "failed"
+  "attempts": 5,
+  "best_digits": 12.520484912950751,
+  "best_n_basis": 320,
+  "best_seed": 1,
+  "best_tag": "bases1",
+  "notes": "",
+  "status": "done"
  },
  "reg_ngon_7": {
   "attempts": 1,
@@ -264,7 +275,7 @@
   "status": "done"
  },
  "reg_ngon_8": {
-  "attempts": 2,
+  "attempts": 3,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
@@ -272,12 +283,13 @@
   "status": "running"
  },
  "right_trapezoid": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 13.303476451206523,
+  "best_n_basis": 240,
+  "best_seed": 0,
+  "best_tag": "base",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "sector_reflex": {
   "attempts": 1,

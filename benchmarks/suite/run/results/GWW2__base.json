@@ -83,6 +83,8 @@
  "ok": true,
  "tag": "base",
  "seed": 0,
- "seconds": 290.5264070034027,
+ "int_npts": null,
+ "bdry_mult": 2,
+ "seconds": 288.70076990127563,
  "use_sym": true
 }

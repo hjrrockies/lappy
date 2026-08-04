@@ -88,7 +88,11 @@ def run_one(key, tag, n_basis, n_eigs, timeout, no_sym=False, workers=1,
                              stderr=subprocess.STDOUT, start_new_session=True)
         while True:
             try:
-                rc = p.wait(timeout=5)
+                # Poll fast: reg_ngon_8 grew from under budget to 11.5GB of
+                # swap inside a single 5s window. The guard still fired, but
+                # by then the machine had already taken the hit, which is the
+                # thing the guard exists to prevent.
+                rc = p.wait(timeout=1.5)
                 break
             except subprocess.TimeoutExpired:
                 pass

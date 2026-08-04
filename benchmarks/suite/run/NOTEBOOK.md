@@ -612,3 +612,49 @@ refinement depth, cache pressure, runtime, accuracy — degrades together.**
 `sweep.py` now retries a failed domain on seed+1, seed+2 (`--retries`, default
 2), tagging each attempt so the successful seed is recorded in the result and in
 `queue.json`. Reproducibility is preserved because the winning seed is stored.
+
+### A bad interior draw can make the solver MISS a mode
+
+`iso_tri_h1` earlier returned 5.5 certified / 0.6 true, with lambda = 98.696
+(the (4,2) mode) absent from the list. Re-run seeded, it returns **13.4
+certified / 14.4 true with all ten modes present.**
+
+So the missing eigenvalue was not a search-algorithm failure and not a window
+problem — it was an unlucky interior sample. That is the third distinct symptom
+of the same underlying cause, and the most alarming one:
+
+    bad interior draw -> noisy sigma curve
+       -> lost accuracy            (iso_right_tri: 2.5 to 5.8 digits)
+       -> runaway refinement/memory (reg_ngon_6, iso_tri_h05)
+       -> A MISSED EIGENVALUE      (iso_tri_h1)
+
+The first two announce themselves. The third does not: it produces a table that
+is wrong in every entry after the gap, with a valid Moler--Payne certificate on
+each surviving value and a Weyl discrepancy of about one. Only the closed form
+caught it.
+
+**This is the strongest practical argument in the whole run for solving each
+domain at several seeds.** Not for accuracy — for completeness. Two seeds that
+agree on the *set* of eigenvalues found is far better evidence of completeness
+than any single run's certificate, and it costs nothing but time.
+
+### Two guard-tuning lessons
+
+**The budget was too tight, then the polling too slow.** Lowering the swap
+budget from 4GB to 2.5GB killed `reg_ngon_6`, which legitimately peaks near 4GB
+and reaches 12.5-12.8 digits when allowed to. Raising it to 5GB recovered the
+domain. Conversely `reg_ngon_8` went from under budget to **11.5GB of swap
+inside one 5-second poll window** — the guard fired, but only after the machine
+had taken the hit. Poll interval cut to 1.5s.
+
+Both are my own errors rather than properties of the method, and both produced
+a spurious "hard" verdict at some point in the run. Recorded so the final table
+is not read as saying more about MPS than it does.
+
+**The registry's n_basis hints may be too aggressive.** `iso_tri_h05` fails on
+memory at `n_basis=240`, but `TUNING_LOG.md` records 10.8-12.3 digits for it at
+`n_basis=120`. The suite inherited 240 from a later, more ambitious production
+config. Bigger is not free: a larger basis means a worse-conditioned system,
+which (per the unified picture above) means a noisier sigma curve, deeper
+refinement, and more memory — so escalating `n_basis` can make a domain *fail*
+rather than merely cost time. Retry at 120.
