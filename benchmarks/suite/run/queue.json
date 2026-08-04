@@ -128,12 +128,12 @@
   "status": "done"
  },
  "iso_right_tri": {
-  "attempts": 3,
+  "attempts": 4,
   "best_digits": 4.885913604395251,
   "best_n_basis": 120,
   "best_tag": "base",
   "notes": "swap guard: system swap 6949MB exceeded baseline+4000MB",
-  "status": "short"
+  "status": "running"
  },
  "iso_tri_h05": {
   "attempts": 0,
@@ -236,8 +236,8 @@
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
-  "notes": "swap guard: system swap 5432MB exceeded baseline+4000MB",
-  "status": "running"
+  "notes": "swap guard: system swap 5580MB exceeded baseline+4000MB",
+  "status": "failed"
  },
  "reg_ngon_5": {
   "attempts": 0,

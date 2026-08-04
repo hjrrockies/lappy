@@ -285,3 +285,79 @@ digits for all three sectors sit in a narrow band (12.9-13.5) and would have
 suggested the three cases are equally difficult. The true errors differ by 1.6
 digits and *in the opposite order* from the hypothesis. Certified bounds are
 conservative in a domain-dependent way; only exact truth ranks difficulty.
+
+---
+
+## Session 4 — two runaway-memory bugs in the solve pipeline
+
+Three domains (`rect_thin`, `iso_right_tri`, `H_shape`) tripped the swap guard.
+Static analysis went nowhere: I wrongly blamed the newly-registered symmetry
+groups (but `H_shape` uses a pre-existing one), then max Bessel order (but
+`eq_tri` has the same order and works), then Bessel underflow (measured: all
+values finite). What settled it in one shot was `faulthandler.dump_traceback_
+later(45, repeat=True)` plus a swap watcher that dumps and aborts at 2.5GB.
+**Lesson: for a memory runaway, get the traceback; do not reason about it.**
+
+### Bug 1 — unbounded recursion in `opt.bracket_mins`
+
+The dump showed **11 nested `bracket_mins` frames**. The function recurses with
+`nrecurse+1` and no depth cap, and its only safety valve —
+
+    if nrecurse==0 and len(y0_min_idx) > len(x)/3:
+        raise EigensolverFailure("f has too many local minima")
+
+— fires **only at depth 0**. Once `sigma` is numerical noise over part of the
+window, every deeper level finds spurious local minima, flags them all for
+refinement, and each flagged run calls `fill_refinement` (grid `shrink` times
+finer) and recurses. Cost compounds across levels *and* across runs.
+
+Fixed with an **opt-in** `max_recurse` (default `None` = existing behavior
+exactly); `common.manual_solve` passes 8. At the cap we return the unrefined
+brackets rather than discarding them, so `polish_eigs` still gets candidates.
+Eight levels is ~256x the initial grid spacing — far finer than `bracket_xtol`
+needs.
+
+### Bug 2 — the caches fill during the *solve*, not certification
+
+That fixed `iso_right_tri` but not `H_shape`/`rect_thin`. Second dump pointed
+at `polish_eigs` -> `golden_search` -> `sigma` -> `_tensions_scalar`.
+
+`golden_search` evaluates ~100 **distinct** lambdas per eigenvalue. Every one
+lands in caches sized in *entries*: `_tensions_scalar` keeps 256,
+`NormalizedBasis.norms` 128. At `n_basis=480` each entry is a megabyte-scale
+Vandermonde, so one polish pass holds 1-2GB — and the symmetry path keeps one
+solver **per sector** alive afterwards for certification. Successive lambdas
+are distinct, so there is nothing to reuse. Clearing between eigenvalues costs
+nothing.
+
+I had earlier put `clear_instance_caches` in the certification loop. Right
+idea, wrong place: certification matrices are only 5-76MB (measured). The
+solve is where the memory goes.
+
+### Result
+
+**`H_shape`: 9.9 certified digits at n_basis=480**, against the 8.2 recorded in
+`TUNING_LOG.md` — and it was failing outright before. So one of the suite's
+"hard" domains was not accuracy-limited at all; it was being killed by a
+resource bug that also capped what earlier sessions could explore. That is
+worth stating plainly: **some of the recorded digit ceilings may be artifacts
+of runs that could not afford to finish.**
+
+`rect_thin` still trips the guard and stays open.
+
+### Two caveats to settle before the final table
+
+1. **`iso_right_tri` gets only 4.9 digits** (certified 4.9, true 5.1). That is
+   implausible for an all-regular (p=2,4,4) triangle with a closed form, when
+   `eq_tri` and `square` both reach 14.5. Prime suspect is the new
+   `max_recurse=8` cap truncating refinement before the brackets are resolved,
+   trading a memory runaway for a precision loss. Retest at 12 and 16; if
+   accuracy recovers, the cap is doing real damage and belongs higher, with the
+   *cache clearing* (bug 2) carrying the memory load instead.
+
+2. **The table is currently a mix of pre-cap and post-cap runs.** The sweep
+   skips domains already marked `done`, so the 11 banked results were produced
+   before `max_recurse` and the polish-loop cache clearing existed. Nothing is
+   wrong with them, but they were not produced by the same pipeline as the rest.
+   Before publishing, re-run everything once under the final configuration so
+   the whole table is reproducible from one code state.
