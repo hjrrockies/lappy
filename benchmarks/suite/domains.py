@@ -122,14 +122,14 @@ def _d(key, tier, family, build, params_or_tags, tags_or_why, why=None, **kw):
 # Fourier--Bessel expansion there is analytic, i.e. no difficulty at all.
 
 _ANALYTIC = [
-    _d('square', 'analytic', 'rect', lambda: G.rect(1, 1),
+    _d('square', 'analytic', 'rect', lambda: G.rect(1, 1), {'L': 1, 'H': 1},
        ['regular_corners', 'exact_multiplicity'],
        'the easy floor: all corners regular (p=2), and high multiplicity from '
        'both the D4 symmetry and the m^2+n^2 number theory',
        truth='analytic', truth_fn=partial(R.rect_eigs, L=1, H=1),
        symmetric=True, n_basis=120),
 
-    _d('rect_near_deg_1e3', 'analytic', 'rect', lambda: G.rect(1, 1.001),
+    _d('rect_near_deg_1e3', 'analytic', 'rect', lambda: G.rect(1, 1.001), {'L': 1, 'H': 1.001},
        ['regular_corners', 'near_degenerate'],
        'near-degeneracy knob, coarse: splits the exact square double at '
        '49.348 by ~1.2e-3 relative -- comfortably resolvable, the control for '
@@ -137,7 +137,7 @@ _ANALYTIC = [
        truth='analytic', truth_fn=partial(R.rect_eigs, L=1, H=1.001),
        symmetric=True, n_basis=120),
 
-    _d('rect_near_deg_1e5', 'analytic', 'rect', lambda: G.rect(1, 1.00001),
+    _d('rect_near_deg_1e5', 'analytic', 'rect', lambda: G.rect(1, 1.00001), {'L': 1, 'H': 1.00001},
        ['regular_corners', 'near_degenerate'],
        'near-degeneracy knob, fine: split ~1.2e-5 relative -- below this the '
        'pair is indistinguishable from a true double and estimate_multiplicity '
@@ -145,20 +145,20 @@ _ANALYTIC = [
        truth='analytic', truth_fn=partial(R.rect_eigs, L=1, H=1.00001),
        symmetric=True, n_basis=120),
 
-    _d('rect_thin', 'analytic', 'rect', lambda: G.rect(1, 8),
+    _d('rect_thin', 'analytic', 'rect', lambda: G.rect(1, 8), {'L': 1, 'H': 8},
        ['regular_corners', 'elongated'],
        'elongation with exact truth: aspect 8, quasi-1D modes, no corner '
        'difficulty at all to confound it',
        truth='analytic', truth_fn=partial(R.rect_eigs, L=1, H=8),
        symmetric=True, n_basis=240),
 
-    _d('eq_tri', 'analytic', 'eq_tri', lambda: G.eq_tri(1),
+    _d('eq_tri', 'analytic', 'eq_tri', lambda: G.eq_tri(1), {'l': 1},
        ['regular_corners', 'exact_multiplicity'],
        'exact spectrum with genuine multiplicity; regular p=3 corners',
        truth='analytic', truth_fn=partial(R.eq_tri_eigs, l=1),
        symmetric=True, n_basis=120),
 
-    _d('iso_right_tri', 'analytic', 'iso_right_tri', lambda: G.iso_right_tri(1),
+    _d('iso_right_tri', 'analytic', 'iso_right_tri', lambda: G.iso_right_tri(1), {},
        ['regular_corners'],
        'exact; mixed regular angles p=2,4. Note this is the same shape as '
        'iso_tri(1) up to similarity, which gives the iso_tri sweep an exactly '
@@ -166,7 +166,7 @@ _ANALYTIC = [
        truth='analytic', truth_fn=partial(R.iso_right_tri_eigs, l=1),
        symmetric=True, n_basis=120),
 
-    _d('disk', 'analytic', 'disk', lambda: G.disk(1),
+    _d('disk', 'analytic', 'disk', lambda: G.disk(1), {},
        ['smooth', 'exact_multiplicity'],
        'smooth boundary with exact truth; every m>=1 mode is exactly double, so '
        'this is the multiplicity test for the fundamental-solution basis path',
@@ -174,7 +174,7 @@ _ANALYTIC = [
        symmetric=True, n_basis=120),
 
     _d('sector_reflex', 'analytic', 'disk_sector',
-       lambda: G.disk_sector(1, 3 * np.pi / 2),
+       lambda: G.disk_sector(1, 3 * np.pi / 2), {'theta': 3 * np.pi / 2},
        ['mixed_smooth_corner', 'regular_corners', 'singular_corners', 'reentrant'],
        'THE calibration point the suite was missing: a reentrant singular corner '
        '(p=2/3, the same exponent as L_shape) with exact truth, so reentrant '
@@ -183,7 +183,7 @@ _ANALYTIC = [
        symmetric=True, n_basis=240),
 
     _d('sector_sharp_p65', 'analytic', 'disk_sector',
-       lambda: G.disk_sector(1, np.pi / 6.5),
+       lambda: G.disk_sector(1, np.pi / 6.5), {'theta': np.pi / 6.5},
        ['mixed_smooth_corner', 'regular_corners', 'singular_corners', 'sharp'],
        'sharp singular corner (p=6.5) with exact truth -- isolates the chevron '
        'cost mechanism with zero reference uncertainty. The angle is pi/6.5, not '
@@ -192,7 +192,7 @@ _ANALYTIC = [
        symmetric=True, n_basis=240),
 
     _d('sector_sharp_p133', 'analytic', 'disk_sector',
-       lambda: G.disk_sector(1, np.pi / 13.3),
+       lambda: G.disk_sector(1, np.pi / 13.3), {'theta': np.pi / 13.3},
        ['mixed_smooth_corner', 'regular_corners', 'singular_corners', 'sharp',
         'elongated'],
        'the sharp end of the exact sweep (p=13.3), comparable to chevron(1,1.5)s '
@@ -201,7 +201,7 @@ _ANALYTIC = [
        symmetric=True, status='hard', n_basis=320),
 
     _d('sector_slit', 'analytic', 'disk_sector',
-       lambda: G.disk_sector(1, 2 * np.pi - 0.05),
+       lambda: G.disk_sector(1, 2 * np.pi - 0.05), {'theta': 2 * np.pi - 0.05},
        ['mixed_smooth_corner', 'regular_corners', 'singular_corners', 'reentrant'],
        'the extreme reentrant case, p=0.504, essentially a slit -- worst possible '
        'corner exponent, and still exactly solvable',
@@ -334,14 +334,14 @@ _CORNER = [
        n_basis=240),
 
     _d('parallelogram_60', 'corner', 'parallelogram',
-       lambda: G.parallelogram(1, 1, np.pi / 3), {},
+       lambda: G.parallelogram(1, 1, np.pi / 3), {'b': 1, 'h': 1, 'alpha': np.pi / 3},
        ['regular_corners', 'singular_corners'],
        'sharp corners with only a half-turn, contrasting with iso_tris mirror: '
        'half the symmetry reduction for the same corner structure',
        truth='none', symmetric=True, n_basis=240),
 
     _d('parallelogram_p65', 'corner', 'parallelogram',
-       lambda: G.parallelogram(1, 1, np.pi / 6.5), {},
+       lambda: G.parallelogram(1, 1, np.pi / 6.5), {'b': 1, 'h': 1, 'alpha': np.pi / 6.5},
        ['singular_corners', 'many_singular', 'sharp', 'elongated'],
        'shear sweep, sharper (p=6.5). The shear is pi/6.5 rather than pi/6 on '
        'purpose: at pi/6 the corner exponent would be the integer 6 and the '
@@ -349,7 +349,7 @@ _CORNER = [
        truth='none', symmetric=True, status='hard', n_basis=320),
 
     _d('parallelogram_p127', 'corner', 'parallelogram',
-       lambda: G.parallelogram(1, 1, np.pi / 12.7), {},
+       lambda: G.parallelogram(1, 1, np.pi / 12.7), {'b': 1, 'h': 1, 'alpha': np.pi / 12.7},
        ['singular_corners', 'many_singular', 'sharp', 'elongated'],
        'shear sweep, extreme: p=12.7 corners at slenderness ~18. Combines the '
        'sharp-corner and elongation mechanisms, which no other entry does',

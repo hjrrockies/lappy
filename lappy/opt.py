@@ -230,7 +230,16 @@ def minimize_on_bracket(f, bracket, xtol, minsolver='parabolic', verbose=0):
 
     # only minimize further if bracket is at least width tol
     if x[2]-x[0] > tol:
-        if minsolver == 'parabolic':
+        # A degenerate bracket (interior point coincident with an endpoint) can
+        # come out of bracket_mins where sigma is flat to machine precision over
+        # a range -- which is exactly what happens at a high-multiplicity
+        # eigenvalue. parabolic_iter_min requires x strictly increasing and
+        # raises otherwise, so route these straight to the golden search that is
+        # already this function's fallback: it needs only the two endpoints.
+        if not (x[0] < x[1] < x[2]):
+            minimizer, fevals = golden_search(f, x[0], x[2], tol,
+                                              verbose=verbose-1)
+        elif minsolver == 'parabolic':
             minimizer, fevals = parabolic_iter_min(lambda x: f(x)**2, x, y, tol, verbose=verbose-1)
         elif minsolver == 'brent':
             brent_verb = (3 if verbose > 2 else max(verbose-1,0))

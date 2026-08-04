@@ -1,0 +1,354 @@
+{
+ "GWW1": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "GWW2": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "H_shape": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "L_shape": {
+  "attempts": 1,
+  "best_digits": 13.550123245763105,
+  "best_n_basis": 240,
+  "best_tag": "base",
+  "notes": "",
+  "status": "done"
+ },
+ "chevron_1_125": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "chevron_1_15": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "chevron_1_2": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "chevron_2_3": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "chevron_2_4": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "cut_square_r025": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "cut_square_r05": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "disk": {
+  "attempts": 1,
+  "best_digits": 13.749108698231668,
+  "best_n_basis": 120,
+  "best_tag": "base",
+  "notes": "",
+  "status": "done"
+ },
+ "ellipse_a2": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "ellipse_a3": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "ellipse_a4": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "eq_tri": {
+  "attempts": 1,
+  "best_digits": 13.587905610817273,
+  "best_n_basis": 120,
+  "best_tag": "base",
+  "notes": "",
+  "status": "done"
+ },
+ "iso_right_tri": {
+  "attempts": 1,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "running"
+ },
+ "iso_tri_h05": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "iso_tri_h1": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "iso_tri_h16": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "iso_tri_h4": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "mushroom": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "mushroom_neck01": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "mushroom_thin": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "parallelogram_60": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "parallelogram_p127": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "parallelogram_p65": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "rect_near_deg_1e3": {
+  "attempts": 1,
+  "best_digits": 13.554513701644709,
+  "best_n_basis": 120,
+  "best_tag": "base",
+  "notes": "",
+  "status": "done"
+ },
+ "rect_near_deg_1e5": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "rect_thin": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "reg_ngon_5": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "reg_ngon_6": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "reg_ngon_7": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "reg_ngon_8": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "right_trapezoid": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "sector_reflex": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "sector_sharp_p133": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "sector_sharp_p65": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "sector_slit": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "spiral": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "spiral_t25": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "square": {
+  "attempts": 4,
+  "best_digits": 13.650280064739077,
+  "best_n_basis": 120,
+  "best_tag": "base",
+  "notes": "rc=1",
+  "status": "done"
+ },
+ "stadium": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ },
+ "stadium_L2": {
+  "attempts": 0,
+  "best_digits": null,
+  "best_n_basis": null,
+  "best_tag": null,
+  "notes": "",
+  "status": "pending"
+ }
+}

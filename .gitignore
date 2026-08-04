@@ -175,3 +175,6 @@ Claude.md
 
 # zip archives
 *.zip
+
+# overnight reference run: logs are large and reproducible; results/queue/notes are kept
+benchmarks/suite/run/logs/
