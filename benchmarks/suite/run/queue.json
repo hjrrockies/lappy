@@ -32,52 +32,58 @@
   "status": "done"
  },
  "chevron_1_125": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 4.650817475258191,
+  "best_n_basis": 160,
+  "best_seed": 0,
+  "best_tag": "nb160",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "chevron_1_15": {
-  "attempts": 2,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 3,
+  "best_digits": 5.553326223423934,
+  "best_n_basis": 160,
+  "best_seed": 0,
+  "best_tag": "nb160",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "chevron_1_2": {
-  "attempts": 1,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 2,
+  "best_digits": 3.313096628729675,
+  "best_n_basis": 160,
+  "best_seed": 0,
+  "best_tag": "nb160",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "chevron_2_3": {
-  "attempts": 1,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 2,
+  "best_digits": 4.104701746040842,
+  "best_n_basis": 160,
+  "best_seed": 0,
+  "best_tag": "nb160",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "chevron_2_4": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 4.8174051046156245,
+  "best_n_basis": 160,
+  "best_seed": 0,
+  "best_tag": "nb160",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "cut_square_r025": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 2,
+  "best_digits": 7.18285309956427,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "nb320",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "cut_square_r05": {
   "attempts": 1,
@@ -141,12 +147,13 @@
   "status": "short"
  },
  "iso_tri_h05": {
-  "attempts": 2,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
-  "notes": "swap guard: system swap 7100MB exceeded baseline+5000MB",
-  "status": "failed"
+  "attempts": 3,
+  "best_digits": 2.6962385311408608,
+  "best_n_basis": 120,
+  "best_seed": 0,
+  "best_tag": "nb120",
+  "notes": "",
+  "status": "short"
  },
  "iso_tri_h1": {
   "attempts": 1,
@@ -158,12 +165,13 @@
   "status": "done"
  },
  "iso_tri_h16": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 10.844439243503997,
+  "best_n_basis": 120,
+  "best_seed": 0,
+  "best_tag": "nb120",
   "notes": "",
-  "status": "pending"
+  "status": "done"
  },
  "iso_tri_h4": {
   "attempts": 1,
@@ -184,12 +192,13 @@
   "status": "done"
  },
  "mushroom_neck01": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 5.1335003691626655,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "nb320",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "mushroom_thin": {
   "attempts": 1,
@@ -210,20 +219,21 @@
   "status": "done"
  },
  "parallelogram_p127": {
-  "attempts": 0,
+  "attempts": 1,
   "best_digits": null,
   "best_n_basis": null,
   "best_tag": null,
   "notes": "",
-  "status": "pending"
+  "status": "running"
  },
  "parallelogram_p65": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 1,
+  "best_digits": 7.061098658222066,
+  "best_n_basis": 320,
+  "best_seed": 0,
+  "best_tag": "nb320",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "rect_near_deg_1e3": {
   "attempts": 1,
@@ -275,12 +285,13 @@
   "status": "done"
  },
  "reg_ngon_8": {
-  "attempts": 3,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 4,
+  "best_digits": 8.019450283972063,
+  "best_n_basis": 120,
+  "best_seed": 0,
+  "best_tag": "nb120",
   "notes": "",
-  "status": "running"
+  "status": "done"
  },
  "right_trapezoid": {
   "attempts": 1,
@@ -348,19 +359,21 @@
   "status": "done"
  },
  "stadium": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 2,
+  "best_digits": 2.923149052620293,
+  "best_n_basis": 120,
+  "best_seed": 0,
+  "best_tag": "nb120",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  },
  "stadium_L2": {
-  "attempts": 0,
-  "best_digits": null,
-  "best_n_basis": null,
-  "best_tag": null,
+  "attempts": 2,
+  "best_digits": 3.192766338963749,
+  "best_n_basis": 120,
+  "best_seed": 0,
+  "best_tag": "nb120",
   "notes": "",
-  "status": "pending"
+  "status": "short"
  }
 }

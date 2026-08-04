@@ -658,3 +658,49 @@ config. Bigger is not free: a larger basis means a worse-conditioned system,
 which (per the unified picture above) means a noisier sigma curve, deeper
 refinement, and more memory — so escalating `n_basis` can make a domain *fail*
 rather than merely cost time. Retry at 120.
+
+---
+
+## The designed experiment: one sharp corner vs two
+
+`parallelogram_p65` was put in the suite specifically to separate "sharpness"
+from "two distant sharp corners", because chevron confounds the two. Result:
+
+    domain              sharp corners   p      reentrant?   certified
+    sector_sharp_p65          1        6.5        no          13.1  (14.5 true)
+    sector_sharp_p133         1       13.3        no          12.9  (14.5 true)
+    parallelogram_60          0 (p=3)   -         no          12.7
+    parallelogram_p65         2        6.5        no           7.1
+    chevron_1_15              2       15.9       YES           5.6
+
+**One sharp corner costs nothing** — and costs nothing *at any sharpness*,
+since p=6.5 and p=13.3 both give 14.5 true digits. **Two sharp corners cost
+about six digits**, with no reentrant corner involved at all
+(`parallelogram_p65` has none). Adding a reentrant corner on top
+(`chevron_1_15`) costs another 1.5.
+
+So the mechanism is not the singularity strength of any individual corner. It
+is what happens when **two corner-centred expansions must coexist**. A plausible
+reading, consistent with everything else in this run: each corner's
+Fourier--Bessel functions decay like `r^(m p)` away from that corner, so at
+`p ~ 6.5` they are numerically zero over most of the domain. With one such
+corner the rest of the basis (the fundamental-solution block, or the other
+regular corners) carries the solution everywhere else and the system stays well
+conditioned. With two, each block is negligible in the other's neighbourhood
+and both are negligible in the middle, so the combined system has a large
+near-null space -- which is exactly the `n_reg/n ~ 60-70%` truncation
+`TUNING_LOG.md` reported, and exactly the conditioning failure that produces
+noisy sigma, seed sensitivity, and runaway refinement.
+
+Note this also explains the elongation correlation without needing elongation
+as a separate cause: two sharp corners are necessarily *far apart* in a slender
+domain, which maximises the region where both expansions are numerically zero.
+
+**Testable prediction** (not yet run): a domain with two sharp corners that are
+*close together* should behave much better than one where they are far apart, at
+the same p. If that holds, the actionable advice is about corner *separation
+relative to wavelength*, not about corner angle -- and the fix is to add basis
+functions that are supported in the middle of the domain (more
+fundamental-solution sources), not more Fourier--Bessel orders at the corners.
+That is the opposite of what the earlier tuning sessions tried, and consistent
+with their finding that corner reweighting made chevron worse.
