@@ -145,3 +145,143 @@ Extended precision is a diagnostic here, not a proposed fix (per instructions).
 If it confirms the mechanism, the fix to look for is a *better-conditioned
 representation* of the same space -- e.g. orthogonalizing the FB block against
 its own lower orders before collocation -- not more terms and not more points.
+
+---
+
+## Session 2 — the run is memory-bound before it is precision-bound
+
+The first full sweep did not fail on mathematics. It drove the machine to a
+**59.8GB memory footprint and 40GB of swap**, at which point it was thrashing
+rather than computing (one domain per 15 min, versus 13–90s when healthy).
+Worth recording in detail, because anyone running MPS over a suite of domains
+will hit it.
+
+### Where the memory is *not*
+
+Measured per stage on `rect(1,8)`, `n_basis=240`:
+
+    import                          135 MB
+    build_solver                    136 MB
+    assemble A_B (484x240), A_I     144 MB
+    sigma(lam)                      152 MB
+    interior_l2 + boundary_sup      169 MB
+    build_sym_solver (one sector)   181 MB
+
+A single solve is ~170MB. The deg-10 Dunavant cubature mesh is only 1,750
+points (7MB per Vandermonde). None of this is the problem.
+
+### Three multiplicative factors
+
+1. **Sector count.** The symmetry path builds one solver *per sector* — four
+   for a D2 group — each with its own basis and its own caches.
+2. **Fork fan-out.** `manual_solve(n_workers=4)` forks four processes *per
+   sector solve*, each copy-on-writing cached matrices as it touches them.
+   Sixteen live copies.
+3. **Caches sized in entries, not bytes.** `NormalizedBasis.norms` is
+   `instance_lru_cache(maxsize=128)` and `_tensions_scalar` is 256. That is
+   the right trade for repeated *scalar* evaluation at one lambda, and the
+   wrong one for evaluation over a large point set, where each entry is a
+   whole Vandermonde. Certifying ten eigenvalues across four sectors fills
+   them with megabyte-scale matrices.
+
+Fixes: default `n_workers=1`, pin BLAS to one thread (four workers against
+threaded BLAS gave load 17 on 10 cores — pure oversubscription), and add
+`lappy.cache.clear_instance_caches(obj)` (new, opt-in, nothing calls it by
+default) to drop caches between eigenvalues in the certification loop.
+
+### The guard, and why the obvious guards do not work
+
+That reduced but did not eliminate the blowup: `rect_thin` still reached a
+59.8GB footprint with a *single* worker, so there is a genuine runaway in that
+domain independent of the fan-out. Two lessons from trying to contain it:
+
+- **An RSS watchdog is actively misleading on macOS.** Memory is compressed,
+  so `ru_maxrss` reported 4.7GB while Activity Monitor showed 59.8GB and 40GB
+  of swap. The watchdog fired far too late to matter.
+- **macOS gives no hard per-process cap.** `setrlimit(RLIMIT_AS, ...)` and
+  `RLIMIT_DATA` both fail with "current limit exceeds maximum limit" when the
+  hard limit is infinity, and `ulimit -v` is a no-op.
+
+So the guard watches the **system**, not the process: `sweep.py` polls
+`vm.swapusage` and kills the child *process group* (forks included) once swap
+grows past a budget over its baseline. It catches every cause at once and
+converts an unbounded swap event into one recorded domain failure.
+
+**General lesson.** For a long unattended MPS sweep, the binding constraint is
+memory, and the correct unit of protection is the machine rather than the job.
+Guard on swap growth; run one domain per process; keep collocation-sized
+matrices out of entry-sized caches.
+
+`rect_thin`'s underlying runaway is still unexplained and is now on the list to
+diagnose — it is a thin domain (slenderness 8) whose FB orders may be climbing
+much faster than the corner structure suggests.
+
+### rect_thin runaway: ruled out so far
+
+Not basis construction — `make_default_basis(rect(1,8), 240)` gives a plain
+`FourierBesselBasis`, 60 orders at each of 4 regular (p=2) corners, same shape
+as the square. Not collocation — `pts_per_seg` gives [28,214,28,214] = 484
+points. Not spectral density — only 11 exact eigenvalues lie below the
+`lambda_window` top of 29.499 (lambda_10 = 25.291), so the search window is
+appropriately sized.
+
+Remaining suspects, for Phase 3: the corner-centred FB functions must represent
+the mode across a domain of extent 8, so at order 120 the Bessel argument
+reaches k*r ~ 43 with J_120(43) ~ 1e-60; `to_normalized` then divides by a
+number that small. Suspect the runaway is in the bracket recursion
+(`opt.bracket_mins` recurses with `nrecurse+1` and no depth cap) once sigma
+becomes numerical noise over a wide stretch of the window.
+
+---
+
+## Session 3 — the sharp-corner hypothesis is WRONG, and the sector sweep proves it
+
+The `disk_sector` family came in, and it is decisive. Same geometry throughout
+(one arc, two straight edges, one mirror symmetry, closed-form spectrum); the
+*only* thing varying is the corner exponent `p = pi/gamma`:
+
+    domain              p        certified   vs exact truth
+    sector_reflex      0.667       13.5          12.9
+    sector_sharp_p65   6.5         13.1          14.5
+    sector_sharp_p133 13.3         12.9          14.5
+
+**A single sharp corner is not hard at all.** At `p = 13.3` — an opening angle
+of 13.5 degrees, comparable to chevron's 11.3 — the method reaches **14.5
+correct digits against the exact spectrum**, at `n_basis=320`, in 17 seconds.
+
+That kills prediction 4 of the revised hypothesis, and with it the whole
+"sharp corners cause precision-bound near-dependence" story. If sharpness were
+intrinsically fatal, `sector_sharp_p133` would be the worst domain in the
+suite. It is one of the best.
+
+Note also the ordering: the *reentrant* corner (p=0.667, 12.9 digits) is the
+harder of the two, not the sharp ones — which is what the approximation theory
+says should happen, since the small exponent is what limits the convergence
+rate of any smooth approximant. Sharpness costs *evaluation effort*, not
+accuracy.
+
+### So what is actually wrong with chevron?
+
+Chevron has three things at once that `sector_sharp_p133` has only one of:
+
+  - **two** sharp corners (p~15.9), not one;
+  - a reentrant corner (p=2/3) as well;
+  - slenderness 5.6, so the two sharp corners are far apart relative to the
+    domain width.
+
+The sector result rules out the sharpness of any single corner. The remaining
+candidates are the *interaction* between two distant sharp corners (their
+corner-centred expansions must each be represented across the whole domain,
+where they are numerically indistinguishable from zero) and the combination
+with the reentrant corner. That is a different mechanism from the one I wrote
+down, and it is testable: build a domain with two sharp corners and no
+reentrant one, and one with a sharp corner plus a reentrant one, and see which
+reproduces the failure. `parallelogram_p65`/`p127` are exactly the first case
+(two sharp singular corners, no reentrant corner) and are already in the suite.
+
+**Method note.** This is the second time in this run that the analytic tier has
+overturned a conclusion that certification alone would have supported. Certified
+digits for all three sectors sit in a narrow band (12.9-13.5) and would have
+suggested the three cases are equally difficult. The true errors differ by 1.6
+digits and *in the opposite order* from the hypothesis. Certified bounds are
+conservative in a domain-dependent way; only exact truth ranks difficulty.
