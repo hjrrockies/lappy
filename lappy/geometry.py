@@ -1094,14 +1094,24 @@ class MultiSegment:
 
     def _find_corners(self):
         """Finds corners, i.e. where two boundary segments do not smoothly connect. Computes
-        angle wedge there."""
+        the angle wedge there.
+
+        Every array returned here is CORNER-indexed, i.e. aligned with `corners` and
+        `corner_idx`, so `corner_angles[k][c]` is the wedge ray at `corners[c]`. This matters:
+        `int_angles` (a separate property) is SEGMENT-indexed, giving the angle at each
+        segment's p0 whether or not that junction is a genuine corner, so the angle at corner
+        `c` is `int_angles[corner_idx[c]]`. The two indexings coincide only when every
+        junction is a corner. They diverge exactly when a junction is smooth -- a straight
+        (pi) vertex, e.g. `disk_sector(r, pi)`, or a collinear polygon vertex -- and mixing
+        them up previously made a half-disk unusable: `corners` had 2 entries while the
+        angle arrays had 3, so no `orders` length could be masked consistently."""
         T0, Tf = self.T0, self.Tf
         turning_angles = np.angle(np.roll(Tf,1)/T0)
         is_corner = (np.abs(turning_angles) > 1e-10)
         corners = self.p0[is_corner]
         corner_idx = np.arange(len(self.segments))[is_corner]
-        corner_angle0 = np.angle(T0)
-        corner_angle1 = np.angle(-np.roll(Tf,1))
+        corner_angle0 = np.angle(T0)[is_corner]
+        corner_angle1 = np.angle(-np.roll(Tf,1))[is_corner]
         return corners, corner_idx, corner_angle0, corner_angle1
     
     def dist(self, pt):
@@ -1215,15 +1225,15 @@ def corner_branch_cut_rays(domain):
     bdry          = domain.bdry
     corners       = bdry.corners
     corner_idx    = bdry.corner_idx
-    phi0, phi1    = bdry.corner_angles   # indexed over all segments
+    phi0, phi1    = bdry.corner_angles   # corner-indexed, like `corners` (see _find_corners)
     n_segs        = len(bdry.segments)
     b0, b1, owner = bdry.polyline()      # built once
 
     result = np.full(len(corners), np.nan)
 
     for i, (c, ci) in enumerate(zip(corners, corner_idx)):
-        phi_in   = phi1[ci]
-        ext_span = (phi0[ci] - phi_in) % (2 * np.pi)
+        phi_in   = phi1[i]
+        ext_span = (phi0[i] - phi_in) % (2 * np.pi)
         if ext_span < 1e-10:
             continue
 
@@ -1648,6 +1658,19 @@ class Domain(BaseDomain):
     @property
     def int_angles(self):
         return self.bdry.int_angles
+
+    @property
+    def corner_int_angles(self):
+        """Interior angles at the genuine corners, CORNER-indexed (aligned with `corners`,
+        `corner_idx` and `corner_angles`).
+
+        `int_angles` is SEGMENT-indexed -- one entry per segment's p0, corner or not -- so the
+        angle at corner `c` is `int_angles[corner_idx[c]]`, never `int_angles[c]`. Use this
+        property instead of doing that indexing by hand: any consumer that pairs an angle with
+        `corners[c]` wants these. The distinction is invisible on a domain where every junction
+        is a corner and silently wrong on one where a junction is smooth (a straight pi vertex,
+        a collinear polygon vertex)."""
+        return np.asarray(self.int_angles)[np.asarray(self.corner_idx)]
 
     def branch_cut_rays(self):
         """For each corner, a ray angle (radians) whose extension to infinity stays

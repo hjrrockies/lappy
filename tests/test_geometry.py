@@ -1458,3 +1458,67 @@ class TestAdaptiveSampling:
         chord_pt = p(t_l) + frac * (p(t_r) - p(t_l))
         max_dev = np.max(np.abs(p(t_check) - chord_pt))
         assert max_dev < 3 * eps_abs
+
+
+class TestCornerIndexingConsistency:
+    """corners / corner_idx / corner_angles are CORNER-indexed; int_angles is
+    SEGMENT-indexed. The two coincide only when every junction is a genuine corner, and
+    diverge exactly at a smooth junction -- a straight (pi) vertex or a collinear polygon
+    vertex. Mixing them up used to make a half-disk unusable outright."""
+
+    @pytest.mark.parametrize("factory", [
+        lambda: rect(2, 1),
+        lambda: L_shape(),
+        lambda: H_shape(),
+        lambda: GWW1(),
+        lambda: disk_sector(1, np.pi/2),
+        lambda: disk_sector(1, 1.5*np.pi),
+        lambda: disk_sector(1, np.pi),      # the straight-vertex case
+        lambda: mushroom(),
+        lambda: iso_right_tri(),
+    ])
+    def test_corner_indexed_arrays_all_have_length_n_corners(self, factory):
+        dom = factory()
+        n = len(dom.corners)
+        phi0, phi1 = dom.corner_angles
+        assert len(phi0) == n
+        assert len(phi1) == n
+        assert len(dom.corner_idx) == n
+        assert len(dom.corner_int_angles) == n
+
+    def test_corner_int_angles_matches_manual_reindexing(self):
+        for dom in (L_shape(), H_shape(), disk_sector(1, 1.5*np.pi), disk_sector(1, np.pi)):
+            manual = np.asarray(dom.int_angles)[np.asarray(dom.corner_idx)]
+            assert np.allclose(dom.corner_int_angles, manual)
+
+    def test_corner_angles_wedge_reproduces_interior_angle(self):
+        """phi1 - phi0 (mod 2pi) is the interior wedge, so it must agree with the
+        corner-indexed interior angle -- the check that both are on the same indexing."""
+        for dom in (L_shape(), GWW1(), disk_sector(1, 1.5*np.pi), disk_sector(1, np.pi)):
+            phi0, phi1 = dom.corner_angles
+            wedge = (np.asarray(phi1) - np.asarray(phi0)) % (2*np.pi)
+            assert np.allclose(wedge, dom.corner_int_angles, atol=1e-12)
+
+    def test_half_disk_drops_its_straight_vertex_and_builds_a_basis(self):
+        """Regression: disk_sector(1, pi)'s diameter runs straight through the origin, so
+        that junction is smooth and is correctly absent from `corners`. Previously the angle
+        arrays still carried it, so `corners` had 2 entries against 3 angles and
+        FourierBesselBasis.from_domain raised IndexError for EVERY `orders` length."""
+        from lappy.bases import FourierBesselBasis
+        dom = disk_sector(1, np.pi)
+        assert len(dom.corners) == 2
+        assert np.allclose(np.sort(dom.corner_int_angles), [np.pi/2, np.pi/2])
+        basis = FourierBesselBasis.from_domain(dom, [8]*len(dom.corners))
+        assert len(basis) == 16
+
+    def test_exact_nu_from_geometry_is_machine_accurate(self):
+        """The corner-adapted quadrature needs nu = pi/alpha exact -- a 3e-4 relative error
+        costs four digits (docs/corner_quadrature.tex Sec. 4), so the geometric angle itself
+        must be good to roundoff."""
+        nus = np.pi/np.asarray(L_shape().corner_int_angles)
+        assert np.allclose(np.sort(nus), np.sort(np.r_[2/3, np.full(5, 2.0)]),
+                           rtol=1e-14, atol=1e-14)
+        for a_over_pi in (1.25, 1.5, 1.75, 1.9):
+            sec = disk_sector(1, a_over_pi*np.pi)
+            apex = np.argmin(np.abs(np.asarray(sec.corners)))
+            assert sec.corner_int_angles[apex] == pytest.approx(a_over_pi*np.pi, rel=1e-14)
