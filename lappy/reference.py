@@ -731,3 +731,46 @@ def sector_eigfun(m, n, R, alpha):
     angular = alpha / 2
     return u, angular * radial
 
+
+def sector_eigfun_grad(m, n, R, alpha):
+    """Analytic gradient of ``sector_eigfun(m, n, R, alpha)``'s eigenfunction,
+    returned in complex form: ``g(z) = du/dx + i du/dy``.
+
+    Finite differences are not an option here. The graded boundary quadratures
+    that these gradients are meant to test place nodes at r < 1e-6 from the
+    apex, where a difference step of comparable size crosses the corner and
+    ``arg(z)`` jumps by 2π -- silently returning garbage (and, downstream,
+    negative squared norms).
+
+    With u = J_ν(kr) sin(νθ),
+
+        u_r     = k J_ν'(kr) sin(νθ)
+        u_θ / r = (ν/r) J_ν(kr) cos(νθ)
+
+    and ∇u = u_r e_r + (u_θ/r) e_θ = (u_r + i u_θ/r) e^{iθ} in complex form.
+    For ν < 1 the gradient blows up like r^(ν-1) at the apex, which is the
+    whole point of testing there; it is returned as-is (inf/nan at r = 0
+    exactly) rather than regularized.
+
+    Returns
+    -------
+    g : callable
+    """
+    if m < 1 or n < 1:
+        raise ValueError("sector modes require m ≥ 1, n ≥ 1")
+    nu = m * np.pi / alpha
+    j_nu_n = _bessel_zero(nu, n)
+    k = j_nu_n / R
+
+    def g(z):
+        r = np.abs(z)
+        theta = np.mod(np.angle(z), 2*np.pi)
+        # J_ν'(x) = (J_{ν-1}(x) - J_{ν+1}(x))/2
+        dJ = 0.5*(jv(nu-1, k*r) - jv(nu+1, k*r))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            u_r = k*dJ*np.sin(nu*theta)
+            u_t = nu*jv(nu, k*r)*np.cos(nu*theta)/r
+        return (u_r + 1j*u_t)*np.exp(1j*theta)
+
+    return g
+
