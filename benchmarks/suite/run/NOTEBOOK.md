@@ -1391,39 +1391,46 @@ that root-find.
 
 Fed exactly-normalized closed-form eigenfunctions to the Dirichlet Rellich
 identity, `||u||^2 = (1/2 lam) * integral rN (du/dn)^2 ds`, and checked it
-returns 1.
+returns 1. `rN = (x - x0).n`.
 
-    case                nu              ||u||^2          error
-    rect (control)      --          0.9999999999      8.6e-11
-    reflex m=2,n=1      4/3         1.000000000000    4.7e-15
-    slit   m=2,n=1      1.008       1.000000000000    3.0e-15
-    reflex m=1,n=1      2/3         1.000000218       2.2e-07
-    reflex m=1,n=2      2/3         1.000000270       2.7e-07
-    slit   m=1,n=1      0.504       1.000164986       1.6e-04
-    slit   m=1,n=2      0.504       1.000165883       1.7e-04
+**The identity is machine-exact at every corner exponent tested -- IF x0 sits at
+the reentrant corner.**
 
-**Machine-exact whenever nu >= 1; degrades exactly when nu < 1**, where
-`du/dn ~ r^(nu-1)` is singular (though square-integrable). The error tracks the
-exponent: nu=2/3 -> 2e-7, nu=0.504 -> 1.6e-4.
+    domain        nu        x0=apex      x0=bbox    x0=(0.5,0.5)
+    reflex     0.667      -1.1e-14      6.4e-05        -8.5e-12
+    slit       0.504      -2.0e-15      1.1e-01         2.1e-01
+    reflex     1.333      -4.7e-15     -3.1e-15        -4.7e-15
+    right-ang  2.000      -6.3e-15     -3.7e-15         1.8e-15
 
-The sharp part: `m=2` on the *same domain* is machine-exact while `m=1` is not.
-So the identity and its implementation are right, and the graded quadrature is
-adequate for regular modes but not for singular ones. `build_rellich_data`
-builds its node set once from `lam_max` and reuses it for every mode, so the
-grading is not adapted to the exponent the mode actually has.
+Why: on a straight edge emanating from the apex, `(x - apex)` is parallel to the
+edge and `n` is perpendicular, so **`rN` is identically zero there**. The
+singular factor `(du/dn)^2 ~ r^(2nu-2)` is multiplied by exact zero and the
+integral collapses onto the arc, where `u` is smooth. Put `x0` anywhere else and
+the integrand behaves like `r^(-0.99)` for the slit -- barely integrable, and
+hopeless for any fixed grading.
 
-**Consequence for certify.py (task 17): do not switch unconditionally.** Rellich
-would give ~1e-7 on sector_reflex and ~1e-4 on sector_slit, *worse* than the
-cubature it would replace (which agreed with Rellich to 6-7 digits on the same
-domain, and is not sensitive to the corner exponent at all). The sensible use is
-as a **cross-check** -- two independent norms that should agree, with
-disagreement flagging trouble -- or switched in only where the domain has no
-reentrant corner.
+**`cauchy.default_x0` returns the bounding-box centre**, which is close to the
+worst choice for precisely the domains that need care. For a single-reentrant-
+corner domain, placing `x0` at that corner is free and buys 7-14 digits.
+
+Two earlier claims of mine were wrong and are retracted:
+
+1. *"The graded quadrature is the limitation."* Refuted directly: refining from
+   565 to 6790 nodes left the error at 2.2e-7, unmoved. It had converged to the
+   wrong value, which is a different failure from under-resolution.
+2. *"Do not switch certify.py to Rellich."* That rested on (1). With `x0` chosen
+   properly, Rellich is machine-exact where the cubature agrees to only 6-7
+   digits, so it is the *better* norm, not the worse one.
+
+**Open limitation.** `x0` can only sit at one corner. `L_shape` has one
+reentrant corner (fine), but `H_shape` has four and GWW two, and no single `x0`
+zeroes `rN` at all of them. Those need either a partition of unity over corners,
+or grading that genuinely handles `r^(2nu-2)`. Untested so far.
 
 **Test-method note.** My first attempt computed `du/dn` by central differences
-along the normal and returned *negative* norms of order 1e6. Near the apex the
-graded nodes sit at r < 1e-6, so an h=1e-6 step crosses to the other side of the
-corner, where `arg(z)` jumps by ~2pi and `sin(nu theta)` lands on a different
-branch. The control (rect) was unaffected and passed at 8.6e-11, which is what
-identified the fault as mine rather than Rellich's. Analytic gradients are
-mandatory for this test.
+and returned *negative* norms of order 1e6: near the apex the graded nodes sit at
+r < 1e-6, so an h=1e-6 step crosses the corner where `arg(z)` jumps by 2pi. The
+control (rect) passed at 8.6e-11, which is what identified the fault as mine.
+Two lessons: use analytic gradients for analytic functions (they belong in
+`reference.py` alongside the eigenfunctions), and always run a control in the
+same batch.
