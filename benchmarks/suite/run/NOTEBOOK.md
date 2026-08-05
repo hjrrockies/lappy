@@ -2025,3 +2025,71 @@ in the wrong place; the signal had to be fixed.
 - Test bars record measured capability per angle, and the test_quad bars are now
   split straight/curved, since the curved exponent family is denser and costs 1-3
   orders.
+
+## Stage 4, Leg 3: the multi-corner claim, certified -- after two wrong models
+
+Singular amplitude at every reentrant corner of a multi-corner domain, every
+corner panel scored against a closed-form reference:
+
+    domain    corner panels   nodes   worst panel error
+    L_shape         2           56         4.9e-15
+    H_shape         8          124         1.6e-14
+
+H_shape includes two edges singular at BOTH ends (the notch floors), which is
+the case no single-corner domain reaches and the only reason the panel split
+exists. This is the leg that actually certifies the target; Leg 1 has one corner
+and Leg 2's eigenfunction is smooth at the corners by construction.
+
+### Wrong model 1: superposing two corner series
+
+My first model set un(s) = A(s) + B(L-s), one corner series anchored at each end.
+It reported 2e-2 on H_shape while every single-corner edge was exact to 1e-15,
+and neither exponent family (sparse or dense) fixed it -- which is what showed the
+model, not the rule, was wrong.
+
+Near a corner the Dirichlet expansion is COMPLETE (Kondrat'ev): within the disk
+about the corner inside Omega,
+
+    un(s) = sum_k c_k nu_k J_{k nu}(sqrt(lam) s)/s  ~  sum_{k,q} a_kq s^(k nu - 1 + 2q)
+
+so the far corner enters through the coefficients c_k, not as a separate additive
+term. The superposition's cross term 2AB carries exponents gamma/2 + m, outside
+any single-corner class -- an integrand no eigenfunction has.
+
+A useful corollary, now a test: at nu=2/3 the equation k*nu - 1 + 2q = 0 has no
+solution in non-negative integers, so a genuine du/dn at a 270-degree corner has
+**no constant term**. Any model with one is not a member of the class.
+
+### Wrong model 2: one anchored series per edge
+
+Fixing that to a single corner series per edge still failed on H_shape at 4.8e-9,
+and for a reason worth keeping: on an edge singular at both ends, a model anchored
+at one end is SMOOTH at the other, so the panel anchored there applies a singular
+weight to a function with nothing to cancel it. That is a real property of the
+rule, not a modelling artifact -- and it is measurable in isolation:
+
+    a genuine class member, one full-length panel   8.9e-16
+    the same member, edge split in half             1.8e-9      (order 8)
+
+**That justifies the panel design.** An edge singular at only one end must get a
+single full-length panel, never a split; splitting costs seven orders. It is now
+a test.
+
+### What is actually correct: score per panel, not per edge
+
+The two representations of a real eigenfunction on a doubly-singular edge are
+asymptotic expansions about DIFFERENT points, and no single closed form is
+sparse-in-nu about both endpoints. So there is no global synthetic model to
+compare against -- each panel must be scored against the corner expansion valid
+*on that panel*, over its own sub-interval. That is precisely the representation
+the rule is built for, and it is what the test now does.
+
+### Also: the reference guard caught the guard
+
+`test_leg3_reference_is_closed_form_not_quadrature` first compared the Beta-function
+moment against Gauss-Legendre at order 200 and "failed" at 3e-7. The Beta
+expression was right to every digit (0.0e+00 against mpmath.beta); Gauss-Legendre
+on s^0.3 (L-s)^0.8 simply converges that slowly, since the integrand has infinite
+derivatives at both ends. The check now compares closed form against closed form
+via a different implementation. Third time in this run that the instrument was
+less accurate than the thing being measured.

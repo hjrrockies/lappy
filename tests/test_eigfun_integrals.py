@@ -312,3 +312,184 @@ def test_default_x0_lands_on_a_singular_corner_when_there_is_one():
     assert min(abs(x0 - p) for p in sing) < 1e-12
     # convex domain: falls back to the bounding-box centre
     assert abs(ei.default_x0(rect(2.0, 1.0)) - (1.0 + 0.5j)) < 1e-12
+
+
+# ── Leg 3: multiple singular corners WITH singular amplitude, exact ──────────
+#
+# The certifying leg. Legs 1 and 2 cannot reach this case: Leg 1 has one singular corner, and
+# Leg 2's closed-form eigenfunction is necessarily SMOOTH at the reentrant corners. Here the
+# boundary data is synthetic but is a genuine member of the corner's integrand class, and the
+# reference is closed-form, so the singular amplitude is real and the target is exact.
+#
+# WHAT A GENUINE MEMBER IS, and a wrong model that cost an afternoon. Near a corner the
+# Dirichlet expansion is complete (Kondrat'ev): within the largest disk about the corner inside
+# Omega, du/dn on the edge is exactly
+#
+#     un(s) = sum_k c_k * nu_k * J_{k nu}(sqrt(lam) s)/s  ~  sum_{k,q} a_kq s^(k nu - 1 + 2q)
+#
+# so on a straight edge the family is {k nu - 1 + 2q} and, after squaring, {gamma + j nu + 2q}.
+# The far corner's singularity lies OUTSIDE that disk, so it enters through the coefficients
+# c_k, NOT as a separate additive term.
+#
+# My first model summed two independent corner series, one anchored at each end. That is
+# unphysical: the cross term carries exponents gamma/2 + m, outside any single-corner class,
+# and it made a correct rule look broken at 1e-3 while every single-corner edge was exact to
+# 1e-15. A related check: a real un at a 3pi/2 corner has NO constant term, since
+# k*nu - 1 + 2q = 0 has no integer solution at nu = 2/3 -- a useful sanity test on any model.
+#
+# So each edge is modelled by ONE corner series, anchored at a singular end; an edge singular
+# at both ends is tested once per end.
+
+def _corner_series(nu, L, n_terms=4, seed=0, at_end=False):
+    """A genuine member of the class: sum_j a_j s^(j*nu + nu - 1), even offsets only, with
+    geometrically decaying amplitudes (an undamped series would be dominated by high-order
+    terms no eigenfunction contains). `at_end` mirrors it to be singular at s=L instead."""
+    rng = np.random.default_rng(seed)
+    terms = [(rng.uniform(0.5, 1.5)*0.4**j, j*nu + nu - 1.0) for j in range(n_terms)]
+    return terms, at_end
+
+
+def _series_un(model, L):
+    terms, at_end = model
+    def un(s):
+        r = (L - s) if at_end else s
+        return sum(c*r**p for c, p in terms)
+    return un
+
+
+def _series_exact(model, L, rN):
+    """int_0^L rN * un^2 ds in closed form. Mirroring at s=L leaves the value unchanged."""
+    terms, _ = model
+    return rN*sum(c1*c2*L**(p1 + p2 + 1)/(p1 + p2 + 1)
+                  for c1, p1 in terms for c2, p2 in terms)
+
+
+def _partial_exact(model, L, rN, lo, hi):
+    """int_lo^hi rN * un^2 ds in closed form, in the model's own radial variable.
+
+    A start-anchored model is a series in s, an end-anchored one in (L-s); either way the
+    integral over a sub-interval is a sum of r^(p+1)/(p+1) evaluated at the sub-interval's
+    endpoints measured from the model's own anchor."""
+    terms, at_end = model
+    a, b = (L - hi, L - lo) if at_end else (lo, hi)
+    return rN*sum(c1*c2*(b**(p1 + p2 + 1) - a**(p1 + p2 + 1))/(p1 + p2 + 1)
+                  for c1, p1 in terms for c2, p2 in terms)
+
+
+def _leg3_case(dom, seed=0, n_terms=4, precision=1e-14):
+    """Score every CORNER PANEL against the corner expansion valid on that panel.
+
+    Per-panel rather than per-edge, because the two representations of a real eigenfunction on
+    an edge singular at both ends are asymptotic expansions about DIFFERENT points: no single
+    closed form is sparse-in-nu about both endpoints, so a global synthetic model would be
+    smooth at one of the two anchors and would measure the wrong thing (4.8e-9, entirely from
+    that artifact). Each panel is therefore tested against its own corner's series, over its own
+    sub-interval, which is exactly the representation the rule is built for.
+
+    Returns (worst relative error over panels, number of corner panels, node count)."""
+    specs = ei.corner_specs(dom)
+    segs = dom.bdry.segments
+    bq = ei.boundary_quadrature(dom, 1.0, precision=precision, warn=False)
+    x0 = 0.37 + 0.181j          # off every corner and every edge line
+
+    worst, n_panels = 0.0, 0
+    for pid, panel in enumerate(bq.panels):
+        if panel.rule == 'legendre':
+            continue
+        n_panels += 1
+        seg = segs[panel.seg_idx]
+        at_end = panel.tau0 > panel.tau1        # tau0 is always the corner end
+        model = _corner_series(panel.nu, seg.len, n_terms, seed + pid, at_end)
+        mid = seg.p(np.array([0.5]))[0]
+        rN = complex_dot(mid - x0, seg.N(np.array([0.5]))[0])
+
+        m = bq.panel_id == pid
+        h = panel.tau1 - panel.tau0
+        u_local, _ = ei._panel_rule(panel)
+        s = seg.len*(panel.tau0 + h*u_local)
+        got = float(np.sum(bq.wts[m]*rN*_series_un(model, seg.len)(s)**2))
+
+        lo, hi = sorted((panel.tau0*seg.len, panel.tau1*seg.len))
+        exact = _partial_exact(model, seg.len, rN, lo, hi)
+        worst = max(worst, abs(got/exact - 1.0))
+    return worst, n_panels, len(bq.pts)
+
+
+@pytest.mark.parametrize("factory,name,n_expected",
+                         [(L_shape, 'L_shape', 2), (H_shape, 'H_shape', 8)])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_leg3_synthetic_singular_multicorner(factory, name, n_expected, seed):
+    """The certifying result: singular amplitude at every reentrant corner of a multi-corner
+    domain, every corner panel integrated against a closed-form reference."""
+    err, n_panels, n = _leg3_case(factory(), seed=seed)
+    assert n_panels == n_expected, f"{name}: {n_panels} corner panels, expected {n_expected}"
+    assert err < 1e-12, f"{name}: worst panel err={err:.3e} on {n} nodes"
+
+
+def test_leg3_h_shape_edge_singular_at_both_ends_splits_into_two_corner_panels():
+    """H_shape's notch floor is singular at BOTH ends. A corner panel anchors at one endpoint
+    only, so that edge must split into two corner panels -- no single-corner domain reaches
+    this case."""
+    dom = H_shape()
+    specs = ei.corner_specs(dom)
+    sing_start = {s.seg_out for s in specs if s.singular and s.admissible}
+    doubles = [s.seg_in for s in specs
+               if s.singular and s.admissible and s.seg_in in sing_start]
+    assert doubles, "expected an edge singular at both ends"
+    bq = ei.boundary_quadrature(dom, 1.0, precision=1e-14, warn=False)
+    for i in doubles:
+        panels = [p for p in bq.panels if p.seg_idx == i]
+        assert sum(1 for p in panels if p.rule != 'legendre') == 2, (i, panels)
+        assert all(p.rule != 'legendre' for p in panels), "no smooth gap should remain"
+
+
+def test_leg3_splitting_a_single_singular_edge_would_cost_accuracy():
+    """Why an edge singular at only ONE end gets a single full-length panel rather than a
+    split: the far half would be anchored where there is no singularity, so its singular weight
+    has nothing to cancel and it converges only algebraically. Measured on a genuine class
+    member: 8.9e-16 for one full-length panel against 1.8e-9 for the split, at order 8."""
+    from lappy.quad import cached_cornerjacgauss
+    nu, L = 2/3, 1.0
+    gamma = 2*nu - 2
+    model = ([(1.0, nu - 1), (-0.6, 2*nu - 1), (0.3, 3*nu - 1)], False)
+    un = _series_un(model, L)
+    exact = _series_exact(model, L, 1.0)
+    u, w = cached_cornerjacgauss(8, nu, gamma, nu)
+    whole = float(np.sum(L*w*un(L*u)**2))
+    split = sum(float(np.sum(L*abs(t1 - t0)*w*un(L*(t0 + (t1 - t0)*u))**2))
+                for t0, t1 in ((0.0, 0.5), (1.0, 0.5)))
+    assert abs(whole/exact - 1) < 1e-14
+    assert abs(split/exact - 1) > 1e-11
+    assert abs(whole/exact - 1) < abs(split/exact - 1)/1e4
+
+
+def test_leg3_no_constant_term_in_a_real_corner_series():
+    """Sanity check on the model class itself: at nu=2/3 the equation k*nu - 1 + 2q = 0 has no
+    solution in non-negative integers, so a genuine du/dn carries NO constant term. Any model
+    that has one is not a member of the class -- the trap the first Leg 3 model fell into."""
+    nu = 2/3
+    assert not any(abs(k*nu - 1 + 2*q) < 1e-12
+                   for k in range(1, 40) for q in range(40))
+
+
+@pytest.mark.parametrize("precision", [1e-6, 1e-10, 1e-13])
+def test_leg3_precision_is_honoured_on_a_multicorner_domain(precision):
+    err, n_panels, n = _leg3_case(H_shape(), seed=3, precision=precision)
+    assert err <= 10*precision, (precision, err, n)
+
+
+def test_leg3_reference_is_closed_form_not_quadrature():
+    """Guard on the ruler. The closed form is checked against mpmath's Beta function -- another
+    closed form, different implementation -- not against quadrature: Gauss-Legendre on
+    s^0.3 (L-s)^0.8 reaches only 3e-7 at order 200, so a quadrature 'check' would wrongly
+    convict the exact expression. The analytic tier is what everything else is measured
+    against, and part of it was wrong once before (see NOTEBOOK on _bessel_zero)."""
+    mp = pytest.importorskip("mpmath")
+    mp.mp.dps = 40
+    L, p, q = 1.7, 0.3, 0.8
+    mine = np.exp((p + q + 1)*np.log(L) + lgamma(p + 1) + lgamma(q + 1) - lgamma(p + q + 2))
+    theirs = float(mp.mpf(L)**(p + q + 1)*mp.beta(p + 1, q + 1))
+    assert mine == pytest.approx(theirs, rel=1e-14)
+
+
+from math import lgamma  # noqa: E402  (used by the reference guard above)
