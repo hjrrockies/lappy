@@ -1,9 +1,11 @@
-"""Tests for lappy.quad's Kress-style graded-mesh quadrature primitives
-(kress_w/kress_dw/cached_kressgauss), which replace the SS/SR/RS/RR
-singularity-subtraction machinery previously in lappy.cauchy (see
-docs/rellich_hadamard_mps.pdf Sec. 6.1). Per that document's own "Confidence
-note," the sigmoid formula is checked numerically here rather than trusted
-on sight."""
+"""Tests for lappy.quad's boundary quadrature primitives.
+
+Two families. The Kress-style graded-mesh rule (kress_w/kress_dw/cached_kressgauss) is still
+used for segments with no singular corner; its sigmoid formula is checked numerically here
+rather than trusted on sight. The corner-adapted rules
+(cached_cornerjacgauss/cached_cornerinterpgauss and the sizing helpers) are what a reentrant
+corner actually needs -- derived in docs/corner_quadrature.tex, with their end-to-end accuracy
+validated in tests/test_eigfun_integrals.py."""
 
 import numpy as np
 import pytest

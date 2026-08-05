@@ -1,7 +1,22 @@
 # Overview
-This describes the approach which will replace lappy's use of interior cubature formulas for normalizing and
+This describes the approach which replaces lappy's use of interior cubature formulas for normalizing and
 orthogonalizing eigenfunctions. It is based on the Rellich identity for $L^2(\Omega)$ inner products and norms
 of eigenfunctions, which uses boundary integrals only.
+
+> **Status.** The mathematics below is current and is the reference for the identity itself.
+> The *implementation* it originally described (`lappy.rellich`, `lappy.cauchy`, a basis-level
+> $N \times N$ Gram matrix, and a Kress-graded boundary quadrature) has been retired. See
+> **[`eigfun_integrals.md`](eigfun_integrals.md)** for what replaced it and why the replacement is
+> deliberately narrower — the short version is that the corner-adapted quadrature the identity
+> needs at a reentrant corner is matched to *eigenfunction*-level Cauchy data and cannot serve a
+> basis-level Gram at all. The corner quadrature itself is derived in
+> [`corner_quadrature.tex`](corner_quadrature.tex).
+>
+> One scope note that belongs with the mathematics rather than the code: at a **mixed
+> Dirichlet/Neumann reentrant** corner the exponents are $(k+\tfrac12)\nu$, so
+> $(\partial_\mathbf{N} u)^2 \sim r^{\nu-2}$, which is **not integrable** for $\nu < 1$. The
+> boundary integral below diverges there for any $x_0$ off the adjacent edge lines. That is a
+> property of the identity, not of any quadrature.
 
 # Master identity
 Consider a planar region $\Omega$ with boundary $\partial \Omega$. Suppose $-\Delta u = \lambda u$ and 

@@ -31,10 +31,18 @@ singular. We show (i) why the singularity can be removed \emph{geometrically} by
 placing the Rellich reference point $x_0$ at the corner, (ii) why the current
 graded rule cannot integrate it when $x_0$ is placed elsewhere --- the failure is
 truncation, not under-resolution --- and (iii) that a corner-local Gauss--Jacobi
-rule in the variable $t=r^{\nu}$ integrates it to machine precision with $O(10)$
-nodes, removing the constraint on $x_0$ altogether. A caveat is identified: the
-substitution rationalizes the corner expansion completely only when $2/\nu \in
-\mathbb{Z}$, which holds for the $270^\circ$ corner but not generically.
+rule in the variable $t=r^{\sigma}$ integrates it to machine precision with $O(10)$
+nodes when $\sigma$ rationalizes the corner's exponent family, and at a high-order
+algebraic rate otherwise --- removing the constraint on $x_0$ in either case.
+
+\medskip\noindent
+\textbf{Read Section~\ref{sec:addendum} before implementing.} Sections 1--6 are
+the original analysis, and its central claim survived; three of its subsidiary
+conclusions did not. The substitution that rationalizes the exponent family is
+$t=r^{1/q}$ rather than $t=r^{\nu}$, and is unusable in that form for $q\ge4$; the
+$2/\nu\in\mathbb{Z}$ condition is a limitation of $t=r^{\nu}$ specifically, not of
+the method; and the recipe of Section~6 omits a geometric cap on panel length whose
+absence costs twelve orders on some domains.
 \end{abstract}
 
 \section{The identity and its corner integrand}
@@ -221,7 +229,7 @@ Admissibility $\beta'>-1$ again requires exactly $\nu>1/2$.
 
 \paragraph{The caveat.} The substitution rationalizes the corner family
 completely, but maps the Bessel family $r^{2q}\mapsto t^{2q/\nu}$, which is
-integral only when $2/\nu\in\mathbb{Z}$ --- equivalently $\alpha=2\pi/m$ for an
+integral only when $2/\nu\in\mathbb{Z}$ --- equivalently $\alpha=m\pi/2$ for an
 integer $m$. The $270^\circ$ corner is such a case:
 \begin{equation}
   \alpha=\tfrac32\pi \;\Longrightarrow\; \nu=\tfrac23 \;\Longrightarrow\;
@@ -371,5 +379,137 @@ $\nu\to1/2$ remains delicate, both weights degenerating as $\beta,\beta'\to-1$.
 \paragraph{Not yet verified.} A real \texttt{FourierBesselBasis} through this
 rule (as opposed to closed-form or synthetic data), and a genuinely multi-corner
 domain.
+
+
+\section{Addendum: what implementation changed}\label{sec:addendum}
+
+The analysis above was written before the rule was built. Its core result held:
+a corner-adapted rule reaches $10^{-14}$ where the graded rule plateaus at
+$10^{-7}$, with fewer nodes. What follows corrects the parts that did not survive
+contact with a real domain, and records what could only be learned by measuring.
+Everything here is implemented in \verb|lappy.quad| and
+\verb|lappy.eigfun_integrals|, and tested in \verb|tests/test_eigfun_integrals.py|.
+
+\subsection{The substitution is $t=r^{1/q}$, and $t=r^{\nu}$ is a trap for curved edges}
+
+Section~\ref{sec:sub} identified the exponent family as $\{k\nu+2q\}$ and
+concluded that $t=r^{\nu}$ rationalizes it when $2/\nu\in\mathbb{Z}$ --- for
+reentrant $\alpha$, only $\alpha=3\pi/2$. That is correct \emph{for a straight
+edge}, and it is the wrong family for a curved one.
+
+On a curved edge two things change, both adding \emph{integer} powers of
+arclength $s$. First, $r_N$ is no longer constant: with $x_0$ at the corner it is
+$(\kappa_0/2)s^2+O(s^3)$ --- vanishing to second order rather than identically,
+so Proposition~\ref{prop:rn}'s escape degrades gracefully rather than failing.
+Second, $r=|x(s)-\text{corner}|=s-(\kappa_0^2/24)s^3+\cdots$, so $r$ is not
+arclength. The family becomes $\{k\nu+m\}$, $m\in\mathbb{Z}_{\ge0}$, including
+\emph{odd} powers. Under $t=r^{\nu}$ that maps to $\{k+m/\nu\}$ whose leading
+residual $t^{1/\nu}$ has $1/\nu\in(1,2)$: only $C^1$. Measured, it never reaches
+$10^{-13}$ at any order up to 64. Under $t=r^{1/q}$ with $\nu=p/q$ in lowest
+terms it maps to $\{kp+mq\}$ --- all integers --- and is exact by order 6--14.
+
+\emph{But $t=r^{1/q}$ is unusable as written.} Since $\tau=t^{q}$, the innermost
+node behaves as $\tau_{\min}\sim t_{\min}^{q}$:
+
+\begin{center}
+\begin{tabular}{lcl}
+\toprule
+$\alpha$ & $q$ & $\tau_{\min}$ at order 24\\
+\midrule
+$3\pi/2$  & 3  & $1.4\times10^{-8}$\\
+$5\pi/4$  & 5  & $1.1\times10^{-10}$ \quad(below the floor)\\
+$7\pi/4$  & 7  & $4.7\times10^{-19}$\\
+$11\pi/6$ & 11 & $1.6\times10^{-29}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Those nodes round onto the corner once mapped through a segment's
+parametrization --- the very defect Remark~1 identifies. The rule is exact as an
+abstract statement about $[0,1]$ and worthless on a boundary.
+
+\subsection{What works: exactness from the weights, node placement from $\nu$}
+
+The resolution separates the two roles the substitution was doing. Nodes are
+placed by $t=r^{\nu}$, whose crowding is mild ($\tau_{\min}$ stays at
+$10^{-5}$--$10^{-7}$). Exactness comes from the \emph{weights}: the exponent set
+$\{\gamma+j\nu+m\}$ is known, and every moment is closed-form,
+$\int_0^1 t^{e}\dd t=(e+1)^{-1}$, so the weights are obtained by solving a linear
+system. This also covers irrational $\nu$, which the substitution cannot touch at
+all --- and irrational $\nu$ is the \emph{generic} case for a curved corner, whose
+angle is fixed by the geometry rather than chosen (two overlapping circles give
+$\nu=0.657360$).
+
+One trap: solving the square system (as many exponents as nodes) is exact on its
+span but has $\mathrm{cond}\sim10^{13}$ at order 12 and $10^{19}$ at order 16,
+with weights reaching $-10^{4}$. Since $\sum|w|$ multiplies every roundoff error
+in the integrand, that imports a $10^{-12}$ floor. Using \emph{fewer exponents
+than nodes} --- a minimum-norm least-squares solve --- keeps $\sum|w|=1.0$ with
+exactness intact.
+
+\subsection{The edge type matters, and conflating them costs seven orders}
+
+A straight edge admits only \emph{even} integer powers ($r_N$ exactly constant,
+$r$ exactly arclength), so $\{\gamma+j\nu+2q\}$; odd powers are curved-only.
+Scored against the curved set, the substitution rule at $\alpha=3\pi/2$ reads
+$10^{-8}$ --- against a measured $2.4\times10^{-15}$ on a real sector. Any error
+indicator must use the family belonging to the edge it is scoring.
+
+\subsection{Panel length must be capped by clearance, not by a fraction}
+
+Section~6's recipe panels the edge but says nothing about how long a panel may
+be. The corner expansion is valid only within the largest disk about the corner
+inside $\Om$; a panel reaching past it is under-resolved, because the rule
+clusters its nodes \emph{at} the corner and cannot resolve the $\sqrt\lambda$
+oscillation over the remaining arclength. Measured on a $1\times N$ polyomino
+strip with one cell below an end (so the corner's edge has length $N-1$ against a
+clearance of 1), against its exact eigenfunction:
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+$N$ & no cap & $0.9\times$ clearance\\
+\midrule
+2  & $6.5\times10^{-14}$ & $5.3\times10^{-15}$\\
+8  & $2.3\times10^{-2}$  & $1.6\times10^{-15}$\\
+16 & $7.7\times10^{-2}$  & $1.3\times10^{-15}$\\
+24 & $7.4\times10^{-3}$  & $4.4\times10^{-16}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Twelve orders. A fixed \emph{fraction} of the edge cannot substitute --- being a
+fraction of the edge, it grows with the edge and stays too long ($0.25$ of the
+edge still gives $2.6\times10^{-4}$ at $N=16$). The cap must be geometric.
+
+\subsection{Two properties that look like bugs and are not}
+
+$\sum_i w_i=1$ holds only when the constant function lies in the rule's exact
+class. Renormalizing would destroy exactness on the singular class the rule
+exists for; $\sum_i w_i-1$ is instead its cheapest self-diagnostic. And accuracy
+is \emph{not monotone} in order: past a $\nu$-dependent threshold the integrand's
+dynamic range ($\tau^{2\nu-2}\sim6\times10^{8}$ at $\tau\sim10^{-9}$ against a
+correspondingly tiny weight) makes roundoff dominate. At $\nu=0.526$ the best
+order is 16 while the floor-based cap is 75, and using the cap gives
+$4.2\times10^{-9}$. Order selection must therefore scan a calibrated curve, not
+increase the order until a target is met.
+
+\subsection{Scope, sharpened}
+
+The rule is matched to \emph{eigenfunction}-level Cauchy data, whose local
+structure is purely the corner family. It is \emph{not} appropriate for a
+basis-level $N\times N$ Gram matrix: columns centred at other corners are plain
+analytic at this one, with $O(1)$ amplitude at every corner simultaneously.
+Measured, the corner rule beats the graded rule by 3--8 orders on corner-family
+blocks and loses by 2--4 on mixed ones. That is why \verb|lappy| retired the
+basis-level path rather than adapting it.
+
+Finally, a warning about instruments. \verb|mpmath.quad| is not a valid reference
+for these integrands: as $\nu\to1/2$ the endpoint behaviour approaches $r^{-1}$
+and it errs by $4\times10^{-2}$ even at 40 digits, manufacturing convincing but
+entirely spurious convergence plateaus. Every reference used in the tests is
+closed-form.
 
 \end{document}

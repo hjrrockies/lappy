@@ -86,7 +86,7 @@ class ParticularBasis(ABC):
         index array, in the given order) -- for bases with a per-column-localized cost (e.g.
         FourierBesselBasis's Bessel-function evaluation), this can be substantially cheaper than
         evaluating every column and discarding most of them, which is exactly what
-        lappy.cauchy's singularity-subtraction quadrature needs for its SS/RR sub-blocks (see
+        a corner-adapted boundary quadrature needs to grade toward a corner (see
         docs/rellich_hadamard_mps.pdf). Default (None) evaluates every column, unchanged from
         before this parameter existed."""
         if not isinstance(pts, PointSet):
@@ -149,7 +149,7 @@ class ParticularBasis(ABC):
         corner_id[j] is the index into domain.corners that basis column j is singular at, or -1 if
         column j is regular everywhere (e.g. a global fundamental-solution term); exponent[j] is
         column j's leading radial exponent p_m there (0/unused where corner_id[j] == -1). Used by
-        lappy.cauchy's singularity-subtraction quadrature (docs/rellich_hadamard_mps.pdf) to grade
+        a corner-adapted boundary quadrature (docs/eigfun_integrals.md) to grade
         boundary integrals to each basis function's actual local behavior, rather than one exponent
         per corner/segment. Default: regular everywhere (correct for e.g. FundamentalBasis)."""
         n = len(self)
@@ -167,7 +167,7 @@ class MultiBasis(ParticularBasis):
 
     def _dispatch_cols(self, cols):
         """Splits a global `cols` index array (sorted ascending, as produced by
-        np.nonzero/np.setdiff1d in lappy.cauchy) into per-sub-basis local index arrays. Returns a
+        np.nonzero/np.setdiff1d in a caller) into per-sub-basis local index arrays. Returns a
         list of (sub_basis, local_cols_or_None) pairs, skipping sub-bases with no requested
         columns entirely -- e.g. a corner's Sc never touches a FundamentalBasis sub-basis, so it's
         never evaluated for that block."""
@@ -750,7 +750,7 @@ class FourierBesselBasis(ParticularBasis):
         which translate a basis-column-space `cols` into this space before calling here). This is
         the expensive step (scipy jv over an (n_pts, n_radial) array), so restricting `cols` here
         is what actually saves work -- evaluating only a corner's own few modes instead of every
-        basis column, exactly what lappy.cauchy's SS/RR sub-blocks need."""
+        basis column."""
         r_rep = self._r_rep(pts)
         alphak_vec = self.alphak_vec
         if cols is not None:

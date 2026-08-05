@@ -94,7 +94,7 @@ def test_index_maps_consistent_with_orders():
     assert np.array_equal(basis._alphak_col, basis.alphak_vec[0])
 
 
-# ── corner_terms() — per-column corner-singularity structure (lappy.cauchy) ──
+# ── corner_terms() — per-column corner-singularity structure ─────────────────
 
 def test_corner_terms_fourier_bessel_matches_alphak():
     from lappy import Polygon
@@ -271,7 +271,7 @@ def test_from_domain_polyline_cuts_false_raises():
         FourierBesselBasis.from_domain(sp, np.full(len(sp.corners), 3), polyline_cuts=False)
 
 
-# ── cols (column-subset evaluation, for lappy.cauchy's SS/RR blocks) ────────
+# ── cols (column-subset evaluation) ─────────────────────────────────────────
 # Restricting evaluation to a subset of columns must exactly match (bit-for-bit) evaluating
 # every column and slicing afterward -- this is a pure performance optimization
 # (docs/rellich_hadamard_mps.pdf; see benchmarks/reference/rellich_profile.py), never allowed

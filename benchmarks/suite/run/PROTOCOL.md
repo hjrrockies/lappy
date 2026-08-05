@@ -17,6 +17,26 @@ reaches the precision it does.
 - Extended precision may be used to *diagnose*, never to produce a reported
   value.
 
+## Amendment: the additive-only rule was suspended once, deliberately
+
+The ground rule below ("new code in `lappy/` must be additive only") was suspended
+for one change, on explicit instruction: the retirement of `lappy/rellich.py` and
+`lappy/cauchy.py` in favour of `lappy/eigfun_integrals.py`.
+
+Why it was safe for this run: `benchmarks/reference/common.build_solver`
+deliberately bypasses `MPSEigensolver.from_domain` and builds no Rellich data at
+all, so nothing in the active reference pipeline touched the retired code. The
+reference values already produced are unaffected.
+
+Why it could not be additive: the retired path computed a basis-level $N \times N$
+Gram matrix, and the corner-adapted quadrature that a reentrant corner needs cannot
+serve one -- columns centred at other corners are plain analytic there, so that
+path is 2-4 orders *worse* under the new rule and 3-8 orders better under the old.
+Keeping both would have meant maintaining two node sets and leaving the accuracy
+trap reachable. See `docs/eigfun_integrals.md`.
+
+The additive-only rule remains in force for everything else.
+
 ## Ground rules (from the user)
 
 1. New code in `lappy/` is allowed, but **must not change existing behavior or

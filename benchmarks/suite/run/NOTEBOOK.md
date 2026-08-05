@@ -2245,3 +2245,48 @@ exact eigenfunction available on this geometry carries no singular amplitude to
 mismatch. Since the resolution mechanism alone accounts for the observed failure
 and the fix removes it entirely, this is recorded as untested rather than ruled
 out.
+
+---
+
+## Stage 6: docs
+
+`docs/corner_quadrature.tex` (8 pages) keeps Sections 1-6 as written -- the
+original analysis, whose central claim held -- and gains
+**Section 7, "Addendum: what implementation changed"**, plus a pointer in the
+abstract telling a reader to go there first. Sections 1-6 are left intact rather
+than silently rewritten, so the record shows which predictions survived. Three
+subsidiary conclusions did not:
+
+- the rationalizing substitution is `t = r^(1/q)`, not `t = r^nu` -- and is
+  unusable in that form for q >= 4, because `tau_min ~ t_min^q` puts the innermost
+  node below the coordinate-collapse floor (1.6e-29 at q=11);
+- the `2/nu in Z` condition is a limitation of `t = r^nu` specifically, not of the
+  method: exactness comes from the *weights* instead, which also covers irrational
+  nu (the generic case for an arc-arc corner);
+- Section 6's recipe omitted any cap on panel length, whose absence costs twelve
+  orders.
+
+The two errors from `corner_quadrature_review.md` are fixed: `alpha = m*pi/2` (not
+`2*pi/m`, since `2/nu = 2*alpha/pi`), and the abstract's O(10)-node claim is now
+conditioned on the substitution rationalizing the family.
+
+`docs/eigfun_integrals.md` is new and supersedes `rellich_hadamard_mps.pdf`'s
+basis-level architecture. `docs/rellich.md` keeps its mathematics -- still the
+reference for the identity -- with a status note pointing forward, and gains the
+one scope fact that belongs with the mathematics rather than the code: at a mixed
+Dirichlet/Neumann reentrant corner the integrand goes like `r^(nu-2)`, which is
+not integrable, so the identity itself diverges there.
+
+`PROTOCOL.md` records the additive-only suspension explicitly: why it was safe for
+this run (`common.build_solver` bypasses `from_domain` and built no Rellich data,
+so no reference value is affected) and why it could not have been additive
+(keeping both paths means two node sets and leaves the accuracy trap reachable).
+The rule stays in force for everything else.
+
+Also fixed: `scripts/hshape_eigfunc_timing.py` imported the deleted module and was
+simply broken. Rewritten, and it now reports the number that matters for
+CLAUDE.md principle 4 -- the quadrature is built **once per solve in 11 ms**
+(H_shape, 240 nodes, 18 panels), so the per-eigenfunction cost is the Cauchy-data
+evaluation, not the node set. Stale docstring references to `lappy.cauchy` in
+`bases.py` and two test files were retargeted; `corner_terms` survives with
+`symmetry.py` as its remaining consumer.
