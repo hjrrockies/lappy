@@ -62,13 +62,26 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
     from lappy.core import EigensolverFailure
 
     entry = SUITE[key]
-    dom = entry.domain()
     n_basis = n_basis or entry.n_basis
     n_eigs = n_eigs or entry.n_eigs
 
-    solver = build_solver(dom, n_basis, rtol=rtol, bdry_mult=bdry_mult,
-                          int_npts=int_npts or max(2 * n_basis, 500))
-    a, b = lambda_window(dom, n_eigs)
+    # Construction can fail before any solve: spiral_t25's basis raises
+    # `corner_branch_cut_polyline: no valid polyline cut found` because coils
+    # bury corners with no sightline to infinity. That is a bucket-3 failure
+    # like any other, and has to be recorded rather than killing the process
+    # and leaving a hole in the table.
+    try:
+        dom = entry.domain()
+        solver = build_solver(dom, n_basis, rtol=rtol, bdry_mult=bdry_mult,
+                              int_npts=int_npts or max(2 * n_basis, 500))
+        a, b = lambda_window(dom, n_eigs)
+    except Exception as ex:
+        rec = dict(key=key, n_basis=n_basis, bucket=3, tag=tag,
+                   error=f'construction: {type(ex).__name__}: {ex}')
+        print(f'BUILD      FAILED {type(ex).__name__}: {ex}')
+        print('BUCKET     3')
+        _record(rec)
+        return rec
 
     # --- pre-flight, no search -------------------------------------------
     t0 = time.time()
