@@ -659,6 +659,51 @@ def iso_right_tri_eigfun(m, n, l):
     return u, l**2 / 4
 
 
+def polyomino_eigfun(m, n, n_cells):
+    """Dirichlet eigenfunction and exact squared L2 norm for ANY polyomino of `n_cells` unit
+    cells (see ``lappy.geometry.polyomino``).
+
+    u = sin(m pi x) sin(n pi y), which vanishes on the entire integer grid and therefore on the
+    whole boundary of any union of grid cells. Eigenvalue pi^2 (m^2 + n^2); squared norm exactly
+    ``n_cells/4``, since each cell contributes int sin^2 dx int sin^2 dy = 1/2 * 1/2.
+
+    This is the only multi-reentrant-corner family with closed-form eigenfunctions, and the
+    reason for that is also its limitation: a closed-form eigenfunction on a nonconvex domain is
+    necessarily SMOOTH at the reentrant corners -- precisely why L_shape has no closed form. So
+    it exercises geometry, panel splitting and assembly on several reentrant corners at once,
+    with exact truth, but carries ZERO singular amplitude and cannot test the corner
+    singularity. Use it as a control, not as a singularity test.
+
+    Returns
+    -------
+    (u, norm2) : callable, float
+    """
+    if m < 1 or n < 1:
+        raise ValueError("polyomino modes require m, n >= 1")
+    if n_cells < 1:
+        raise ValueError("n_cells must be positive")
+
+    def u(z):
+        return np.sin(m*np.pi*np.real(z))*np.sin(n*np.pi*np.imag(z))
+
+    return u, n_cells/4.0
+
+
+def polyomino_eig(m, n):
+    """Eigenvalue of ``polyomino_eigfun(m, n, ...)``: pi^2 (m^2 + n^2), independent of which
+    cells the polyomino is made of."""
+    return np.pi**2*(m**2 + n**2)
+
+
+def polyomino_eigfun_grad(m, n):
+    """Analytic gradient of ``polyomino_eigfun``'s eigenfunction, as g(z) = du/dx + i du/dy."""
+    def g(z):
+        x, y = np.real(z), np.imag(z)
+        return (m*np.pi*np.cos(m*np.pi*x)*np.sin(n*np.pi*y)
+                + 1j*n*np.pi*np.sin(m*np.pi*x)*np.cos(n*np.pi*y))
+    return g
+
+
 def normalized_eigfun(eigfun_result):
     """Turn a ``(u, norm2)`` pair into an L²(Omega)-orthonormal callable.
 

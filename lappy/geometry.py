@@ -1875,6 +1875,89 @@ def cut_square(r=0.5, bc='dir', tol=1e-4):
     bdry = MultiSegment([seg1, seg2, seg3, seg4, seg5])
     return Domain(bdry, val_simple=False, val_closed=False)
 
+def polyomino(cells, bc='dir'):
+    """Polygon bounding the union of unit grid cells `cells`, given as (i, j) integer pairs
+    for the square [i, i+1] x [j, j+1].
+
+    The point of this family: `sin(m pi x) sin(n pi y)` vanishes on the ENTIRE integer grid, so
+    it is an exact Dirichlet eigenfunction of any polyomino, with eigenvalue pi^2 (m^2 + n^2)
+    and squared L^2 norm exactly `len(cells)/4` (each cell contributes 1/2 * 1/2). That makes a
+    polyomino the only multi-reentrant-corner domain with closed-form eigenfunctions -- see
+    `reference.polyomino_eigfun`.
+
+    The cells must form a simply-connected, edge-connected region; a diagonal-only join (two
+    cells meeting at a single point) or an enclosed hole is rejected, since neither yields a
+    simple boundary polygon.
+
+    Boundary construction: every cell contributes its four edges counter-clockwise, an edge
+    shared by two cells appears twice with opposite orientation and cancels, and what survives
+    is the boundary already correctly oriented. Consecutive collinear edges are then merged, so
+    a straight run of k cells becomes one segment rather than k -- without that, a 3-cell edge
+    would arrive as three segments joined by smooth (pi) junctions, which is correct but wasteful.
+    """
+    cells = [(int(i), int(j)) for i, j in cells]
+    if len(set(cells)) != len(cells):
+        raise ValueError("duplicate cells")
+    cellset = set(cells)
+    if not cellset:
+        raise ValueError("at least one cell is required")
+
+    # edge-connectivity (diagonal joins do not count)
+    seen, stack = {cells[0]}, [cells[0]]
+    while stack:
+        i, j = stack.pop()
+        for nb in ((i+1, j), (i-1, j), (i, j+1), (i, j-1)):
+            if nb in cellset and nb not in seen:
+                seen.add(nb)
+                stack.append(nb)
+    if seen != cellset:
+        raise ValueError("cells must be edge-connected (a diagonal-only join is not enough)")
+
+    # cancel shared edges
+    edges = {}
+    for i, j in cells:
+        for a, b in (((i, j), (i+1, j)), ((i+1, j), (i+1, j+1)),
+                     ((i+1, j+1), (i, j+1)), ((i, j+1), (i, j))):
+            if (b, a) in edges:
+                del edges[(b, a)]
+            else:
+                edges[(a, b)] = True
+    if not edges:
+        raise ValueError("no boundary edges: degenerate cell set")
+
+    nxt = {}
+    for a, b in edges:
+        if a in nxt:
+            raise ValueError("boundary is not simple (a vertex is left by two edges); "
+                             "cells may be pinched at a point or enclose a hole")
+        nxt[a] = b
+
+    start = next(iter(nxt))
+    loop, v = [start], nxt[start]
+    while v != start:
+        loop.append(v)
+        v = nxt[v]
+    if len(loop) != len(nxt):
+        raise ValueError("boundary is not a single loop (the cells may enclose a hole)")
+
+    # merge collinear runs
+    pts = [complex(x, y) for x, y in loop]
+    verts = []
+    n = len(pts)
+    for k in range(n):
+        prev, cur, nxt_pt = pts[k-1], pts[k], pts[(k+1) % n]
+        if abs((cur - prev).real*(nxt_pt - cur).imag
+               - (cur - prev).imag*(nxt_pt - cur).real) > 1e-12:
+            verts.append(cur)
+    return Polygon(np.array(verts), bc=bc, val_simple=False)
+
+
+def plus_shape(bc='dir'):
+    """The 5-cell plus/cross polyomino: FOUR reentrant corners, and an exact eigenfunction.
+    The multi-singular-corner test case with closed-form truth (see `polyomino`)."""
+    return polyomino([(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)], bc=bc)
+
+
 def H_shape(bc='dir'):
     vx = np.array([-1,  0,  0,  1,  1, 2, 2, 1, 1, 0, 0, -1])
     vy = np.array([-2, -2, -1, -1, -2,-2, 1, 1, 0, 0, 1,  1])

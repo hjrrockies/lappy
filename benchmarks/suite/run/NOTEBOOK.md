@@ -2093,3 +2093,30 @@ on s^0.3 (L-s)^0.8 simply converges that slowly, since the integrand has infinit
 derivatives at both ends. The check now compares closed form against closed form
 via a different implementation. Third time in this run that the instrument was
 less accurate than the thing being measured.
+
+## Stage 4, Leg 2: the polyomino control
+
+`geometry.polyomino(cells)` builds the boundary of any union of unit grid cells;
+`plus_shape()` is the 5-cell cross, with FOUR reentrant corners and area exactly 5.
+`reference.polyomino_eigfun/eig/eigfun_grad` supply the exact eigenfunction:
+`sin(m pi x) sin(n pi y)` vanishes on the entire integer grid, hence on the whole
+boundary of any polyomino, with eigenvalue pi^2(m^2+n^2) and norm^2 = cells/4
+exactly.
+
+Rellich norm through the full path returns 1 to <1e-12 on plus / L / H / S /
+square polyominoes, for modes (1,1), (2,1), (2,3).
+
+**Its limitation is the point, and is now a test.** A closed-form eigenfunction on
+a nonconvex domain is necessarily SMOOTH at the reentrant corners -- exactly why
+L_shape has no closed form -- so the singular coefficients vanish and this leg
+cannot test the corner singularity at all. `test_leg2_is_a_control_not_a_singularity_test`
+pins that by checking |grad u| stays bounded as each reentrant corner is
+approached, unlike a genuine corner-singular solution whose du/dn ~ r^(nu-1)
+diverges. Leg 3 carries the singularity; Leg 2 tests geometry, panel splitting,
+orientation and assembly on four reentrant corners with exact truth.
+
+Boundary construction is by edge cancellation (each cell contributes four CCW
+edges; a shared edge appears twice with opposite orientation and cancels), then
+collinear runs are merged so a straight run of k cells is one segment rather than
+k. Diagonal-only joins and enclosed holes are rejected rather than producing a
+non-simple polygon.

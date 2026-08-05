@@ -493,3 +493,81 @@ def test_leg3_reference_is_closed_form_not_quadrature():
 
 
 from math import lgamma  # noqa: E402  (used by the reference guard above)
+
+
+# ── Leg 2: multiple singular corners, exact, but ZERO singular amplitude ──────
+#
+# A control, and its limitation is the point. sin(m pi x) sin(n pi y) vanishes on the entire
+# integer grid, so it is an exact Dirichlet eigenfunction of any polyomino with norm^2 =
+# cells/4 -- giving exact truth on a domain with four reentrant corners. But a closed-form
+# eigenfunction on a nonconvex domain is necessarily SMOOTH at those corners (that is exactly
+# why L_shape has no closed form), so the singular coefficients are zero and this leg CANNOT
+# test the corner singularity. It tests geometry, panel splitting, orientation and assembly.
+# Leg 3 carries the singularity.
+
+POLYOMINOES = [
+    ('plus', [(1, 0), (0, 1), (1, 1), (2, 1), (1, 2)], 4),
+    ('L', [(0, 0), (0, 1), (1, 0)], 1),
+    ('H', [(0, 0), (0, 1), (0, 2), (1, 1), (2, 0), (2, 1), (2, 2)], 4),
+    ('S', [(0, 0), (1, 0), (1, 1), (2, 1)], 2),
+    ('square', [(0, 0), (1, 0), (0, 1), (1, 1)], 0),
+]
+
+
+@pytest.mark.parametrize("name,cells,n_reentrant", POLYOMINOES)
+def test_leg2_polyomino_geometry(name, cells, n_reentrant):
+    from lappy.geometry import polyomino
+    dom = polyomino(cells)
+    cia = np.asarray(dom.corner_int_angles)
+    assert int((cia > np.pi + 1e-9).sum()) == n_reentrant
+    assert dom.perimeter == pytest.approx(
+        sum(4 - sum(1 for nb in ((i+1, j), (i-1, j), (i, j+1), (i, j-1))
+                    if nb in set(map(tuple, cells)))
+            for i, j in cells), abs=1e-12)
+
+
+@pytest.mark.parametrize("name,cells,n_reentrant", POLYOMINOES)
+@pytest.mark.parametrize("m,n", [(1, 1), (2, 1), (2, 3)])
+def test_leg2_polyomino_rellich_norm_is_one(name, cells, n_reentrant, m, n):
+    """Exact truth on up to four reentrant corners: norm^2 = cells/4 exactly."""
+    from lappy.geometry import polyomino
+    dom = polyomino(cells)
+    lam = ref.polyomino_eig(m, n)
+    u, norm2 = ref.polyomino_eigfun(m, n, len(cells))
+    assert norm2 == pytest.approx(len(cells)/4.0, abs=1e-15)
+    s = 1.0/np.sqrt(norm2)
+    g = ref.polyomino_eigfun_grad(m, n)
+    bq = ei.boundary_quadrature(dom, lam, precision=1e-14, warn=False)
+    ed = dirichlet_data(bq, lambda z: s*g(z), lambda z: s*u(z))
+    x0 = 1.37 + 0.61j            # off every corner and every edge line
+    G = ei.gram(ed, lam, bq, x0)
+    assert abs(G[0, 0] - 1.0) < 1e-12, (name, m, n, G[0, 0] - 1.0, len(bq.pts))
+
+
+def test_leg2_is_a_control_not_a_singularity_test():
+    """Pin the limitation, so nobody later reads Leg 2 as evidence about the singularity: the
+    eigenfunction is SMOOTH at the reentrant corners, i.e. du/dn stays bounded there, unlike a
+    genuine corner-singular solution whose du/dn ~ r^(nu-1) diverges."""
+    from lappy.geometry import plus_shape
+    dom = plus_shape()
+    g = ref.polyomino_eigfun_grad(1, 1)
+    reentrant = [s.point for s in ei.corner_specs(dom) if s.singular]
+    assert len(reentrant) == 4
+    for c in reentrant:
+        # approach the corner along the interior bisector; |grad u| must stay bounded
+        for r in (1e-2, 1e-4, 1e-6, 1e-8):
+            z = c + r*np.exp(1j*np.pi/4)
+            assert abs(g(z)) < 10.0, (c, r, abs(g(z)))
+
+
+def test_leg2_polyomino_rejects_bad_cell_sets():
+    from lappy.geometry import polyomino
+    with pytest.raises(ValueError, match="edge-connected"):
+        polyomino([(0, 0), (1, 1)])              # diagonal-only join
+    with pytest.raises(ValueError, match="duplicate"):
+        polyomino([(0, 0), (0, 0)])
+    with pytest.raises(ValueError, match="at least one"):
+        polyomino([])
+    with pytest.raises(ValueError, match="not simple|hole"):
+        # a ring of eight cells enclosing a hole
+        polyomino([(i, j) for i in range(3) for j in range(3) if (i, j) != (1, 1)])
