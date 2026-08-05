@@ -85,6 +85,218 @@ def cached_kressgauss(order, q):
     tau = np.clip(tau, _KRESS_TAU_FLOOR, 1 - _KRESS_TAU_FLOOR)
     return tau, weights
 
+### Corner-adapted Gauss-Jacobi quadrature (docs/corner_quadrature.tex).
+#
+# At a corner of interior angle alpha, with nu = pi/alpha, a Dirichlet eigenfunction has the
+# local expansion u = sum_k c_k J_{k nu}(sqrt(lam) r) sin(k nu theta), so on an edge leaving
+# the corner du/dn = r^(nu-1) F(r) and (du/dn)^2 = r^gamma G(r) with gamma = 2nu-2. A boundary
+# functional's integrand is that times a weight: r^gamma times a series in fractional powers
+# of arclength. Substituting t = r^sub for a suitable `sub` maps those powers to INTEGER
+# powers of t, after which Gauss-Jacobi in t is exact.
+#
+# WHICH POWERS APPEAR depends on the boundary, and tracking that is what `sub` is for:
+#
+# - Straight edges (a polygon corner). r.N = (x-x0).n is exactly CONSTANT along a straight
+#   edge, and the wedge expansion contributes only r^(k nu) together with the Bessel factors'
+#   r^(2q), so the family is {k nu + 2q}. Taking sub = nu maps it to {k + 2q/nu}, integral iff
+#   2/nu is an integer. Since nu > 1/2 restricts alpha to (pi, 2pi), that allows only
+#   2/nu = 3: under sub = nu the 270-degree corner is the ONLY spectral reentrant angle.
+# - Curved edges. Two things change, both adding INTEGER powers of arclength s:
+#     * r.N is no longer constant. With x0 AT the corner it is (kappa0/2) s^2 + O(s^3) --
+#       vanishing to second order rather than identically, which still helps; with x0
+#       anywhere else it is an analytic series in s with nonzero constant and linear terms.
+#     * r = |x(s) - corner| = s - (kappa0^2/24) s^3 + ..., i.e. s times a series in s^2, and
+#       the corner asymptotics carry curvature corrections at integer powers of r.
+#   The family becomes {k nu + m} with m a non-negative integer. Under sub = nu that maps to
+#   {k + m/nu}, whose leading residual t^(1/nu) has 1/nu in (1,2) -- only C^1, hence little
+#   better than algebraic order 3. Under **sub = 1/q, where nu = p/q in lowest terms**, it
+#   maps to {k p + m q}: every exponent integral, so the rule is exact again. sub = 1/q also
+#   covers the straight family (as {k p + 2 q m}), making it the more general choice; its
+#   cost is that the polynomial degree required scales with p.
+#
+# Unlike a Kress grading order (which need only be "large enough"), nu must be EXACT -- a
+# 3e-4 relative error costs four digits -- so it comes from the geometry (pi/alpha) and is
+# never padded or rounded.
+#
+# This rule is matched to *eigenfunction*-level Cauchy data, whose local structure is purely
+# the corner family above. It is NOT appropriate for a basis-level Gram matrix, whose columns
+# centred at other corners are plain-analytic here and would need the {k nu + m} treatment at
+# every corner simultaneously, with O(1) amplitude.
+
+_CORNER_NU_MIN = 0.5    # beta > -1 needs nu > 1/2; at nu = 1/2 (a slit) the integral diverges
+_CORNER_MAX_Q = 12      # largest denominator q admitted when rationalizing nu = p/q
+_CORNER_Q_RTOL = 1e-12  # |nu - p/q| must be this small (relative) to treat nu as rational
+
+
+@cache
+def corner_substitution(nu, max_q=_CORNER_MAX_Q, rtol=_CORNER_Q_RTOL):
+    """Substitution exponent for `cached_cornerjacgauss` at a corner of exponent nu.
+
+    Returns `(sub, exact)`. `sub = 1/q` for nu = p/q in lowest terms, which rationalizes the
+    curved family {k nu + m} -- and hence also the straight family {k nu + 2q} -- so one rule
+    serves straight edges, curved edges, and corners where one of each meets. `exact` is False
+    when nu is not usefully rational, in which case sub falls back to nu: that still removes
+    the leading singularity but leaves a non-polynomial remainder, so convergence is
+    high-order algebraic rather than exact.
+
+    Measured order needed to reach 1e-13 on a realistic corner expansion, sub=nu vs sub=1/q:
+
+        alpha      straight            curved
+        3/2 pi      4  /  8       never  /  6
+        5/4 pi     54  / 10       never  /  8
+        7/4 pi     28  / 14       never  / 10
+        11/6 pi    32  / 16       never  / 14
+
+    "never" means no order up to 64 reached 1e-13 -- on a curved edge sub=nu leaves a t^(1/nu)
+    residual with 1/nu in (1,2), i.e. only C^1. sub=1/q therefore wins everywhere except
+    alpha=3/2 pi (the single angle with 2/nu integral, where sub=nu needs 4 nodes against 8);
+    that 4-node saving is not worth carrying a second code path, so 1/q is used uniformly.
+
+    nu = pi/alpha is rational whenever the domain's angles are rational multiples of pi, which
+    covers essentially every designed geometry. `max_q` bounds how large a denominator is
+    worth the extra polynomial degree (the degree needed scales with p)."""
+    from fractions import Fraction
+    nu = float(nu)
+    frac = Fraction(nu).limit_denominator(max_q)
+    p, q = frac.numerator, frac.denominator
+    if p > 0 and abs(nu - p/q) <= rtol*abs(nu):
+        return 1.0/q, True
+    return nu, False
+
+
+@cache
+def cached_cornerjacgauss(order, nu, gamma=None, sub=None):
+    """Corner-adapted Gauss-Jacobi rule on [0,1], anchored at tau=0, for an integrand
+    f(tau) = tau**gamma * (series in fractional powers of tau) -- see the section comment
+    above. `gamma` defaults to 2*nu-2, the exponent of the Dirichlet 'NN' (and Neumann 'TT')
+    kernel. `sub` is the substitution exponent, defaulting to `nu`; pass 1/q (see
+    `corner_substitution`) on a curved edge, whose exponent family also contains integer
+    powers of arclength.
+
+    Exact for tau**gamma * (polynomial of degree <= 2*order-1 in tau**sub). Returns
+    `(tau, w)` ascending on [0,1], matching the convention of every other boundary rule here.
+
+    Derivation: with tau = t**(1/sub), dtau = (1/sub) t**(1/sub - 1) dt, the singular factor
+    tau**gamma becomes t**(gamma/sub), and combining with the Jacobian gives total weight
+    exponent beta = (gamma+1)/sub - 1. Feeding that to `jacgauss` (whose convention divides
+    the Jacobi weight out, so it integrates a raw singular integrand directly) the
+    gamma-dependence cancels from the returned weights and survives only in the exponent --
+    the weight below is purely the substitution Jacobian.
+
+    TWO PROPERTIES THAT MUST NOT BE "FIXED":
+
+    - `sum(w) == 1` only when the constant function lies in the rule's exact class, i.e. when
+      t**(-gamma/sub) is polynomial. Otherwise sum(w) tends to 1 only at the rule's own
+      algebraic rate (8e-4 at order 8, 4.9e-6 at order 64 for nu=0.8, sub=nu). Renormalizing
+      w would destroy exactness on the singular class this rule exists for; sum(w)-1 is
+      instead the cheapest available diagnostic of the residual.
+    - The substitution *amplifies* node crowding: tau.min() ~ (c/order^2)**(1/sub), so past an
+      order-dependent threshold the innermost node falls below the float64
+      coordinate-collapse floor that `cached_kressgauss` documents. Cap the order
+      (`cornerjac_order_cap`); do NOT clamp tau, which would break exactness.
+
+    Note that accuracy is not monotone in `order` -- see `cornerjac_order_cap`'s docstring."""
+    if not nu > _CORNER_NU_MIN:
+        raise ValueError(f"nu must exceed {_CORNER_NU_MIN} (got {nu}): the Jacobi exponent "
+                         "would be <= -1, and the underlying integral diverges at nu = 1/2 "
+                         "(a slit). Such a corner needs x0 placed on it so that r.N vanishes.")
+    if gamma is None:
+        gamma = 2.0*nu - 2.0
+    if sub is None:
+        sub = float(nu)
+    if not sub > 0:
+        raise ValueError(f"substitution exponent must be positive (got {sub})")
+    beta = (gamma + 1.0)/sub - 1.0
+    if not beta > -1.0:
+        raise ValueError(f"gamma={gamma} with sub={sub} gives Jacobi exponent {beta} <= -1; "
+                         "the underlying integral does not converge")
+    t, W = jacgauss(order, beta, 0.0)
+    return t**(1.0/sub), (W/sub)*t**(1.0/sub - 1.0)
+
+
+def corner_exponents(nu, gamma, n, j_max=None, m_max=None):
+    """The integrand's exponent set at a corner, smallest `n` first.
+
+    On an edge leaving a corner of exponent nu, a boundary functional's integrand is
+    r^gamma * G(r) with G a series in r^(j nu) (the corner family) times an analytic factor
+    contributing r^m -- so the exponents present are {gamma + j nu + m}, j, m >= 0. Every
+    moment is closed-form, int_0^1 t^e dt = 1/(e+1), which is what makes an interpolatory
+    rule on this set possible even when nu is irrational and no substitution rationalizes it.
+
+    For irrational nu no two (j, m) coincide, so there are no resonances and hence no
+    log terms; the set below is then the complete exponent family."""
+    j_max = j_max if j_max is not None else n + 2
+    m_max = m_max if m_max is not None else n + 2
+    E = sorted({gamma + j*nu + m for j in range(j_max) for m in range(m_max)})
+    return np.array(E[:n])
+
+
+@cache
+def cached_cornerinterpgauss(order, nu, gamma=None, n_exp=None):
+    """Interpolatory corner rule on [0,1], anchored at tau=0, exact on the corner's ACTUAL
+    exponent set -- for use when `corner_substitution` reports no exact substitution exists,
+    i.e. when nu is irrational. That is the generic case for a corner between two circular
+    arcs, whose angle is fixed by the geometry rather than chosen.
+
+    Nodes come from `cached_cornerjacgauss` (already correctly clustered); the weights are
+    then solved so that sum_i w_i tau_i**e == 1/(e+1) for every e in
+    `corner_exponents(nu, gamma, n_exp)`.
+
+    `n_exp` defaults to `order//2` and MUST stay below `order`. Solving the square system
+    (n_exp == order) is a trap: it is exact on the span but wildly ill-conditioned, with
+    cond(V) reaching 1e13 at order 12 and 1e19 at order 16, and weights growing to -1e4 --
+    whose total variation sum|w| then multiplies every roundoff error in the integrand.
+    Taking n_exp < order makes it a minimum-norm least-squares solve instead, which keeps
+    **sum|w| = 1.0** while retaining exactness on the exponent set. Measured at nu=0.65736
+    on a realistic curved-corner integrand:
+
+        order  n_exp   sum|w|   rel err
+           12     12    2.1e2   6.6e-15     <- exact but ill-conditioned
+           16     16    6.9e3   3.0e-13
+           16     10    1.0e0   2.0e-15     <- exact AND well-conditioned
+           24     14    1.0e0   7.8e-13
+
+    Compare `cached_cornerjacgauss` at the same nu: 1.0e-6. Returns `(tau, w)` ascending on
+    [0,1], the same contract as every other boundary rule here."""
+    if gamma is None:
+        gamma = 2.0*nu - 2.0
+    if n_exp is None:
+        n_exp = max(2, order//2)
+    if n_exp >= order:
+        raise ValueError(f"n_exp ({n_exp}) must be < order ({order}): the square solve is "
+                         "ill-conditioned and inflates sum|w| by orders of magnitude (see "
+                         "the docstring's table)")
+    tau, _ = cached_cornerjacgauss(order, nu, gamma)
+    E = corner_exponents(nu, gamma, n_exp)
+    V = tau[None, :]**E[:, None]
+    w, *_ = np.linalg.lstsq(V, 1.0/(E + 1.0), rcond=None)
+    return tau, w
+
+
+@cache
+def cornerjac_order_cap(nu, gamma=None, sub=None, scale=1.0, tau_floor=_KRESS_TAU_FLOOR,
+                        order_max=128):
+    """Largest order for which `cached_cornerjacgauss(order, nu, gamma, sub)`'s innermost node
+    stays above `tau_floor/scale`, i.e. for which a segment's parametrization
+    `(1-tau)*p0 + tau*pf` does not round onto the corner itself (see `cached_kressgauss` for
+    the underlying float64 defect and why a node at r=0 is fatal). `scale` is the panel's
+    tau-length, so a shorter panel reaches the floor at a lower order.
+
+    This cap is necessary but NOT sufficient for choosing an order. Measured accuracy is
+    non-monotone in order well *before* the floor binds, because the integrand
+    tau**(2nu-2) is ~6e8 at tau~1e-9 while its weight is correspondingly tiny and the terms
+    must sum to O(1) -- roundoff, not truncation. At nu=0.526 the best order is 16 (1.2e-11)
+    while this cap is 75, and using the cap gives 4.2e-9. Order selection against a target
+    precision therefore needs a calibrated error curve, not a cap alone."""
+    cap = 0
+    for order in range(2, order_max + 1):
+        tau, _ = cached_cornerjacgauss(order, nu, gamma, sub)
+        if tau.min()*scale <= tau_floor:
+            break
+        cap = order
+    return cap
+
+
 def boundary_nodes_polygon(vertices,n_pts=20,rule='legendre',skip=None):
     """Computes boundary nodes and weights using Chebyshev or Gauss-Legendre
     quadrature rules. Transforms the nodes to lie along the edges of the polygon with
