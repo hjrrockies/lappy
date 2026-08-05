@@ -157,3 +157,86 @@ bucket-3 verdict at one `n_basis` is a statement about the *instance*, not the
 domain. Any future automation must ladder per-domain and keep the best, which
 is what the pre-flight contrast makes cheap to do -- a degenerate instance is
 identifiable in ~1 minute of scanning, before any solve.
+
+## Curved tier
+
+| domain | n_basis | ratio | contrast | certified | found | bucket |
+|---|---|---|---|---|---|---|
+| `ellipse_a2` | 240 | 0.98 | 2.9e+02 | 13.6 | 10/10 | 1 |
+| `ellipse_a3` | 320 | 0.99 | 1.6e+02 | 12.5 | 10/10 | 1 |
+| `ellipse_a4` | 320 | 0.98 | 7.6e+01 | 13.1 | 10/10 | 1 |
+| `mushroom` | 320 | 0.99 | 1.2e+03 | 11.5 | 10/10 | 1 |
+| `cut_square_r025` | 640 | 1.02 | 3.0e+02 | 12.2 | 10/10 | 1 |
+| `cut_square_r05` | 640 | 1.00 | 1.3e+02 | 11.7 | 10/10 | 1 |
+| `stadium` | 320 | 1.01 | 3.0e+02 | 2.8 | 10/10 | 2 |
+| `stadium_L2` | 320 | 1.00 | 1.2e+02 | 2.8 | 10/10 | 2 |
+| `mushroom_thin` | 320 | 0.98 | 3.2e+02 | 7.4 | 10/10 | 2 |
+| `mushroom_neck01` | 320 | 1.06 | 1.1e+02 | 5.0 | 10/10 | 2 |
+
+**6 / 4 / 0.**
+
+---
+
+# Summary: 44 domains, 32 / 10 / 2
+
+    bucket 1   32   8+ digits with make_default_basis
+    bucket 2   10   complete spectrum, clean curve, under 8 digits
+    bucket 3    2   spiral, spiral_t25
+
+## Bucket 2 is basis insufficiency, isolated -- and it has exactly three mechanisms
+
+Every bucket-2 domain has a **clean tension curve** (contrast 60-4100, minima
+ratio 0.88-1.43) and a **complete spectrum** (10/10 found). So conditioning
+(#2), collocation (#3) and the search (#4) are excluded *by observation* in all
+ten. What remains is issue #1, and it sorts into three groups:
+
+**Sharp corners (6):** chevron x4, parallelogram_p65/p127. Corner-centred
+Fourier--Bessel functions need orders `m*p` with `p` up to 28; the harmonics get
+sparse and expensive faster than they get useful.
+
+    chevron_2_4    3.3      parallelogram_p127  4.1
+    chevron_2_3    3.7      parallelogram_p65   7.5
+    chevron_1_125  5.0
+    chevron_1_15   6.3
+
+**Curvature discontinuity (2):** `stadium`, `stadium_L2`, both exactly **2.8**.
+Zero corners, four C^1-but-not-C^2 junctions that are neither a corner the FB
+basis can aim at nor the smooth boundary the FS basis wants. Two different
+aspect ratios giving the identical ceiling says the mechanism is the junction,
+not the geometry around it. Independently reproduces the 2.9 recorded in
+TUNING_LOG.md through an entirely different pipeline.
+
+**Thin neck (2):** the mushroom neck-width sweep, monotone across the
+bucket boundary:
+
+    mushroom          b=1.0    11.5   bucket 1
+    mushroom_thin     b=0.25    7.4   bucket 2
+    mushroom_neck01   b=0.1     5.0   bucket 2
+
+That is a **parametric family crossing the bucket-1/2 boundary continuously**,
+which makes it the best available handle on issue #1 for a mechanism with no
+closed form -- the same role `disk_sector` plays for corner exponents.
+
+## Bucket 3 is one mechanism, not two
+
+Both are `spiral`: coils bury corners so they have no straight-ray sightline to
+infinity. `spiral` finds **3 of 10** eigenvalues; `spiral_t25` fails earlier, in
+basis construction (`corner_branch_cut_polyline: no valid polyline cut found`).
+This is a *geometry* limitation, not a solver one.
+
+Note `spiral`'s three eigenvalues each carry a valid Moler--Payne certificate.
+An incomplete spectrum is the one failure certification structurally cannot see,
+which is why bucket 3 is defined by completeness rather than by accuracy.
+
+## Domains that moved out of "hard" without any per-domain tuning
+
+Relative to the previous session, from pipeline changes alone
+(`solve_interval` at `ltol=1e-14`, `rtol_default=1e-12`, correct Bessel zeros):
+
+    cut_square_r025    7.2  -> 12.2    reg_ngon_8   crashed -> 10.4
+    GWW2               7.8  -> 10.0    iso_tri_h05  mem fail -> 12.5
+    rect_near_deg_1e5  4.8  -> 15.4    rect_thin    mem fail -> 15.2 (true)
+    iso_right_tri      5.8  -> 14.6
+
+None of these needed a per-domain fix. That is the strongest evidence that most
+of what looked like domain difficulty was pipeline defect.
