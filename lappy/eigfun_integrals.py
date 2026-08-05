@@ -121,6 +121,12 @@ EigfunData = namedtuple('EigfunData', ['pts', 'normals', 'tangents', 'wts', 'U',
 _NU_MARGIN = 0.02
 _ANGLE_TOL = 1e-10
 
+# Default cap on a corner panel's arclength, as a multiple of the corner's clearance (the radius
+# of the largest disk about it inside the domain). Calibrated in corner_panels' docstring: 1.0
+# sits exactly at the edge of the expansion's validity and lands an order worse, while going
+# below 0.9 buys nothing. Echoes cubature._corner_R0s's 0.4-of-an-edge cap for the interior rule.
+_CLEARANCE_FRAC = 0.9
+
 
 def _is_straight(seg):
     """A LineSegment, on which arclength from the corner equals r exactly and r.N is constant.
@@ -217,16 +223,34 @@ def singular_corner_report(domain):
 
 
 def corner_panels(domain, specs=None, order_corner=16, order_smooth=16, gamma=None,
-                  panel_frac=1.0, clearance_frac=None, order_cap=True):
+                  panel_frac=1.0, clearance_frac=_CLEARANCE_FRAC, order_cap=True):
     """Panels tiling every segment's [0,1] exactly once, corner-anchored where admissible.
 
-    `panel_frac` caps a corner panel's share of its segment. `clearance_frac`, if given, also
-    caps the panel's *arclength* at that multiple of `corner_clearance` -- the corner expansion
-    is only valid within the largest disk about the corner inside Omega, so on a domain whose
-    edges are long relative to that disk (L_shape: clearance 1, edge length 2) a full-length
-    panel reaches beyond the class the rule is exact for. Left off by default until Leg 3
-    measures it: on `disk_sector`, where clearance equals the edge length, it makes no
-    difference either way.
+    `panel_frac` caps a corner panel's share of its segment. `clearance_frac` also caps the
+    panel's *arclength* at that multiple of `corner_clearance`, and it is ON by default because
+    leaving it off is catastrophic on a domain whose edges are long relative to the largest disk
+    about the corner. Measured against the exact eigenfunction of a 1xN polyomino strip with one
+    cell below an end, so the reentrant corner's edge has length N-1 against a clearance of 1
+    (worst relative norm error over modes (1,1) and (2,3)):
+
+        N     off      cf=1.0   cf=0.9   cf=0.7
+         2  6.5e-14   6.5e-14  5.3e-15  2.2e-16
+         4  4.7e-06   3.9e-14  3.6e-15  2.2e-16
+         8  2.3e-02   2.2e-14  1.6e-15  0.0e+00
+        16  7.7e-02   1.2e-14  1.3e-15  6.7e-16
+        24  7.4e-03   9.3e-15  4.4e-16  2.2e-16
+
+    Leaving it off costs up to twelve orders. A fixed `panel_frac` cannot substitute: it is a
+    fraction of the EDGE, so it grows with the edge and stays too long -- panel_frac=0.25 with
+    no clearance cap still gives 2.6e-04 at N=16. cf=1.0 sits exactly at the edge of the
+    expansion's validity and lands an order worse than 0.9; below 0.9 buys nothing. Hence the
+    0.9 default, which costs ~6% more nodes than 1.0 and 20-50% more than off.
+
+    The mechanism measured here is resolution: the corner rule clusters its nodes AT the corner,
+    so the far end of a long panel is sparsely sampled and cannot resolve the sqrt(lam)
+    oscillation over the remaining arclength. The related concern that the integrand leaves the
+    corner's exponent class beyond the clearance is not separately measured -- see
+    benchmarks/corner_quad/panel_length.py on why it resists synthetic measurement.
 
     `order_cap` clamps each corner panel's order so its innermost node stays off the corner
     (quad.cornerjac_order_cap). Leave it on: past the cap the error *diverges* with order."""
@@ -421,7 +445,7 @@ def lowdin_transform(G, ttol=1e-3):
 
 
 def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
-                        clearance_frac=None, warn=True):
+                        clearance_frac=_CLEARANCE_FRAC, warn=True):
     """The entry point: a boundary node set for `domain`, accurate to `precision` for
     eigenfunctions up to spectral parameter `lam_max`.
 

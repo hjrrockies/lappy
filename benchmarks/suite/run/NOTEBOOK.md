@@ -2184,3 +2184,64 @@ replacement takes no basis.
 The Kress rule needed for the Stage 0 comparison is reconstructed inside
 `benchmarks/corner_quad/proto.py` so that measurement stays reproducible after
 the deletion.
+
+---
+
+## Panel length vs corner clearance: the last open question, and it was a live bug
+
+Settled, and the answer was not "it doesn't matter". Leaving the clearance cap off
+-- which was the default until now -- loses up to **twelve orders** on a domain
+whose edge is long relative to the corner's clearance.
+
+Test domain: a 1 x N polyomino strip with one cell below an end, so the reentrant
+corner's edge has length N-1 against a clearance of 1. Worst relative norm error
+over modes (1,1) and (2,3), against the exact eigenfunction:
+
+    N     off      cf=1.0   cf=0.9   cf=0.7
+     2  6.5e-14   6.5e-14  5.3e-15  2.2e-16
+     4  4.7e-06   3.9e-14  3.6e-15  2.2e-16
+     8  2.3e-02   2.2e-14  1.6e-15  0.0e+00
+    16  7.7e-02   1.2e-14  1.3e-15  6.7e-16
+    24  7.4e-03   9.3e-15  4.4e-16  2.2e-16
+
+`clearance_frac` is now **0.9 by default**. cf=1.0 puts the panel exactly at the
+radius where the expansion stops being valid and lands an order worse; below 0.9
+buys nothing. Cost: ~6% more nodes than cf=1.0, 20-50% more than off (H_shape
+204 -> 252, disk_sector 50 -> 70).
+
+**A fixed `panel_frac` cannot substitute for it.** It is a fraction of the EDGE,
+so it grows with the edge and stays too long: panel_frac=0.25 with no clearance
+cap still gives 2.6e-04 at N=16, against 1.3e-15 for the clearance cap. This is
+why the plan's original framing -- "measure the split point" -- was the wrong
+question; the cap has to be geometric, not fractional.
+
+### Choosing the instrument was the hard part
+
+**x0-invariance on a real MPS eigenfunction cannot see this effect at all.** The
+spread came back IDENTICAL to three significant figures across every panel
+configuration -- 2.74e-07 at N=6 whether the panel spanned the whole 5-long edge
+or a quarter of it -- while growing with N. That is the eigenfunction's own
+residual: the identity int c.n (du/dn)^2 ds = 0 holds only for an EXACT
+eigenfunction, and a longer, thinner domain is simply harder for the basis. Leg
+4's documented floor, now measured rather than asserted, and a reminder that a
+reference-free diagnostic is bounded by the thing it is diagnosing.
+
+What worked was the polyomino's exact eigenfunction: zero residual, closed-form
+norm. It is smooth at the reentrant corner -- Leg 2's limitation, and the wrong
+tool for the singularity -- but exactly the right tool here, because what a long
+panel risks is under-resolving the smooth FAR FIELD. The corner rule clusters its
+nodes at the corner by construction, so the far end of a long panel is sparsely
+sampled and cannot resolve the sqrt(lam) oscillation over the remaining
+arclength. That is the mechanism, and it is a resolution failure, not a class
+mismatch.
+
+### What remains unmeasured, and why
+
+The other candidate mechanism -- that beyond the clearance the integrand leaves
+the corner's exponent family, so the rule loses its exactness guarantee -- is NOT
+separately measured. Any synthetic model of "the integrand stops being in the
+class past radius R" has to assume what it is trying to demonstrate, and the one
+exact eigenfunction available on this geometry carries no singular amplitude to
+mismatch. Since the resolution mechanism alone accounts for the observed failure
+and the fix removes it entirely, this is recorded as untested rather than ruled
+out.

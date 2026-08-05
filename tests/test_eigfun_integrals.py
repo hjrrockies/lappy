@@ -571,3 +571,75 @@ def test_leg2_polyomino_rejects_bad_cell_sets():
     with pytest.raises(ValueError, match="not simple|hole"):
         # a ring of eight cells enclosing a hole
         polyomino([(i, j) for i in range(3) for j in range(3) if (i, j) != (1, 1)])
+
+
+# ── Panel length vs corner clearance ─────────────────────────────────────────
+#
+# A corner panel is exact for the corner's expansion, which is valid only within the largest
+# disk about the corner inside Omega. On a domain whose edge is long relative to that disk, an
+# uncapped panel is catastrophic -- and the mechanism is resolution, not just class mismatch:
+# the corner rule clusters its nodes AT the corner, so the far end of a long panel is sparsely
+# sampled and cannot resolve the sqrt(lam) oscillation over the remaining arclength.
+#
+# Measured with the polyomino's EXACT eigenfunction (zero residual, closed-form norm), because
+# x0-invariance on a real MPS eigenfunction cannot see this at all: its spread came back
+# identical to three figures across every panel configuration, being dominated by the
+# eigenfunction's own residual. See benchmarks/corner_quad/panel_length.py.
+
+def _long_arm(n):
+    """1 x n strip of cells plus one below the left end: the reentrant corner's edge has length
+    n-1 while its clearance is the strip width, 1."""
+    from lappy.geometry import polyomino
+    return polyomino([(i, 1) for i in range(n)] + [(0, 0)]), [(i, 1) for i in range(n)] + [(0, 0)]
+
+
+def _long_arm_norm_error(n, m, k, clearance_frac):
+    dom, cells = _long_arm(n)
+    lam = ref.polyomino_eig(m, k)
+    u, norm2 = ref.polyomino_eigfun(m, k, len(cells))
+    g = ref.polyomino_eigfun_grad(m, k)
+    s = 1.0/np.sqrt(norm2)
+    bq = ei.boundary_quadrature(dom, lam, precision=1e-13,
+                                clearance_frac=clearance_frac, warn=False)
+    ed = dirichlet_data(bq, lambda z: s*g(z), lambda z: s*u(z))
+    return abs(ei.gram(ed, lam, bq, 1.7 + 1.3j)[0, 0] - 1.0), len(bq.pts)
+
+
+def test_long_edge_at_a_singular_corner_needs_the_clearance_cap():
+    """The regression this guards: with the cap off, a 15-long edge at a corner of clearance 1
+    loses twelve orders. Both configurations are run so the test states the size of the effect,
+    not merely that the default happens to work."""
+    err_on, n_on = _long_arm_norm_error(16, 2, 3, ei._CLEARANCE_FRAC)
+    err_off, n_off = _long_arm_norm_error(16, 2, 3, None)
+    assert err_on < 1e-13, f"default clearance cap should hold 1e-13, got {err_on:.2e}"
+    assert err_off > 1e-4, ("expected the uncapped rule to fail badly here; if this now passes, "
+                            "the test domain no longer exercises the effect")
+    assert err_on < err_off/1e9
+    assert n_on < 2*n_off, f"the cap should cost well under 2x nodes ({n_on} vs {n_off})"
+
+
+@pytest.mark.parametrize("n", [2, 4, 8, 16])
+@pytest.mark.parametrize("m,k", [(1, 1), (2, 3)])
+def test_clearance_cap_holds_across_arm_lengths(n, m, k):
+    err, _ = _long_arm_norm_error(n, m, k, ei._CLEARANCE_FRAC)
+    assert err < 1e-13, (n, m, k, err)
+
+
+def test_clearance_cap_default_is_not_at_the_edge_of_validity():
+    """cf=1.0 puts the panel exactly at the radius where the expansion stops being valid, and
+    measures an order worse than 0.9 (1.2e-14 against 1.3e-15 at n=16). The default must sit
+    inside that boundary."""
+    assert 0.5 <= ei._CLEARANCE_FRAC < 1.0
+    err_default, _ = _long_arm_norm_error(16, 2, 3, ei._CLEARANCE_FRAC)
+    err_edge, _ = _long_arm_norm_error(16, 2, 3, 1.0)
+    assert err_default <= err_edge
+
+
+def test_corner_clearance_matches_hand_computed_geometry():
+    """corner_clearance is the distance to the nearest NON-adjacent boundary piece; on the
+    long-arm strip that is the opposite wall, i.e. the strip width."""
+    dom, _ = _long_arm(8)
+    for s in ei.corner_specs(dom):
+        if s.singular and s.admissible:
+            clear = ei.corner_clearance(dom, s.point, s.seg_out, s.seg_in)
+            assert clear == pytest.approx(1.0, abs=1e-12), clear
