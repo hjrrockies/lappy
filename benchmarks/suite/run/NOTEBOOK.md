@@ -1434,3 +1434,439 @@ control (rect) passed at 8.6e-11, which is what identified the fault as mine.
 Two lessons: use analytic gradients for analytic functions (they belong in
 `reference.py` alongside the eigenfunctions), and always run a control in the
 same batch.
+
+---
+
+## Session: how robust is Rellich normalization on singular sectors, really?
+
+Systematic follow-up to the previous entry, which tested three sectors at a
+handful of `x0`. Swept opening angle `alpha in {pi/2, 2pi/3, 1.1pi, 1.25pi,
+1.5pi, 1.75pi, 1.9pi, 1.99pi}` x modes `(m,n) in {(1,1),(1,2),(2,1),(3,1)}` x
+`x0 in {default (bbox), apex, arc midpoint}`, feeding exactly-normalized
+closed-form eigenfunctions to the Dirichlet identity and asking for 1 back.
+
+Added `reference.sector_eigfun_grad` (analytic `du/dx + i du/dy`) so the test
+never differences across the corner -- the failure mode the previous entry hit.
+
+### The result, as one table (relative error, m=1 n=1)
+
+    alpha     nu      x0=bbox     x0=apex   x0=arc-mid
+    pi/2   2.000      3.3e-15     1.1e-15      4.0e-15
+    2pi/3  1.500      9.3e-15     2.4e-15      1.5e-14
+    1.1pi  0.909     -5.1e-09     8.9e-16     -1.5e-08
+    1.25pi 0.800     -5.3e-07    -1.1e-16     -4.0e-06
+    1.5pi  0.667      4.2e-07    -1.3e-14     -1.2e-03
+    1.75pi 0.571      2.4e-15     2.4e-15     -3.7e-02
+    1.9pi  0.526      1.9e-05     1.3e-15     -1.7e-01
+    1.99pi 0.503      2.6e-04    -7.5e-15     -4.5e-01
+
+`x0=apex` is machine-exact everywhere. Everything else degrades monotonically as
+`nu -> 1/2`, up to **55% error** at the near-slit. `1.75pi` reads clean at bbox
+only by accident: there the sampled bounding box centre lands exactly on the
+apex.
+
+**Only modes with `nu < 1` are affected.** At every angle, `(2,1)` and `(3,1)`
+(`nu = 2pi/alpha, 3pi/alpha > 1`) are machine-exact at all three `x0`. Bad `x0`
+does not degrade the method broadly; it destroys precisely the corner-singular
+modes.
+
+### The error is linear in |x0 - apex|, with a nu-dependent constant
+
+Offsetting `x0` along the bisector, m=1 n=1:
+
+    alpha     nu    err/|offset|   (TAU_FLOOR)^(2nu-1)
+    1.1pi  0.909        1.5e-08              4.3e-08
+    1.25pi 0.800        4.0e-06              4.0e-06
+    1.5pi  0.667        1.1e-03              1.0e-03
+    1.75pi 0.571        3.7e-02              5.2e-02
+    1.9pi  0.526        1.7e-01              3.4e-01
+    1.99pi 0.503        4.5e-01              9.0e-01
+
+The constant is a *pure quadrature deficit*, and the right column is a first-
+principles prediction of it that tracks over eight orders of magnitude.
+
+### Why refinement cannot fix it: the mass lives below the smallest node
+
+With `x0` off the apex, `rN` does not vanish there and the integrand goes like
+`r^(2nu-2)`. Integrable, but its mass concentrates at the corner: the fraction
+below radius `eps` is `eps^(2nu-1)`, which for `nu=0.503` is **90% below
+r=1e-9**. `quad._KRESS_TAU_FLOOR = 1e-9` pins the innermost node there
+regardless of point count -- confirmed, `r_min = 1.00e-09` at both `mult=2` and
+`mult=32`. That is why the previous session saw 565 -> 6790 nodes move nothing:
+the rule is not under-resolved, it is *truncated*, and the truncated part is
+most of the integral.
+
+Lowering the floor confirms the mechanism and also caps the payoff (fixed
+offset 1e-2):
+
+    floor      1.5pi      1.75pi     1.99pi
+    1e-09    -1.2e-05    -3.7e-04   -4.5e-03
+    1e-11     3.9e-07    -8.6e-05   -4.4e-03
+    1e-13     3.9e-07    -8.6e-05   -4.4e-03
+
+Two decades of floor buy ~1.5 digits at `1.5pi` and nothing at `1.99pi`, then
+stall -- below ~1e-11 float64 arclength rounding takes over, which is the
+original reason the floor exists (see `cached_kressgauss`'s docstring). **The
+floor is not the bug and raising precision is not the fix.** `rN == 0` at the
+singular corner is the only mechanism that works, because it removes the
+singularity rather than resolving it.
+
+### Standing recommendation
+
+`cauchy.default_x0` (bounding-box centre) is unsafe on any domain with a
+reentrant corner and should not be the default there. For one singular corner,
+put `x0` on it. For several, no single `x0` works and the open question from the
+previous entry stands.
+
+### Incidental: FourierBesselBasis cannot be built on a half-disk
+
+`alpha = pi` fails outright -- `disk_sector(1, pi)` reports `len(corners) == 2`
+but `corner_angles` of shape `(2,3)`, so `from_domain` raises `IndexError` for
+*any* `orders` length. A geometry/basis inconsistency at a straight (pi) vertex,
+unrelated to Rellich, but it means the half-disk is currently unsolvable by MPS.
+Not fixed here.
+
+---
+
+## Follow-up: 1e-14 at a 270-degree corner with a bad x0, in ~30 nodes
+
+Retracts the "no rule in float64 can capture it" claim from the previous entry.
+That was wrong. The integrand `r^(2nu-2)` is integrable and has exactly the
+structure Gauss-Jacobi exists for; the truncation floor is a symptom of building
+nodes as `p0 + tau*L*dir` in absolute coordinates, not a precision barrier.
+
+### The rule
+
+On a straight edge from the apex, Dirichlet data gives `du/dn = -+ nu J_nu(kr)/r`
+and `rN = (z-x0).n` is **constant**. So the edge integrand is `r^(2nu-2)` times
+an analytic function -- the Gauss-Jacobi weight `(1+x)^beta` with `beta = 2nu-2`.
+Arc data is smooth: plain Gauss-Legendre. Crucially the Jacobi nodes sit
+`O(1/n^2)` from the corner, not 1e-9, so no coordinate cancellation and no floor.
+
+Measured at `alpha=1.5pi` (nu=2/3), `x0` = the bbox default that currently
+fails, `du/dn` evaluated as a **black box** (only `nu` assumed known):
+
+    nodes (2*n_edge + n_arc)     rel err
+        16                       -7.1e-09
+        28                       -7.5e-15
+        40                       -6.0e-15
+
+**28 nodes, 7.5e-15**, where the Kress rule plateaus at 2e-7 with 2264. The
+near-slit `alpha=1.99pi` also works: 2.8e-14 at 56 nodes.
+
+### Two traps found while testing this
+
+**1. A degenerate x0 makes the test vacuous.** For `alpha=1.5pi` the two edges
+carry `rN = Im(x0)` and `-Re(x0)` against identical `un^2`, so **any `x0` on the
+diagonal cancels the entire singular contribution**. My first pass used
+`x0=0.3+0.3j` and was measuring the arc alone. Rerun with `x0=0.4+0.05j` (edge
+share 12.7% of the total) -- conclusions held, but they were not yet evidence
+when first reported. Any future test of corner quadrature must report the
+edge/arc split, not just the total.
+
+**2. beta needs nu to full precision.** Rounding `nu = 2/3` to `0.667` (3e-4
+relative) costs four digits and drops convergence to algebraic:
+
+    nu_quad     28 nodes    192 nodes
+    0.6667      -7.5e-15     -3.1e-15
+    0.667        6.6e-05      1.7e-05
+    0.600       -1.8e-02     -4.7e-03
+
+`nu = pi/alpha` is exact from geometry, so this is free -- but it rules out
+tabulated or margin-padded exponents of the kind `corner_grading_orders` uses.
+
+### The part that actually matters for a real basis
+
+A single mode is not the use case. Near a corner an MPS solution is a mix,
+`sum_k c_k r^(nu_k)` with `nu_k = k*pi/alpha`, so `(du/dn)^2` carries every
+cross term `r^((j+k)nu - 2)`. One Jacobi rule with `beta = 2nu-2` nails only the
+(1,1) term. Tested on a synthetic 5-term corner expansion times an analytic
+tail, against mpmath at 40 dps:
+
+    n     Jacobi in r    after r = t^(1/nu)
+    8       -4.6e-03              4.0e-15
+    16      -1.2e-03              7.3e-15
+    64      -7.2e-05              1.6e-13
+
+Plain Jacobi is only algebraic -- 7e-5 at 64 nodes, useless. **The substitution
+`r = t^(1/nu)` maps every `r^((j+k)nu)` to `t^(j+k)`, i.e. rationalizes the
+whole commensurate corner expansion at once**, and the rule is then spectral:
+**4e-15 at 8 nodes.** (It drifts up slowly past n~32 from roundoff, so small n
+is both cheaper and better -- use 8-16.)
+
+### Recommended construction
+
+Per corner, per adjacent edge: panel in `t = r^nu`, Gauss-Jacobi with
+`beta = (2nu-1)/nu - 1`, 8-16 nodes, evaluated in corner-local coordinates.
+Smooth boundary away from corners keeps plain Gauss-Legendre. This removes the
+`x0`-at-the-corner requirement entirely, which is what unblocks H_shape and GWW
+-- no partition of unity needed.
+
+Not yet tested: a real `FourierBesselBasis` (as opposed to closed-form or
+synthetic data) through this rule, and a genuinely multi-corner domain.
+
+---
+
+## Stage 0 gate: the corner rule inside lappy, measured against Kress
+
+Prototype in `benchmarks/corner_quad/` (nothing in `lappy/` yet), driven through
+the real segment API (`seg.p/N/T(tau)`, `seg.len`,
+`int_angles[corner_idx[c]]`) so what is measured is what Stage 2/3 will
+assemble. Exact truth from `reference.sector_eigfun` + `sector_eigfun_grad`.
+
+### Gate: passed, by 11 orders
+
+At the target case -- alpha=1.5pi (270 degrees), `x0` deliberately OFF the apex
+and off the cancellation diagonal (edge share 12.7% of the total):
+
+    corner-jac   -6.0e-15    48 nodes
+    Kress         2.8e-04   142 nodes
+
+Better accuracy by 11 orders with **one third the nodes**. Across the whole
+sweep the corner rule is at or below Kress everywhere, and never worse. With
+`x0` at the apex both rules are machine-exact, as expected -- `r_N == 0` removes
+the singularity and there is nothing left to resolve.
+
+Order convergence at 1.5pi is spectral, as `2/nu = 3` predicts:
+
+    order   4      6      8     12     16
+    err  7.9e-3 4.3e-5 6.3e-8 8.6e-15 6.0e-15
+
+**36 total nodes for machine precision** on a 270-degree corner at a bad `x0`.
+
+### nu sensitivity: confirmed, and now a live guard
+
+    rel err in nu    0     1e-8     1e-4     3e-4     1e-2
+    rel err       6e-15  3.1e-10  3.1e-06  9.2e-06  3.1e-04
+
+Exactly the predicted behaviour. This is wired as a test, not a one-off: if it
+ever reports no loss, a rounded or margin-padded exponent has crept in.
+
+### Finding 1: the achievable precision is a function of nu, and it is NOT monotone in order
+
+    alpha      nu    2/nu   floor cap   best order   best err   err at cap
+    1.05pi   0.952   2.10       128           98      4.4e-16      1.6e-14
+    1.1pi    0.909   2.20       128           72      2.2e-16      2.0e-14
+    1.25pi   0.800   2.50       128          100      7.8e-16      6.8e-15
+    1.5pi    0.667   3.00       128           32      2.4e-15      5.3e-13
+    1.6pi    0.625   3.20       128           46      5.3e-14      2.5e-13
+    1.75pi   0.571   3.50       128           66      7.4e-13      2.6e-10
+    1.9pi    0.526   3.80        75           16      1.2e-11      4.2e-09
+    1.99pi   0.503   3.98        18            8      1.0e-09      3.8e-09
+
+Machine precision is reachable for **nu >= 0.6** (alpha <= ~1.6pi), which covers
+the 270-degree corner that actually matters. As nu -> 1/2 it degrades to
+1e-9..1e-12.
+
+Two distinct mechanisms, and only one was predicted:
+
+1. **Predicted** -- the substitution amplifies node crowding
+   (`tau_min ~ (c/n^2)^(1/nu)`), so past a nu-dependent order the innermost node
+   drops below the `1e-9` coordinate-collapse floor and
+   `(1-tau)*p0 + tau*pf` rounds onto the corner. Directly observed at 1.99pi:
+   the error *diverges* with order, 1.6e-8 -> -3.2e-7 -> 1.4e-6 -> -4.9e-6 for
+   order 16 -> 32 -> 48 -> 64, with `tau_min` crossing the floor at order 24.
+2. **Not predicted** -- the best order is well *below* the cap (1.9pi: best at
+   16, cap at 75). Dynamic range: at `tau ~ 1e-9` and nu ~ 0.5 the integrand
+   `(du/dn)^2 ~ tau^(2nu-2)` is ~6e8 while its weight is correspondingly tiny,
+   and the terms must sum to O(1). That is roundoff, not truncation, and it
+   bites before the floor does.
+
+**Consequence for Stage 3, which changes the design:** precision-driven sizing
+cannot be "raise the order until the target is met, capped by the floor" --
+that walks straight into a non-monotone error curve and picks a *worse* rule.
+It must select the smallest order meeting the target from a *calibrated* curve
+per nu, which is exactly what `cubature._choose_corner_rule(beta, eps, s_max)`
+already does for the interior rule. Follow that precedent, and report the
+achievable precision when the target is out of reach rather than silently
+overshooting the order.
+
+### Finding 2: the near-corner cases are corner-limited, not arc-limited
+
+At alpha=1.1pi the singular edges carry only 1.1% of the integral, so the
+obvious read is that the smooth arc dominates the error. It does not: raising
+the smooth order 16 -> 48 changes nothing (1.37e-10 throughout), while raising
+the *corner* order 16 -> 48 gives 1.37e-10 -> 1.5e-13. These are the
+`2/nu` non-integer cases where convergence is algebraic, so they need more
+corner nodes despite the corner contributing almost nothing to the value.
+Cheap to get wrong in the sizing heuristic.
+
+### Finding 3: panel length barely matters here, and the reason is geometric
+
+Sweeping the panel's share of the edge (0.25 / 0.5 / 0.75 / 1.0) moves the error
+by well under an order at every angle tested, with shorter panels marginally
+better where the rate is algebraic (1.25pi: 1.7e-11 at 0.25 vs 6.2e-10 at 1.0).
+
+This does **not** settle the plan's open question. `disk_sector`'s apex has
+inradius R and its radii have length R, so a full-length panel never leaves the
+corner expansion's disk of convergence. The domains where it would --- L_shape
+(inradius 1, edge length 2), H_shape --- have no analytic truth, so this has to
+be re-measured in Leg 3 against synthetic data with a known exact integral.
+Do not read the flatness above as licence to default `frac=1.0`.
+
+### Also worth recording
+
+Higher radial modes are unaffected (1.5pi, modes (1,1)/(1,2)/(1,3): 6e-15,
+3.8e-15, 1.0e-13) and nu>1 modes on the same domain stay machine-exact, so the
+rule does no harm where there is no singularity to resolve.
+
+---
+
+## Curved sides at a singular corner: the substitution had to change
+
+Prompted by the requirement that this work on non-polygonal domains, including
+two curved sides meeting at a singular corner. It did not, as designed. Three
+things came out of working it through.
+
+### What actually changes on a curved edge
+
+Both confirmed numerically against a circle of curvature kappa0 through the
+origin:
+
+    r.N  = (kappa0/2) s^2 + O(s^3)      with x0 AT the corner
+    r    = s - (kappa0^2/24) s^3 + ...  so r is NOT arclength
+
+The first is better news than expected. On a straight edge from x0 at the
+corner, `r.N == 0` identically and the corner's singularity disappears. On a
+curved edge it vanishes only to *second* order -- but that still leaves the
+integrand `r.N (du/dn)^2 ~ s^(2nu)` bounded, so the trick degrades gracefully
+instead of failing. With x0 anywhere else, r.N is an analytic series in s with
+nonzero constant and linear terms.
+
+The consequence is the exponent family. Both effects (plus the curvature
+corrections in the corner asymptotics) contribute INTEGER powers of arclength,
+so the family goes from `{k nu + 2q}` on a straight edge to **`{k nu + m}`** on
+a curved one -- crucially including ODD powers.
+
+### The original substitution fails on that family; t = r^(1/q) fixes it
+
+`t = r^nu` maps `r^m` to `t^(m/nu)` with 1/nu in (1,2) -- only C^1. Measured on
+a realistic five-term corner expansion, order needed to reach 1e-13:
+
+    alpha       straight             curved
+              sub=nu  sub=1/q     sub=nu  sub=1/q
+    3/2 pi       4       8         never     6
+    5/4 pi      54      10         never     8
+    7/4 pi      28      14         never    10
+    11/6 pi     32      16         never    14
+
+"never" = no order up to 64 got there. Substituting **t = r^(1/q) where
+nu = p/q in lowest terms** maps `{k nu + m}` to `{k p + m q}` -- all integers --
+and is exact by order 6-14. It also covers the straight family, so one rule
+serves straight edges, curved edges, and corners where one of each meets. The
+only case sub=nu wins is alpha=3pi/2 (4 nodes vs 8), not worth a second code
+path.
+
+This also retires the claim from the Stage 1 notes that alpha=3pi/2 is the only
+spectral reentrant angle. That was true *under sub=nu*. Under sub=1/q every
+corner whose angle is a rational multiple of pi is exact.
+
+### Open problem: on arc-arc corners nu is generically IRRATIONAL
+
+Built `peanut` (union of two overlapping disks) as the natural curved singular
+corner -- two arcs meeting at a reentrant angle, two such corners. It works, but:
+
+    rho=0.6 d=1.2  ->  alpha = 1.521236 pi,  nu = 0.657360
+    rho=0.8 d=1.0  ->  alpha = 1.369010 pi,  nu = 0.730455
+
+The angle is *determined by the circle geometry*, not chosen, so nu is
+irrational and there is no p/q to substitute. `corner_substitution` correctly
+reports `exact=False` and falls back to sub=nu, which on a curved family means
+~1e-8 at order 32 and never 1e-13. **This is the generic case for curved
+domains, and it is unsolved.** Polygons escape it only because their angles are
+rational multiples of pi by design.
+
+Note the mechanism is NOT the catastrophic nu-sensitivity from
+docs/corner_quadrature.tex Sec. 4. That one is about the *singular* exponent
+gamma = 2nu-2 being wrong, and it costs four digits for a 3e-4 error. Here gamma
+still uses the exact nu; only the substitution's rationalization of the *smooth*
+remainder is imperfect, which is a far more benign failure. The two must not be
+conflated.
+
+The promising fix is to stop insisting on a monomial substitution and build the
+rule directly for the known exponent set: the moments of `{t^(k nu + m)}` are
+just `1/(gamma + k nu + m + 1)`, so an interpolatory (or moment-based
+generalized Gauss) rule on that set is a linear solve, exact for irrational nu
+too. Untested.
+
+### Two incidental findings
+
+- **A circular arc's arclength parametrization is machine-exact** (1.7e-16 for
+  |dp/dtau| vs seg.len) at *any* `tol`, because its arclength map is linear.
+  My earlier claim that curved segments are capped near `tol` (1e-4) was wrong
+  and is retracted; the quality is a property of the curve, so
+  `_parametrization_quality` measures it instead of assuming a budget. A curve
+  with varying speed (ellipse) is a separate question, still unmeasured --
+  building one at tol=1e-12 did not finish.
+- **A self-intersecting boundary makes `Domain()` hang, not raise.** Picking the
+  wrong arc of the small circle sent the CCW/polyline machinery into a spin with
+  `val_simple=False`. `peanut` now asserts closure and that each arc stays
+  outside the other disk. Worth a real guard in `geometry` eventually.
+
+### Irrational nu resolved: an interpolatory rule on the true exponent set
+
+The open problem above (arc-arc corners have irrational nu, so no monomial
+substitution rationalizes {j nu + m}) is closed. The exponent set is *known*
+even when irrational, and its moments are closed-form, `int_0^1 t^e dt =
+1/(e+1)` -- so fix the nodes and solve for weights that integrate that set
+exactly. `quad.cached_cornerinterpgauss`.
+
+    order            8       12       16       24       32
+    interpolatory 1.4e-4  1.5e-6  2.7e-9  6.8e-13  8.1e-14
+    substitution  5.1e-6  1.0e-6  3.3e-7  6.7e-8   2.1e-8
+
+(nu = 0.65736, the peanut's corner.) It *loses* below order ~12 and wins by five
+orders at 24. So order >= 16 is the usable range, which Stage 3's sizing has to
+know.
+
+**The conditioning trap, and the fix.** Solving the square system (as many
+exponents as nodes) is the obvious construction and it is a trap: exact on the
+span, but cond(V) reaches 1e13 at order 12 and 1e19 at order 16, with weights
+growing to -1e4. `sum|w|` is the factor by which a rule amplifies roundoff in
+its integrand, so that is a ~1e-12 floor imported for free. Taking `n_exp <
+order` -- a minimum-norm least-squares solve instead -- keeps **sum|w| = 1.0**
+while retaining exactness on the exponent set:
+
+    order  n_exp   sum|w|   in-span err
+       12     12    2.1e2     6.6e-15      <- exact but ill-conditioned
+       16     16    6.9e3     3.0e-13
+       16     10    1.0e0     2.0e-15      <- exact AND well-conditioned
+       24     14    1.0e0     7.8e-13
+
+`n_exp >= order` now raises rather than being available as a footgun.
+
+**One test of mine was worthless and is worth recording as such.** I measured
+"out-of-span" accuracy by injecting exponents 0.37 and 1.61 and got ~1e-5,
+which looked like a verdict on the rule. It is not: corner asymptotics say the
+exponents present are exactly {gamma + j nu + m}, and for *irrational* nu no two
+(j,m) coincide, so there are no resonances and hence no log terms either. The
+injected exponents do not arise. Irrational nu is the benign case for logs; the
+rational, resonant case is where they appear. The in-span number is the relevant
+one -- but note that rests on the exponent family being right, which is theory
+here and still wants checking against a real curved-corner solution (Leg 3).
+
+### Curved-domain scope, from a measurement that changed my mind twice
+
+Cost and quality of the arclength reparametrization on a varying-speed curve
+(ellipse 2x1), where the whole scheme assumes |dp/dtau| == seg.len:
+
+    tol      build   polyline pts   |dp/dtau| vs seg.len
+    1e-4     0.01s        117            8.6e-03
+    1e-6     0.75s       1273            1.6e-03
+    1e-7     6.56s       3773            6.0e-04
+    1e-8    >30s           --                --
+
+Cost rises ~10x per decade while the error improves only ~2.6x, and it is still
+6e-4 at tol=1e-7. **That is a ~1e-3 floor under any boundary quadrature on such
+a segment**, corner-adapted or not. Circular arcs, by contrast, are machine-exact
+(1.7e-16) at *any* tol because their arclength map is linear.
+
+So my original blanket claim (curved segments capped near 1e-4) was wrong,
+my retraction of it was also too broad, and the truth is that it depends
+entirely on the curve. Scope decision: target straight + circular-arc
+boundaries, where the corner rule's accuracy is actually reachable, and let
+`_parametrization_quality` report when the parametrization -- not the corner
+rule -- is the binding constraint.
+
+Those four wedged 70-minute background jobs were all this: `tol=1e-8` on a
+varying-speed curve, not a hang in the new code.
