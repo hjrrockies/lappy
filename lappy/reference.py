@@ -629,6 +629,50 @@ def rect_eigfun(m, n, L, H, bc='dir'):
     return u, norm2
 
 
+def iso_right_tri_eigfun(m, n, l):
+    """Dirichlet eigenfunction and exact squared L² norm for the isosceles
+    right triangle with legs ``l`` (vertices 0, l, i*l).
+
+    Matches ``lappy.geometry.iso_right_tri(l)``.
+
+    The triangle is the ``l``x``l`` square folded on its diagonal, so its modes
+    are the square's antisymmetrized under ``(x,y) -> (y,x)``::
+
+        u = sin(m pi x/l) sin(n pi y/l) - sin(n pi x/l) sin(m pi y/l),  m > n >= 1
+
+    Norm: the two terms are orthogonal on the square and each integrates to
+    ``l^2/4``, giving ``l^2/2`` there; ``u`` is antisymmetric about the
+    diagonal, so the triangle carries exactly half, ``l^2/4``.
+
+    Returns
+    -------
+    (u, norm2) : callable, float
+    """
+    if not (m > n >= 1):
+        raise ValueError("isosceles right triangle modes require m > n >= 1")
+
+    def u(z):
+        x, y = np.real(z), np.imag(z)
+        return (np.sin(m*np.pi*x/l) * np.sin(n*np.pi*y/l)
+                - np.sin(n*np.pi*x/l) * np.sin(m*np.pi*y/l))
+
+    return u, l**2 / 4
+
+
+def normalized_eigfun(eigfun_result):
+    """Turn a ``(u, norm2)`` pair into an L²(Omega)-orthonormal callable.
+
+    The reference eigenfunctions all return their exact squared norm, so
+    normalization is exact rather than quadrature-based. That matters for
+    validating quadrature: an independently-normalized eigenfunction is a
+    ground truth that ``interior_l2`` and the Rellich identity can be checked
+    *against*, rather than something they define.
+    """
+    u, norm2 = eigfun_result
+    scale = 1.0 / np.sqrt(norm2)
+    return lambda z: scale * u(z)
+
+
 def disk_eigfun(m, n, R, parity='cos'):
     """Dirichlet eigenfunction and exact squared L² norm for a disk of radius R.
 
