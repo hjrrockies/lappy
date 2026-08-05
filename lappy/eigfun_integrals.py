@@ -440,8 +440,10 @@ def boundary_quadrature(domain, lam_max, precision=1e-14, panel_frac=1.0,
             continue
         curved = not sp.straight
         frac = min(panel_frac, 0.5) if _both_ends_singular(specs, sp) else panel_frac
+        seg_len = segs[sp.seg_out].len
         o, ach = corner_order_for_precision(sp.kind, sp.nu, None, sp.sub, curved,
-                                            precision, scale=frac)
+                                            precision, scale=frac,
+                                            k=np.sqrt(max(lam_max, 0.0))*seg_len*frac)
         orders[sp.idx], achieved[sp.idx] = o, ach
 
     # smooth stretches: Nyquist in the segment's own arclength

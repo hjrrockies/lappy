@@ -304,7 +304,7 @@ def cached_cornerinterpgauss(order, nu, gamma=None, n_exp=None, curved=True):
 
 
 @cache
-def corner_rule_residual(kind, order, nu, gamma=None, sub=None, curved=True, n_terms=20):
+def corner_rule_residual(kind, order, nu, gamma=None, sub=None, curved=True, n_terms=None):
     """A-priori error indicator for a corner rule: the largest RELATIVE error it makes on any
     single monomial of the integrand's actual exponent family (`corner_exponents`).
 
@@ -313,11 +313,18 @@ def corner_rule_residual(kind, order, nu, gamma=None, sub=None, curved=True, n_t
     sizing possible here without the calibration machinery `lappy.cubature` needs for its
     interior rule.
 
-    It is an indicator, not a bound on the assembled integral: it takes the max over
-    exponents, weighting none of them by the coefficient it actually carries, so it is
-    systematically PESSIMISTIC (at nu=0.526 it reads 1.3e-6 at order 16 where the measured
-    error on a real eigenfunction is 1.2e-11). Pessimistic is the safe direction -- it
-    over-orders rather than under-delivers -- but do not read it as the achieved accuracy."""
+    `n_terms` must probe beyond the rule's own exactness claim, or the indicator reports
+    machine precision for a rule that is merely being tested on what it integrates exactly:
+    with a fixed 20 terms, order 8 at nu=2/3 read 4.2e-15 while its true error on a sector
+    eigenfunction was 1.5e-10, because all 20 exponents lay inside the exact class. It must
+    also not probe far past the claim, which measures error on high powers carrying negligible
+    real coefficients. The default splits by rule -- see the code.
+
+    It remains an indicator, not a bound on the assembled integral: it takes the max over
+    exponents and weights none of them by the coefficient it actually carries. Empirically it
+    tracks the achieved error to within one or two orders in either direction, so it is a
+    sizing heuristic whose end-to-end accuracy has to be validated separately (see
+    tests/test_eigfun_integrals.py, Leg 1) rather than a certificate."""
     if gamma is None:
         gamma = 2.0*nu - 2.0
     if kind == 'cornerjac':
@@ -326,14 +333,74 @@ def corner_rule_residual(kind, order, nu, gamma=None, sub=None, curved=True, n_t
         tau, w = cached_cornerinterpgauss(order, nu, gamma, None, curved)
     else:
         raise ValueError(f"unknown corner rule {kind!r}")
+    if n_terms is None:
+        # Probe just PAST each rule's own claim, not far past. cached_cornerjacgauss claims
+        # exactness to degree 2*order-1 in tau**sub; cached_cornerinterpgauss claims only its
+        # n_exp = order//2 exponents. Probing a rule far beyond its claim measures its error on
+        # high powers that carry negligible coefficients in the real integrand and makes it look
+        # uselessly bad (cornerinterp read 2.5e-5 at an order that measures 9e-14 end to end).
+        n_terms = (2*order + 8) if kind == 'cornerjac' else (max(2, order//2) + 8)
     E = corner_exponents(nu, gamma, n_terms, curved)
     approx = (w[None, :]*tau[None, :]**E[:, None]).sum(axis=1)
     return float(np.abs(approx*(E + 1.0) - 1.0).max())
 
 
 @cache
+def corner_model_error(kind, order, nu, gamma=None, sub=None, curved=True, k=1.0, n_j=6,
+                       n_m=8):
+    """Relative error of a corner rule on a REPRESENTATIVE model integrand of the corner's
+    class, whose exact integral is closed-form.
+
+    This is the sizing signal, and it replaces a max over unweighted monomials
+    (`corner_rule_residual`), which cannot size `cornerinterp`: that rule's exactness claim
+    grows with its order, so probing a set that also grows with the order measures a moving
+    target and its argmin lands in the wrong place (order 40 where the true error keeps
+    improving to order 64).
+
+    The model mirrors the real structure. On an edge leaving the corner,
+    du/dn = r^(nu-1) F(r) with F a series whose Bessel factors contribute (k r/2)^(2q)/(q!)^2,
+    so the coefficients decay factorially and the high powers that an unweighted max
+    over-weights are in fact negligible. The model integrand is
+
+        s^gamma * (sum_j a_j s^(j nu))^2 * (sum_m b_m s^m)
+
+    with a_j, b_m carrying that decay at wavenumber `k = sqrt(lam_max)*panel_arclength`, and
+    m restricted to even powers on a straight edge. Every term integrates in closed form, so
+    the returned error is a genuine relative error on a member of the class -- not a bound over
+    it, but a far better predictor of achieved accuracy than the unweighted max."""
+    if gamma is None:
+        gamma = 2.0*nu - 2.0
+    if kind == 'cornerjac':
+        tau, w = cached_cornerjacgauss(order, nu, gamma, sub)
+    elif kind == 'cornerinterp':
+        tau, w = cached_cornerinterpgauss(order, nu, gamma, None, curved)
+    else:
+        raise ValueError(f"unknown corner rule {kind!r}")
+
+    from math import factorial
+    # radial coefficients: the J_nu series, squared below by the product over (j1, j2)
+    a = np.array([(0.5*k)**(2*q)/factorial(q)**2 for q in range(n_j)])
+    j_exp = np.array([2.0*q for q in range(n_j)])          # powers of s in F beyond s^(nu-1)
+    step = 1 if curved else 2
+    b = np.array([(0.5*k)**m/factorial(m) for m in range(0, n_m, step)])
+    m_exp = np.array([float(m) for m in range(0, n_m, step)])
+
+    terms = {}
+    for a1, e1 in zip(a, j_exp):
+        for a2, e2 in zip(a, j_exp):
+            for bm, em in zip(b, m_exp):
+                e = gamma + e1 + e2 + em
+                terms[e] = terms.get(e, 0.0) + a1*a2*bm
+    E = np.array(sorted(terms))
+    C = np.array([terms[e] for e in E])
+    exact = float(np.sum(C/(E + 1.0)))
+    approx = float(np.sum(C*(w[None, :]*tau[None, :]**E[:, None]).sum(axis=1)))
+    return abs(approx/exact - 1.0)
+
+
+@cache
 def corner_order_for_precision(kind, nu, gamma=None, sub=None, curved=True, precision=1e-14,
-                               scale=1.0, order_min=4, order_max=64, step=2):
+                               scale=1.0, k=1.0, order_min=4, order_max=64, step=2):
     """Smallest order whose `corner_rule_residual` meets `precision`, subject to the
     coordinate-collapse cap. Returns `(order, achieved)`.
 
@@ -347,7 +414,7 @@ def corner_order_for_precision(kind, nu, gamma=None, sub=None, curved=True, prec
     best = (np.inf, order_min)
     for order in range(order_min, max(order_min, min(cap, order_max)) + 1, step):
         try:
-            r = corner_rule_residual(kind, order, nu, gamma, sub, curved)
+            r = corner_model_error(kind, order, nu, gamma, sub, curved, k)
         except (ValueError, np.linalg.LinAlgError):
             continue
         if r <= precision:

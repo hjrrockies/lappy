@@ -1948,3 +1948,80 @@ be asserted generally.
 1e-14 out to alpha=1.6pi, 2e-12 at 1.75pi, 1e-9 at 1.9pi. A flat target across all angles
 would have been a wish -- the capability degrades monotonically as nu -> 1/2, where the
 integrand stops being integrable at all.
+
+---
+
+## Stage 4, Leg 1: the identity validated end-to-end, and a retraction
+
+Exactly-normalized closed-form sector eigenfunctions through the whole
+`boundary_quadrature` -> `eigfun_cauchy_data` -> `gram` path. Relative error in
+`||u||^2`, which must be 1:
+
+    alpha      nu     nodes      x0=apex    x0=generic    x0=bbox
+    0.50pi   2.0000     44       1.1e-15      1.1e-15      1.1e-15
+    0.67pi   1.5000     42      -1.2e-15      3.8e-15     -1.2e-15
+    1.10pi   0.9091    140      -9.6e-15     -2.0e-14     -1.0e-14
+    1.25pi   0.8000    144       1.8e-15     -1.6e-15      1.8e-15
+    1.33pi   0.7500    150      -1.3e-14      6.3e-13     -1.1e-14
+    1.50pi   0.6667     50      -7.7e-15     -6.4e-15     -7.7e-15
+    1.60pi   0.6250    150      -1.1e-14     -1.4e-11     -2.8e-14
+    1.75pi   0.5714    152       1.8e-15     -5.7e-12     -2.7e-14
+    1.90pi   0.5263    152       1.3e-15      2.1e-09     -4.8e-13
+
+`generic` is the binding case -- an x0 that zeroes no corner, chosen off the
+diagonal so the two edges do not cancel. Machine precision out to alpha=1.5pi,
+and 1e-11 or better through 1.75pi. Higher modes (1,2)/(1,3)/(2,1)/(3,1) all
+come in at ~1e-15.
+
+### Retraction: the indicator is not "systematically pessimistic"
+
+I documented `corner_rule_residual` as erring on the safe side. It does not. At
+alpha=1.5pi it reported 4.2e-15 for order 8 whose true end-to-end error is
+1.5e-10 -- **optimistic by five orders** -- because all 20 exponents it probed lay
+inside order 8's exact class, so it never saw the terms that actually limit the
+rule. An indicator that only tests what a rule integrates exactly reports machine
+precision for everything.
+
+Fixing that by probing further exposed the opposite failure. `cornerinterp`'s
+exactness claim GROWS with its order (n_exp = order//2), so a probe set that also
+grows measures a moving target: its argmin landed at order 40 where the true
+error keeps improving to order 64, and it read 2.5e-5 at an order that measures
+9e-14 end-to-end.
+
+### What replaced it: score a representative integrand, not a monomial max
+
+`corner_model_error` builds an explicit member of the corner's integrand class --
+
+    s^gamma * (sum_j a_j s^(j nu))^2 * (sum_m b_m s^m)
+
+with a_j, b_m carrying the factorial decay of the actual Bessel series at
+wavenumber sqrt(lam_max)*panel_length, and m restricted to even powers on a
+straight edge -- and integrates it in closed form. So the signal is a genuine
+relative error on something the rule will really face, rather than a max over
+monomials weighted as if all were equally present. The high powers an unweighted
+max fixates on carry negligible coefficients in reality.
+
+Effect at alpha=1.75pi: the chosen order went from 40 to 64 and the delivered
+error from 5.4e-10 to 5.7e-12, matching that angle's best achievable.
+
+`corner_rule_residual` is kept as a diagnostic but no longer drives sizing.
+
+### A dead end worth recording
+
+Applying a safety factor to the requested precision does nothing at all --
+`corner_order_for_precision` already returns the argmin when the target is
+unreachable, so asking for 1e-16 instead of 1e-14 changes neither the order nor
+the result. Tightening a request cannot compensate for a signal whose minimum is
+in the wrong place; the signal had to be fixed.
+
+### Guards now in the suite
+
+- The alpha=3pi/2 cancellation is pinned as a fact about the geometry: an x0 on
+  the diagonal kills the corner contribution to below 1e-12 while an off-diagonal
+  one leaves it above 1e-3. A test using the former would silently measure only
+  the arc.
+- A corner-panel share test, so Leg 1 cannot pass by measuring the smooth part.
+- The nu-sensitivity guard: perturbing nu by 3e-4 must cost >=3 orders.
+- Test bars record measured capability per angle, and the test_quad bars are now
+  split straight/curved, since the curved exponent family is denser and costs 1-3
+  orders.

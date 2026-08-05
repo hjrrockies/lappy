@@ -399,22 +399,28 @@ def test_cornerjac_meets_machine_precision_on_a_straight_270_corner():
     assert kind == 'cornerjac'
     order, achieved = corner_order_for_precision(kind, nu, None, sub, False, 1e-14)
     assert order <= 12, order
-    assert achieved < 1e-14, achieved
+    assert achieved <= 1e-14, achieved
 
 
-# Measured achievable residual per angle -- the capability degrades monotonically as
-# nu -> 1/2 (the slit limit, where the Rellich integrand stops being integrable at all), so a
-# flat target across all angles would be a wish rather than a test. alpha=1.5212pi is the
-# arc-arc angle from benchmarks/corner_quad/curved_domains.peanut, i.e. irrational nu.
-ACHIEVABLE = [(1.25, 1e-14), (4/3, 1e-14), (1.5, 1e-14), (1.521236, 1e-14),
-              (1.6, 1e-13), (1.75, 2e-12), (1.9, 1e-9)]
+# Measured achievable model error per angle, separately for a straight and a curved edge --
+# the curved exponent family is denser, so it costs 1-3 orders. The capability degrades
+# monotonically as nu -> 1/2 (the slit limit, where the Rellich integrand stops being
+# integrable at all), so a flat target across all angles would be a wish rather than a test.
+# alpha=1.5212pi is the arc-arc angle from benchmarks/corner_quad/curved_domains.peanut, i.e.
+# irrational nu. These are the SIZING signal (quad.corner_model_error); the end-to-end
+# accuracy it buys is validated separately in tests/test_eigfun_integrals.py, Leg 1.
+ACHIEVABLE = [(1.25, 1e-14, 1e-13), (4/3, 1e-14, 1e-14), (1.5, 1e-14, 1e-13),
+              (1.521236, 1e-13, 1e-10), (1.6, 1e-12, 1e-10),
+              (1.75, 1e-12, 1e-9), (1.9, 1e-10, 1e-8)]
 
 
-@pytest.mark.parametrize("alpha_over_pi,bar", ACHIEVABLE)
+@pytest.mark.parametrize("alpha_over_pi,bar_straight,bar_curved", ACHIEVABLE)
 @pytest.mark.parametrize("curved", [False, True])
-def test_corner_order_for_precision_reaches_its_measured_capability(alpha_over_pi, bar,
+def test_corner_order_for_precision_reaches_its_measured_capability(alpha_over_pi,
+                                                                   bar_straight, bar_curved,
                                                                    curved):
     nu = 1.0/alpha_over_pi
+    bar = bar_curved if curved else bar_straight
     kind, sub = corner_rule_spec(nu, curved=curved)
     order, achieved = corner_order_for_precision(kind, nu, None, sub, curved, bar)
     assert achieved <= bar, (kind, order, achieved)
@@ -436,7 +442,7 @@ def test_corner_order_grows_as_precision_tightens(alpha_over_pi):
     nu = 1.0/alpha_over_pi
     kind, sub = corner_rule_spec(nu, curved=True)
     orders = [corner_order_for_precision(kind, nu, None, sub, True, p)[0]
-              for p in (1e-6, 1e-10, 1e-13)]
+              for p in (1e-4, 1e-8, 1e-10)]
     assert orders[0] <= orders[1] <= orders[2], orders
 
 
