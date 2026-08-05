@@ -129,32 +129,50 @@ _CORNER_Q_RTOL = 1e-12  # |nu - p/q| must be this small (relative) to treat nu a
 
 
 @cache
+def corner_rule_spec(nu, curved=True, max_q=_CORNER_MAX_Q, rtol=_CORNER_Q_RTOL):
+    """Which corner rule to use at a corner of exponent nu, and the node-placement exponent.
+
+    Returns `(kind, sub)` with `kind` in {'cornerjac', 'cornerinterp'} and `sub` the
+    substitution exponent used to PLACE the nodes. `sub` is always nu.
+
+    Why not sub = 1/q. Substituting t = tau^(1/q) with nu = p/q rationalizes the full curved
+    exponent family {j nu + m} and is exact to 2e-16 as an abstract rule on [0,1] -- but it is
+    unusable on an actual boundary, because tau = t^q crushes the innermost node as
+    tau_min ~ t_min^q:
+
+        alpha      q    tau_min (order 24)
+        3/2 pi     3      1.4e-08
+        5/4 pi     5      1.1e-10   below the coordinate-collapse floor
+        8/5 pi     8      1.4e-18   "
+        7/4 pi     7      4.7e-19   "
+        11/6 pi   11      1.6e-29   "
+
+    Those nodes round onto the corner itself once mapped through a segment's
+    parametrization, where a basis's 1/r terms are fatal (see `cached_kressgauss`). The
+    interpolatory rule gets the same exactness from its WEIGHTS while taking nodes from the
+    mild sub = nu placement, so tau_min stays at 3.4e-5 to 3.7e-7 and the accuracy survives:
+    0 to 9.7e-14 at order 24 across the same angles. It therefore replaces the large-q
+    substitution entirely.
+
+    That leaves one case where the plain substitution still wins: a STRAIGHT edge whose
+    2/nu is an integer -- among reentrant angles, only alpha = 3pi/2. There the family is the
+    sparser {j nu + 2q}, sub = nu rationalizes it, and order 8 suffices where the
+    interpolatory rule needs 24. `curved=False` selects it."""
+    nu = float(nu)
+    if not curved:
+        two_over_nu = 2.0/nu
+        if abs(two_over_nu - round(two_over_nu)) <= rtol*two_over_nu:
+            return 'cornerjac', nu
+    return 'cornerinterp', nu
+
+
+@cache
 def corner_substitution(nu, max_q=_CORNER_MAX_Q, rtol=_CORNER_Q_RTOL):
-    """Substitution exponent for `cached_cornerjacgauss` at a corner of exponent nu.
-
-    Returns `(sub, exact)`. `sub = 1/q` for nu = p/q in lowest terms, which rationalizes the
-    curved family {k nu + m} -- and hence also the straight family {k nu + 2q} -- so one rule
-    serves straight edges, curved edges, and corners where one of each meets. `exact` is False
-    when nu is not usefully rational, in which case sub falls back to nu: that still removes
-    the leading singularity but leaves a non-polynomial remainder, so convergence is
-    high-order algebraic rather than exact.
-
-    Measured order needed to reach 1e-13 on a realistic corner expansion, sub=nu vs sub=1/q:
-
-        alpha      straight            curved
-        3/2 pi      4  /  8       never  /  6
-        5/4 pi     54  / 10       never  /  8
-        7/4 pi     28  / 14       never  / 10
-        11/6 pi    32  / 16       never  / 14
-
-    "never" means no order up to 64 reached 1e-13 -- on a curved edge sub=nu leaves a t^(1/nu)
-    residual with 1/nu in (1,2), i.e. only C^1. sub=1/q therefore wins everywhere except
-    alpha=3/2 pi (the single angle with 2/nu integral, where sub=nu needs 4 nodes against 8);
-    that 4-node saving is not worth carrying a second code path, so 1/q is used uniformly.
-
-    nu = pi/alpha is rational whenever the domain's angles are rational multiples of pi, which
-    covers essentially every designed geometry. `max_q` bounds how large a denominator is
-    worth the extra polynomial degree (the degree needed scales with p)."""
+    """DIAGNOSTIC ONLY: the rationalizing substitution exponent 1/q for nu = p/q, and whether
+    nu is usefully rational. NOT for node placement -- see `corner_rule_spec` on why t^q
+    crushes the innermost node below the coordinate-collapse floor for q >= 4. Retained
+    because `exact=False` identifies the irrational-nu corners (generic for arc-arc
+    geometry) where no substitution could work even in principle."""
     from fractions import Fraction
     nu = float(nu)
     frac = Fraction(nu).limit_denominator(max_q)
@@ -214,25 +232,37 @@ def cached_cornerjacgauss(order, nu, gamma=None, sub=None):
     return t**(1.0/sub), (W/sub)*t**(1.0/sub - 1.0)
 
 
-def corner_exponents(nu, gamma, n, j_max=None, m_max=None):
+def corner_exponents(nu, gamma, n, curved=True, j_max=None, m_max=None):
     """The integrand's exponent set at a corner, smallest `n` first.
 
     On an edge leaving a corner of exponent nu, a boundary functional's integrand is
-    r^gamma * G(r) with G a series in r^(j nu) (the corner family) times an analytic factor
-    contributing r^m -- so the exponents present are {gamma + j nu + m}, j, m >= 0. Every
-    moment is closed-form, int_0^1 t^e dt = 1/(e+1), which is what makes an interpolatory
-    rule on this set possible even when nu is irrational and no substitution rationalizes it.
+    r^gamma * G(r) with G a series in r^(j nu) (the corner family) times an analytic factor.
+    Which integer powers that analytic factor contributes depends on the edge, and getting
+    it wrong is not a small matter:
 
-    For irrational nu no two (j, m) coincide, so there are no resonances and hence no
-    log terms; the set below is then the complete exponent family."""
+    - `curved=True`:  {gamma + j nu + m}, m any non-negative integer. A curved edge admits ODD
+      powers of arclength, because r.N is not constant along it and r is not arclength.
+    - `curved=False`: {gamma + j nu + 2q}, EVEN powers only. On a straight edge r.N is exactly
+      constant and r is exactly arclength, so the only integer powers come from the Bessel
+      factors' r^(2q).
+
+    Testing a straight-edge rule against the curved set makes it look far worse than it is:
+    at alpha=3pi/2 the substitution rule's residual reads 1e-8 against the curved set while
+    its measured error on a real straight-edge integrand is 2.4e-15.
+
+    Every moment is closed-form, int_0^1 t^e dt = 1/(e+1), which is what makes an
+    interpolatory rule on this set possible even when nu is irrational and no substitution
+    rationalizes it. For irrational nu no two (j, m) coincide, so there are no resonances and
+    hence no log terms; the set is then the complete exponent family."""
     j_max = j_max if j_max is not None else n + 2
     m_max = m_max if m_max is not None else n + 2
-    E = sorted({gamma + j*nu + m for j in range(j_max) for m in range(m_max)})
+    step = 1 if curved else 2
+    E = sorted({gamma + j*nu + m for j in range(j_max) for m in range(0, m_max, step)})
     return np.array(E[:n])
 
 
 @cache
-def cached_cornerinterpgauss(order, nu, gamma=None, n_exp=None):
+def cached_cornerinterpgauss(order, nu, gamma=None, n_exp=None, curved=True):
     """Interpolatory corner rule on [0,1], anchored at tau=0, exact on the corner's ACTUAL
     exponent set -- for use when `corner_substitution` reports no exact substitution exists,
     i.e. when nu is irrational. That is the generic case for a corner between two circular
@@ -267,10 +297,93 @@ def cached_cornerinterpgauss(order, nu, gamma=None, n_exp=None):
                          "ill-conditioned and inflates sum|w| by orders of magnitude (see "
                          "the docstring's table)")
     tau, _ = cached_cornerjacgauss(order, nu, gamma)
-    E = corner_exponents(nu, gamma, n_exp)
+    E = corner_exponents(nu, gamma, n_exp, curved)
     V = tau[None, :]**E[:, None]
     w, *_ = np.linalg.lstsq(V, 1.0/(E + 1.0), rcond=None)
     return tau, w
+
+
+@cache
+def corner_rule_residual(kind, order, nu, gamma=None, sub=None, curved=True, n_terms=20):
+    """A-priori error indicator for a corner rule: the largest RELATIVE error it makes on any
+    single monomial of the integrand's actual exponent family (`corner_exponents`).
+
+    Needs no reference solution and no offline calibration table, because every exponent's
+    moment is closed-form: `int_0^1 t^e dt = 1/(e+1)`. That is what makes precision-driven
+    sizing possible here without the calibration machinery `lappy.cubature` needs for its
+    interior rule.
+
+    It is an indicator, not a bound on the assembled integral: it takes the max over
+    exponents, weighting none of them by the coefficient it actually carries, so it is
+    systematically PESSIMISTIC (at nu=0.526 it reads 1.3e-6 at order 16 where the measured
+    error on a real eigenfunction is 1.2e-11). Pessimistic is the safe direction -- it
+    over-orders rather than under-delivers -- but do not read it as the achieved accuracy."""
+    if gamma is None:
+        gamma = 2.0*nu - 2.0
+    if kind == 'cornerjac':
+        tau, w = cached_cornerjacgauss(order, nu, gamma, sub)
+    elif kind == 'cornerinterp':
+        tau, w = cached_cornerinterpgauss(order, nu, gamma, None, curved)
+    else:
+        raise ValueError(f"unknown corner rule {kind!r}")
+    E = corner_exponents(nu, gamma, n_terms, curved)
+    approx = (w[None, :]*tau[None, :]**E[:, None]).sum(axis=1)
+    return float(np.abs(approx*(E + 1.0) - 1.0).max())
+
+
+@cache
+def corner_order_for_precision(kind, nu, gamma=None, sub=None, curved=True, precision=1e-14,
+                               scale=1.0, order_min=4, order_max=64, step=2):
+    """Smallest order whose `corner_rule_residual` meets `precision`, subject to the
+    coordinate-collapse cap. Returns `(order, achieved)`.
+
+    Scans rather than extrapolating, because accuracy is NOT monotone in order: past a
+    nu-dependent threshold the integrand's dynamic range (tau**(2nu-2) is ~6e8 at tau~1e-9
+    against a correspondingly tiny weight) makes roundoff dominate, so "raise the order until
+    the target is met" walks past the optimum and returns a WORSE rule. When no order meets
+    `precision`, the argmin is returned together with what it actually achieves, so the caller
+    can report the shortfall instead of silently missing the target."""
+    cap = cornerjac_order_cap(nu, gamma, sub, scale=scale, order_max=order_max)
+    best = (np.inf, order_min)
+    for order in range(order_min, max(order_min, min(cap, order_max)) + 1, step):
+        try:
+            r = corner_rule_residual(kind, order, nu, gamma, sub, curved)
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        if r <= precision:
+            return order, r
+        if r < best[0]:
+            best = (r, order)
+    return best[1], best[0]
+
+
+@cache
+def smooth_order_for_precision(k, precision=1e-14, order_min=4, order_max=512, step=2):
+    """Smallest Gauss-Legendre order integrating exp(i k tau) on [0,1] to `precision`.
+
+    Self-certifying in the same spirit as `corner_rule_residual`: the model integrand's
+    integral is closed-form, so the rule's error on it is computable directly rather than
+    estimated from an asymptotic (kL/4n)^(2n) formula. `k` is the integrand's wavenumber --
+    for a product of two eigenfunctions with eigenvalue up to lam_max that is
+    2*sqrt(lam_max)*arclength, since the product oscillates at twice the wavenumber of
+    either factor.
+
+    The error is measured ABSOLUTELY against a unit-magnitude integrand on a unit-measure
+    interval, not relative to the integral's own value. That value is ~2/k for large k, so a
+    relative criterion would demand ~1e-16 absolute at k=100 -- below the roundoff floor of
+    the sum -- and the scan would run to `order_max` chasing something unattainable. What
+    matters for a panel whose contribution is summed with others is its absolute error against
+    the total measure, which is what this returns."""
+    if k <= 0:
+        return order_min, 0.0
+    exact = (np.exp(1j*k) - 1.0)/(1j*k)
+    for order in range(order_min, order_max + 1, step):
+        tau, w = cached_leggauss(order)
+        err = abs(np.sum(w*np.exp(1j*k*tau)) - exact)
+        if err <= precision:
+            return order, float(err)
+    tau, w = cached_leggauss(order_max)
+    return order_max, float(abs(np.sum(w*np.exp(1j*k*tau)) - exact))
 
 
 @cache

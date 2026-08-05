@@ -78,8 +78,10 @@ import warnings
 import numpy as np
 import scipy.linalg as la
 
-from .quad import (cached_leggauss, cached_cornerjacgauss, cornerjac_order_cap,
-                   corner_substitution, _CORNER_NU_MIN, _CORNER_MAX_Q)
+from .quad import (cached_leggauss, cached_cornerjacgauss, cached_cornerinterpgauss,
+                   cornerjac_order_cap, corner_rule_spec, corner_substitution,
+                   corner_order_for_precision, smooth_order_for_precision,
+                   _CORNER_NU_MIN, _CORNER_MAX_Q)
 from .geometry import PointSet
 from .utils import complex_dot
 
@@ -88,7 +90,7 @@ from .utils import complex_dot
 # digits (docs/corner_quadrature.tex Sec. 4). `seg_out` leaves the corner (distance from it is
 # seg.len*tau), `seg_in` arrives (distance is seg.len*(1-tau)).
 CornerSpec = namedtuple('CornerSpec',
-                        ['idx', 'point', 'alpha', 'nu', 'sub', 'sub_exact', 'straight',
+                        ['idx', 'point', 'alpha', 'nu', 'kind', 'sub', 'rational', 'straight',
                          'seg_out', 'seg_in', 'singular', 'admissible', 'reason'])
 
 # One quadrature panel on one segment. `tau0` is ALWAYS the corner-anchored end, so tau1 < tau0
@@ -96,7 +98,11 @@ CornerSpec = namedtuple('CornerSpec',
 # orientation and only |h| scales the weights. `corner` is the CornerSpec index, or -1.
 CornerPanel = namedtuple('CornerPanel',
                          ['seg_idx', 'tau0', 'tau1', 'rule', 'order', 'nu', 'gamma', 'sub',
-                          'corner'])
+                          'curved', 'corner'])
+# `rule` is 'legendre' (smooth stretch), 'cornerjac' (substitution; exact only for a straight
+# edge with 2/nu integral) or 'cornerinterp' (interpolatory on the true exponent set; the
+# general case, and the only one usable at large q or irrational nu -- see
+# quad.corner_rule_spec).
 
 # Geometry-only boundary quadrature: no domain reference, no lam dependence, no basis. Built
 # once, reused across every lam. `panel_id` gives each node's index into `panels`, which is what
@@ -191,19 +197,11 @@ def corner_specs(domain):
             reason = (f"bc_type={segs[seg_out].bc_type!r}: only Dirichlet corners are wired; "
                       "a Neumann corner's 'uv' and 'TT' kernels need different exponents")
 
-        sub, sub_exact = corner_substitution(nu)
         straight = _is_straight(segs[seg_out]) and _is_straight(segs[seg_in])
-        if reason == '' and not sub_exact:
-            # nu irrational (alpha not a rational multiple of pi): the rule still removes the
-            # leading singularity but is no longer exact on the corner family. Admissible --
-            # high-order algebraic beats a truncated graded rule -- but flagged.
-            reason = (f'nu={nu:.6f} is not a rational p/q with q<={_CORNER_MAX_Q}, so the '
-                      'substitution leaves a non-polynomial remainder (algebraic convergence)')
-            specs.append(CornerSpec(c, complex(corners[c]), alpha, nu, sub, False, straight,
-                                    seg_out, seg_in, singular, True, reason))
-            continue
-        specs.append(CornerSpec(c, complex(corners[c]), alpha, nu, sub, sub_exact, straight,
-                                seg_out, seg_in, singular, reason == '', reason))
+        kind, sub = corner_rule_spec(nu, curved=not straight)
+        _, rational = corner_substitution(nu)
+        specs.append(CornerSpec(c, complex(corners[c]), alpha, nu, kind, sub, rational,
+                                straight, seg_out, seg_in, singular, reason == '', reason))
     return specs
 
 
@@ -212,7 +210,7 @@ def singular_corner_report(domain):
     the rest. Cheap to call and the first thing to look at when accuracy disappoints."""
     lines = []
     for s in corner_specs(domain):
-        tag = 'corner-jac' if s.admissible else ('SMOOTH' if not s.singular else 'FALLBACK')
+        tag = s.kind if s.admissible else ('SMOOTH' if not s.singular else 'FALLBACK')
         lines.append(f"  corner {s.idx:2d} at {s.point:+.4g} alpha={s.alpha/np.pi:.4f}pi "
                      f"nu={s.nu:.5f} -> {tag}" + (f"  [{s.reason}]" if s.reason else ""))
     return "\n".join(lines)
@@ -259,24 +257,24 @@ def corner_panels(domain, specs=None, order_corner=16, order_smooth=16, gamma=No
                 order = min(order, cornerjac_order_cap(spec.nu, gamma, spec.sub, scale=frac))
             order = max(order, 2)
             t0, t1 = (0.0, frac) if anchor_at_start else (1.0, 1.0 - frac)
-            return CornerPanel(i, t0, t1, 'cornerjac', order, spec.nu, gamma, spec.sub,
-                               spec.idx), frac
+            return CornerPanel(i, t0, t1, spec.kind, order, spec.nu, gamma, spec.sub,
+                               not spec.straight, spec.idx), frac
 
         if s0 is None and s1 is None:
             panels.append(CornerPanel(i, 0.0, 1.0, 'legendre', order_smooth,
-                                      np.nan, None, np.nan, -1))
+                                      np.nan, None, np.nan, False, -1))
         elif s0 is not None and s1 is None:
             p, frac = corner_panel(s0, True, panel_frac)
             panels.append(p)
             if frac < 1.0:
                 panels.append(CornerPanel(i, frac, 1.0, 'legendre', order_smooth,
-                                          np.nan, None, np.nan, -1))
+                                          np.nan, None, np.nan, False, -1))
         elif s1 is not None and s0 is None:
             p, frac = corner_panel(s1, False, panel_frac)
             panels.append(p)
             if frac < 1.0:
                 panels.append(CornerPanel(i, 0.0, 1.0 - frac, 'legendre', order_smooth,
-                                          np.nan, None, np.nan, -1))
+                                          np.nan, None, np.nan, False, -1))
         else:
             # Both endpoints singular. The substitution anchors at one end only, so the edge
             # MUST split -- this is the case a single-corner domain never exercises.
@@ -286,7 +284,7 @@ def corner_panels(domain, specs=None, order_corner=16, order_smooth=16, gamma=No
             panels.append(p1)
             if f0 + f1 < 1.0 - 1e-12:
                 panels.append(CornerPanel(i, f0, 1.0 - f1, 'legendre', order_smooth,
-                                          np.nan, None, np.nan, -1))
+                                          np.nan, None, np.nan, False, -1))
     return panels
 
 
@@ -295,6 +293,9 @@ def _panel_rule(panel):
         return cached_leggauss(panel.order)
     if panel.rule == 'cornerjac':
         return cached_cornerjacgauss(panel.order, panel.nu, panel.gamma, panel.sub)
+    if panel.rule == 'cornerinterp':
+        return cached_cornerinterpgauss(panel.order, panel.nu, panel.gamma,
+                                        None, panel.curved)
     raise ValueError(f"unknown panel rule {panel.rule!r}")
 
 
@@ -409,3 +410,75 @@ def lowdin_transform(G, ttol=1e-3):
                       "multiplicity. Falling back to un-orthonormalized values.")
         return None
     return (Q*w**-0.5)@Q.T
+
+
+def boundary_quadrature(domain, lam_max, precision=1e-14, panel_frac=1.0,
+                        clearance_frac=None, warn=True):
+    """The entry point: a boundary node set for `domain`, accurate to `precision` for
+    eigenfunctions up to spectral parameter `lam_max`.
+
+    No basis, and none of the tuning knobs the graded rule required -- the node set is a pure
+    function of geometry, `lam_max` and the requested accuracy, so it can be built once and
+    reused for every lam in a search. Sizing is self-certifying rather than calibrated
+    offline: every panel's rule is scored against a model integrand whose integral is
+    closed-form (`quad.corner_rule_residual` on the corner's own exponent set,
+    `quad.smooth_order_for_precision` on exp(i k tau)), so `precision` is honoured directly.
+
+    Where a corner cannot reach `precision` -- a near-slit nu, or the coordinate-collapse
+    order cap binding first -- the best achievable order is used and a warning names the
+    corner and what it actually achieved, rather than silently missing the target. The
+    achieved value is recorded in the returned `BoundaryQuad.precision`.
+    """
+    specs = corner_specs(domain)
+    segs = domain.bdry.segments
+    k = 2.0*np.sqrt(max(lam_max, 0.0))     # a PRODUCT of eigenfunctions oscillates at 2*sqrt(lam)
+
+    # per-corner order, from the corner's own exponent set
+    orders, achieved = {}, {}
+    for sp in specs:
+        if not (sp.singular and sp.admissible):
+            continue
+        curved = not sp.straight
+        frac = min(panel_frac, 0.5) if _both_ends_singular(specs, sp) else panel_frac
+        o, ach = corner_order_for_precision(sp.kind, sp.nu, None, sp.sub, curved,
+                                            precision, scale=frac)
+        orders[sp.idx], achieved[sp.idx] = o, ach
+
+    # smooth stretches: Nyquist in the segment's own arclength
+    smooth_orders, smooth_ach = {}, {}
+    for i, seg in enumerate(segs):
+        o, ach = smooth_order_for_precision(k*seg.len, precision)
+        smooth_orders[i], smooth_ach[i] = o, ach
+
+    panels = []
+    for p in corner_panels(domain, specs, order_corner=1, order_smooth=1,
+                           panel_frac=panel_frac, clearance_frac=clearance_frac,
+                           order_cap=False):
+        if p.rule == 'legendre':
+            panels.append(p._replace(order=smooth_orders[p.seg_idx]))
+        else:
+            panels.append(p._replace(order=orders.get(p.corner, 16)))
+    bq = assemble_panels(domain, panels,
+                         precision=max([precision] + list(achieved.values())
+                                       + list(smooth_ach.values())))
+
+    if warn:
+        short = {c: a for c, a in achieved.items() if a > precision}
+        if short:
+            msg = "; ".join(f"corner {c} at {specs[c].point:+.4g} "
+                            f"(nu={specs[c].nu:.4f}) reached only {a:.2e}"
+                            for c, a in short.items())
+            warnings.warn(f"boundary_quadrature could not reach precision={precision:.1e}: "
+                          f"{msg}. Achieved {bq.precision:.2e} overall.")
+        fallback = [s for s in specs if s.singular and not s.admissible]
+        if fallback:
+            warnings.warn("singular corners on a smooth rule: "
+                          + "; ".join(f"corner {s.idx} ({s.reason})" for s in fallback))
+    return bq
+
+
+def _both_ends_singular(specs, spec):
+    """Does the segment leaving `spec`'s corner also END at an admissible singular corner?
+    Such an edge must split, since a corner panel anchors at one endpoint only."""
+    at_end = {s.seg_in for s in specs if s.admissible and s.singular}
+    return spec.seg_out in at_end

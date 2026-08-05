@@ -1870,3 +1870,81 @@ rule -- is the binding constraint.
 
 Those four wedged 70-minute background jobs were all this: `tol=1e-8` on a
 varying-speed curve, not a hang in the new code.
+
+---
+
+## Stage 2-3: one rule, self-certifying sizing, and a trap in the substitution
+
+### sub = 1/q is exact and unusable; the interpolatory rule replaces it
+
+The substitution `t = tau^(1/q)` rationalizes the full curved exponent family and is exact
+to 2e-16 as an abstract rule on [0,1]. On an actual boundary it is unusable, because
+`tau = t^q` crushes the innermost node as `tau_min ~ t_min^q`:
+
+    alpha      q    tau_min at order 24
+    3/2 pi     3      1.4e-08
+    5/4 pi     5      1.1e-10   below the coordinate-collapse floor
+    8/5 pi     8      1.4e-18   "
+    7/4 pi     7      4.7e-19   "
+    11/6 pi   11      1.6e-29   "
+
+Those nodes round onto the corner once mapped through a segment's parametrization. The
+interpolatory rule gets the same exactness from its WEIGHTS while taking nodes from the mild
+`sub = nu` placement, so `tau_min` stays at 3.4e-5 to 3.7e-7 and the accuracy survives:
+0 to 9.7e-14 at order 24 over the same angles. It replaces the large-q substitution outright.
+
+So the design collapses to one rule, plus one cheap special case: a STRAIGHT edge with
+2/nu integral (among reentrant angles, only alpha = 3pi/2) keeps the plain substitution,
+where order 8 does what the interpolatory rule needs 24 for.
+
+### Sizing certifies itself -- no offline calibration table
+
+Stage 0 established that accuracy is non-monotone in order, so "raise the order until the
+target is met" returns a *worse* rule. The plan was to follow
+`cubature._choose_corner_rule`'s offline-calibrated curve. That turned out to be unnecessary:
+every exponent's moment is closed-form, `int_0^1 t^e dt = 1/(e+1)`, so the rule can be scored
+directly against its own integrand class with no reference solve and no stored table
+(`quad.corner_rule_residual`). Smooth panels get the same treatment against exp(i k tau)
+(`smooth_order_for_precision`). `corner_order_for_precision` then scans and returns the
+smallest qualifying order, or the argmin plus what it actually achieved.
+
+The indicator is deliberately pessimistic -- it takes the max over exponents, weighting none
+by the coefficient it really carries (at nu=0.526 it reads 1.3e-6 at order 16 where the
+measured error on a real eigenfunction is 1.2e-11). That is the safe direction, but it is not
+the achieved accuracy and must not be quoted as such.
+
+### The edge-type bug this exposed, which was worth more than the indicator
+
+Scored against the CURVED exponent set, the substitution rule at alpha=3pi/2 read 1e-8 and
+the sizing rejected it outright -- flatly contradicting Stage 0's measured 2.4e-15 on a real
+sector. The cause: a straight edge admits only EVEN integer powers (r.N is exactly constant
+and r is exactly arclength), so `{gamma + j nu + 2q}`; the odd powers exist only on a curved
+edge. Testing a straight-edge rule against the curved set understates it by seven orders.
+`corner_exponents` now takes `curved`, and alpha=3pi/2 straight returns order 8 at 4.2e-15,
+matching the measurement.
+
+### boundary_quadrature: the whole point of the exercise
+
+    domain          precision   nodes   achieved
+    rect              1e-14        88    1.0e-14
+    L_shape           1e-14       104    1.0e-14
+    H_shape           1e-14       200    1.0e-14     <- FOUR reentrant corners
+    sector 1.5pi      1e-14        58    1.0e-14
+    peanut            1e-14       184    1.0e-14     <- two arc-arc corners, irrational nu
+
+No basis, no `mult`/`margin`/`q_min`/`q_max`/`c_lam`/`beta`. H_shape -- the domain that
+motivated all of this, and where no single x0 can zero more than one corner -- reaches 1e-14
+in 200 nodes.
+
+`sum(wts)` matches the perimeter to ~1e-14 on the polygons but only to 2e-6 on `peanut`.
+That is correct, not a defect: the interpolatory rule is exact on `{gamma + j nu + m}`, which
+does not contain `t^0`, so it does not integrate constants. `sum(wts) == perimeter` is
+therefore an invariant only where every corner panel uses the substitution rule, and must not
+be asserted generally.
+
+### Test bars now encode measured capability, not aspiration
+
+`ACHIEVABLE` in tests/test_quad.py records the residual actually reachable per angle:
+1e-14 out to alpha=1.6pi, 2e-12 at 1.75pi, 1e-9 at 1.9pi. A flat target across all angles
+would have been a wish -- the capability degrades monotonically as nu -> 1/2, where the
+integrand stops being integrable at all.

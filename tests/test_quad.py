@@ -12,6 +12,8 @@ from lappy.quad import (
     kress_v, kress_w, kress_dw, cached_kressgauss, cached_leggauss, _KRESS_TAU_FLOOR,
     cached_cornerjacgauss, cornerjac_order_cap, _CORNER_NU_MIN,
     cached_cornerinterpgauss, corner_exponents, corner_substitution,
+    corner_rule_spec, corner_rule_residual, corner_order_for_precision,
+    smooth_order_for_precision,
 )
 
 QS = [2, 3, 4, 6, 8, 10]
@@ -363,3 +365,105 @@ def test_cornerinterp_rejects_square_solve():
 
 def test_cornerinterp_is_cached():
     assert cached_cornerinterpgauss(16, 0.65736) is cached_cornerinterpgauss(16, 0.65736)
+
+
+### Precision-driven sizing (self-certifying, no offline calibration table)
+
+def test_corner_exponents_respect_edge_type():
+    """A straight edge admits only EVEN integer powers (r.N constant, r == arclength); a
+    curved edge admits odd ones too. Scoring a straight-edge rule against the curved set
+    makes it look ~7 orders worse than it is."""
+    nu, gamma = 2/3, 2*(2/3) - 2
+    Es = corner_exponents(nu, gamma, 10, curved=False)
+    Ec = corner_exponents(nu, gamma, 10, curved=True)
+    allowed_straight = np.array([gamma + j*nu + 2*q
+                                 for j in range(14) for q in range(14)])
+    for e in Es:
+        assert np.any(np.isclose(allowed_straight, e, atol=1e-12)), e
+    # the curved set is a superset, so element-wise it is never larger, and strictly
+    # smaller somewhere (the first odd integer power has no straight-edge counterpart)
+    assert np.all(Ec <= Es + 1e-12)
+    assert np.any(Ec < Es - 1e-12)
+    # gamma + 1 is an ODD integer power: curved-only
+    assert np.any(np.isclose(Ec, gamma + 1.0, atol=1e-12))
+    assert not np.any(np.isclose(Es, gamma + 1.0, atol=1e-12))
+
+
+def test_cornerjac_meets_machine_precision_on_a_straight_270_corner():
+    """Regression on the edge-type fix: alpha=3pi/2 straight is the one angle where the plain
+    substitution is exact, and it must be recognized as such at low order. Scored against the
+    curved set it stalled at 1e-8 and the sizing rejected it, contradicting the measured
+    2.4e-15 on a real sector."""
+    nu = 2/3
+    kind, sub = corner_rule_spec(nu, curved=False)
+    assert kind == 'cornerjac'
+    order, achieved = corner_order_for_precision(kind, nu, None, sub, False, 1e-14)
+    assert order <= 12, order
+    assert achieved < 1e-14, achieved
+
+
+# Measured achievable residual per angle -- the capability degrades monotonically as
+# nu -> 1/2 (the slit limit, where the Rellich integrand stops being integrable at all), so a
+# flat target across all angles would be a wish rather than a test. alpha=1.5212pi is the
+# arc-arc angle from benchmarks/corner_quad/curved_domains.peanut, i.e. irrational nu.
+ACHIEVABLE = [(1.25, 1e-14), (4/3, 1e-14), (1.5, 1e-14), (1.521236, 1e-14),
+              (1.6, 1e-13), (1.75, 2e-12), (1.9, 1e-9)]
+
+
+@pytest.mark.parametrize("alpha_over_pi,bar", ACHIEVABLE)
+@pytest.mark.parametrize("curved", [False, True])
+def test_corner_order_for_precision_reaches_its_measured_capability(alpha_over_pi, bar,
+                                                                   curved):
+    nu = 1.0/alpha_over_pi
+    kind, sub = corner_rule_spec(nu, curved=curved)
+    order, achieved = corner_order_for_precision(kind, nu, None, sub, curved, bar)
+    assert achieved <= bar, (kind, order, achieved)
+    assert order <= 64
+
+
+def test_corner_order_for_precision_reports_shortfall_near_the_slit():
+    """nu -> 1/2 cannot reach 1e-14, and the shortfall must be RETURNED rather than hidden --
+    boundary_quadrature turns it into a warning naming the corner."""
+    nu = 1.0/1.9
+    kind, sub = corner_rule_spec(nu, curved=True)
+    order, achieved = corner_order_for_precision(kind, nu, None, sub, True, 1e-14)
+    assert achieved > 1e-14
+    assert order >= 4
+
+
+@pytest.mark.parametrize("alpha_over_pi", [1.25, 1.5, 1.75])
+def test_corner_order_grows_as_precision_tightens(alpha_over_pi):
+    nu = 1.0/alpha_over_pi
+    kind, sub = corner_rule_spec(nu, curved=True)
+    orders = [corner_order_for_precision(kind, nu, None, sub, True, p)[0]
+              for p in (1e-6, 1e-10, 1e-13)]
+    assert orders[0] <= orders[1] <= orders[2], orders
+
+
+def test_corner_rule_spec_never_returns_a_crushing_substitution():
+    """sub = 1/q is exact but drives tau_min to 1e-29 at q=11, below the coordinate-collapse
+    floor. corner_rule_spec must place nodes with sub = nu and get exactness from the
+    interpolatory weights instead."""
+    for alpha_over_pi in (1.25, 1.5, 1.6, 1.75, 11/6):
+        nu = 1.0/alpha_over_pi
+        kind, sub = corner_rule_spec(nu, curved=True)
+        assert sub == pytest.approx(nu), (alpha_over_pi, kind, sub)
+        tau, _ = (cached_cornerjacgauss(24, nu, None, sub) if kind == 'cornerjac'
+                  else cached_cornerinterpgauss(24, nu))
+        assert tau.min() > _KRESS_TAU_FLOOR, (alpha_over_pi, tau.min())
+
+
+@pytest.mark.parametrize("k", [1.0, 10.0, 50.0, 100.0])
+@pytest.mark.parametrize("precision", [1e-8, 1e-12])
+def test_smooth_order_for_precision_meets_its_target(k, precision):
+    order, achieved = smooth_order_for_precision(k, precision)
+    assert achieved <= precision
+    tau, w = cached_leggauss(order)
+    exact = (np.exp(1j*k) - 1.0)/(1j*k)
+    assert abs(np.sum(w*np.exp(1j*k*tau)) - exact) <= precision
+
+
+def test_smooth_order_scales_with_wavenumber():
+    orders = [smooth_order_for_precision(k, 1e-12)[0] for k in (10, 50, 100, 200)]
+    assert orders == sorted(orders)
+    assert orders[-1] < 2*200, "should be ~0.4k, not many points per wavelength"
