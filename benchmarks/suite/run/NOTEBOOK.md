@@ -1386,3 +1386,44 @@ was less accurate than the thing being measured. Worth remembering that
 `rect_eigs`/`eq_tri_eigs`/`iso_right_tri_eigs` are closed-form and exact, while
 anything routed through a numerical root-find (sector, disk) is only as good as
 that root-find.
+
+### Rellich normalization validated on the reentrant sectors
+
+Fed exactly-normalized closed-form eigenfunctions to the Dirichlet Rellich
+identity, `||u||^2 = (1/2 lam) * integral rN (du/dn)^2 ds`, and checked it
+returns 1.
+
+    case                nu              ||u||^2          error
+    rect (control)      --          0.9999999999      8.6e-11
+    reflex m=2,n=1      4/3         1.000000000000    4.7e-15
+    slit   m=2,n=1      1.008       1.000000000000    3.0e-15
+    reflex m=1,n=1      2/3         1.000000218       2.2e-07
+    reflex m=1,n=2      2/3         1.000000270       2.7e-07
+    slit   m=1,n=1      0.504       1.000164986       1.6e-04
+    slit   m=1,n=2      0.504       1.000165883       1.7e-04
+
+**Machine-exact whenever nu >= 1; degrades exactly when nu < 1**, where
+`du/dn ~ r^(nu-1)` is singular (though square-integrable). The error tracks the
+exponent: nu=2/3 -> 2e-7, nu=0.504 -> 1.6e-4.
+
+The sharp part: `m=2` on the *same domain* is machine-exact while `m=1` is not.
+So the identity and its implementation are right, and the graded quadrature is
+adequate for regular modes but not for singular ones. `build_rellich_data`
+builds its node set once from `lam_max` and reuses it for every mode, so the
+grading is not adapted to the exponent the mode actually has.
+
+**Consequence for certify.py (task 17): do not switch unconditionally.** Rellich
+would give ~1e-7 on sector_reflex and ~1e-4 on sector_slit, *worse* than the
+cubature it would replace (which agreed with Rellich to 6-7 digits on the same
+domain, and is not sensitive to the corner exponent at all). The sensible use is
+as a **cross-check** -- two independent norms that should agree, with
+disagreement flagging trouble -- or switched in only where the domain has no
+reentrant corner.
+
+**Test-method note.** My first attempt computed `du/dn` by central differences
+along the normal and returned *negative* norms of order 1e6. Near the apex the
+graded nodes sit at r < 1e-6, so an h=1e-6 step crosses to the other side of the
+corner, where `arg(z)` jumps by ~2pi and `sin(nu theta)` lands on a different
+branch. The control (rect) was unaffected and passed at 8.6e-11, which is what
+identified the fault as mine rather than Rellich's. Analytic gradients are
+mandatory for this test.
