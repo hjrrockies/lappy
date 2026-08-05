@@ -125,11 +125,34 @@ def assemble(domain, panels, gamma=None):
             np.concatenate(W), np.concatenate(PID))
 
 
-def kress_reference(domain, basis, lam_max, **kw):
-    """The current production rule, for side-by-side comparison."""
-    from lappy.cauchy import build_boundary_quadrature
-    pts, nrm, tng, wts, _, _ = build_boundary_quadrature(domain, basis, lam_max, **kw)
-    return pts, nrm, tng, wts, np.zeros(len(pts))
+def kress_reference(domain, basis, lam_max, mult=2, min_per_seg=4, margin=2.0, q=8,
+                    c_lam=1.0, **kw):
+    """The RETIRED Kress-graded rule, reconstructed here so the Stage 0 comparison in
+    stage0_sector.py stays runnable after lappy.cauchy was deleted.
+
+    Not a re-implementation of anything live: one Kress-graded Gauss-Legendre rule per segment,
+    graded at the same order toward BOTH endpoints (the limitation that motivated the
+    replacement), with the point count sized from basis size and lam as
+    cauchy.graded_pts_per_seg did."""
+    from lappy.quad import cached_kressgauss, cached_leggauss
+    segs = domain.bdry.segments
+    seg_lens = np.array([sg.len for sg in segs])
+    base_n = mult*len(basis)*seg_lens/seg_lens.sum()
+    lam_n = c_lam*np.sqrt(lam_max)*seg_lens
+    n_per_seg = np.maximum(np.round(np.maximum(base_n, lam_n)).astype(int), min_per_seg)
+    nus = corner_nus(domain)
+    graded = {int(j) for c, j in enumerate(np.asarray(domain.corner_idx)) if nus[c] < 1.0}
+    P, N, T, W = [], [], [], []
+    for i, sg in enumerate(segs):
+        n = int(n_per_seg[i])
+        if i in graded or ((i + 1) % len(segs)) in graded:
+            tau, w = cached_kressgauss(n, q)
+        else:
+            tau, w = cached_leggauss(n)
+        P.append(sg.p(tau)); N.append(sg.N(tau)); T.append(sg.T(tau)); W.append(sg.len*w)
+    pts = np.concatenate(P)
+    return (pts, np.concatenate(N), np.concatenate(T), np.concatenate(W),
+            np.zeros(len(pts)))
 
 
 def rellich_norm2(pts, normals, wts, un, lam, x0, panel_id=None, groups=None):

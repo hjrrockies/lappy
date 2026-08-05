@@ -2120,3 +2120,67 @@ edges; a shared edge appears twice with opposite orientation and cancels), then
 collinear runs are merged so a straight run of k cells is one segment rather than
 k. Diagonal-only joins and enclosed holes are rejected rather than producing a
 non-simple polygon.
+
+---
+
+## Stage 5: MPSEigensolver orthonormalizes by itself; the old paths are gone
+
+`MPSEigensolver.from_domain(domain, basis=basis)` now returns L^2-orthonormal
+eigenfunctions with no quadrature configuration from the caller. The seven
+`rellich_*` parameters collapsed to one:
+
+    before:  rellich=True, rellich_x0, rellich_mult, rellich_min_per_seg,
+             rellich_margin, rellich_c_lam, rellich_beta      (+ a basis)
+    after:   orthonorm=True, orthonorm_precision, orthonorm_x0
+
+and the node set needs no basis at all -- it is a pure function of geometry,
+`lam_max` and the accuracy target.
+
+End-to-end, with nothing configured:
+
+    domain        nodes   |G-1|      x0-spread     cubature cross-check
+    L_shape        100    2e-16      9.3e-13       7.3e-12
+    plus_shape     264    1.1e-14    4.2e-12       --
+    H_shape        192    --         2.6e-11       1.4e-08
+
+L_shape's lam_1 = 9.6397238445 against the known 9.6397238440.
+
+**Leg 4 (x0-invariance) came in ~3 orders better than predicted.** I expected the
+eigenfunction's own accuracy to cap it near 1e-9; it lands at 1e-12 to 1e-13 on
+L_shape and 2.6e-11 on H_shape. The identity holds for every x0, so this needs no
+reference at all -- the only check available on domains with no analytic truth.
+
+### The cubature cross-check is bounded by the OTHER method
+
+On H_shape the boundary rule is self-consistent to 2.6e-11 while the interior
+cubature comparison sits at 1.4e-8. H_shape is hard for everything (the reference
+run certified it to 9.66 digits), so the cubature and the eigenfunction residual
+dominate, not the corner quadrature. `scripts/hshape_eigfunc_norm.py` -- promoted
+from print-only to asserting -- now carries per-domain tolerances saying so, with
+the x0-spread as the sharper of the two claims.
+
+### Default precision is 1e-13, not 1e-14
+
+A 270-degree corner lands at ~1.9e-14, so a 1e-14 default warns on the commonest
+domain in the suite while delivering the same answer. Asking for 1e-14 explicitly
+still warns if it falls short, which is the point of the warning.
+
+### What was deleted, and what was NOT ported
+
+Deleted: `lappy/rellich.py`, `lappy/cauchy.py`, `MPSEigensolver._cauchy_gram`,
+and with them `rellich_gram_basis`, `orthonormalize_coef`, `basis_cauchy_data`,
+`build_boundary_quadrature`, `corner_grading_orders`, `graded_pts_per_seg`.
+`tests/test_rellich.py` + `tests/test_cauchy.py` became
+`tests/test_orthonormalization.py`, keeping every MPS-wiring test and adding Leg 4.
+
+`benchmarks/suite/experiments.py:exact_interior_factor` is deliberately NOT
+ported -- it forms the basis-level N x N Gram, which is exactly the thing that
+cannot work with a corner-adapted rule. It now raises with that explanation
+rather than being quietly repaired; its own recorded conclusion (forming G was
+unaffordable, >30 min against 165s) is why `cmd_inexact_rellich` exists.
+`cmd_exact_interior` and `cmd_exact_polish` were ported, and got shorter: the
+replacement takes no basis.
+
+The Kress rule needed for the Stage 0 comparison is reconstructed inside
+`benchmarks/corner_quad/proto.py` so that measurement stays reproducible after
+the deletion.

@@ -109,7 +109,7 @@ CornerPanel = namedtuple('CornerPanel',
 # makes per-corner diagnostics (and the edge/arc split that corner tests must report) possible.
 BoundaryQuad = namedtuple('BoundaryQuad',
                           ['pts', 'normals', 'tangents', 'wts', 'dir_mask', 'neu_mask',
-                           'panels', 'panel_id', 'precision'])
+                           'panels', 'panel_id', 'precision', 'x0'])
 
 # A small cluster of eigenfunctions' Cauchy data at a BoundaryQuad's nodes. U/U_N/U_T are
 # (n_nodes, mult) -- already-evaluated function values, never a basis matrix.
@@ -299,7 +299,7 @@ def _panel_rule(panel):
     raise ValueError(f"unknown panel rule {panel.rule!r}")
 
 
-def assemble_panels(domain, panels, precision=None):
+def assemble_panels(domain, panels, precision=None, x0=None):
     """BoundaryQuad from a panel plan, via each segment's own p/N/T at normalized arclength.
 
     Segments are parametrized by normalized arclength, so |dp/dtau| == seg.len identically and
@@ -318,9 +318,11 @@ def assemble_panels(domain, panels, precision=None):
         D.append(np.full(len(u), float(seg.bc_type == 'dir')))
         U.append(np.full(len(u), float(seg.bc_type == 'neu')))
         PID.append(np.full(len(u), pid))
+    if x0 is None:
+        x0 = default_x0(domain)
     return BoundaryQuad(np.concatenate(P), np.concatenate(N), np.concatenate(T),
                         np.concatenate(W), np.concatenate(D), np.concatenate(U),
-                        tuple(panels), np.concatenate(PID), precision)
+                        tuple(panels), np.concatenate(PID), precision, x0)
 
 
 def eigfun_cauchy_data(basis, lam, coef, bq):
@@ -377,12 +379,18 @@ def default_x0(domain):
     return 0.5*(pts.real.min() + pts.real.max()) + 0.5j*(pts.imag.min() + pts.imag.max())
 
 
-def gram(ed, lam, bq, x0):
+def gram(ed, lam, bq, x0=None):
     """L^2(Omega) Gram matrix G[i,j] = <u_i, u_j> for the eigenfunction cluster in `ed`.
 
     Zaremba-specialized Rellich identity (docs/rellich.md Sec. 2):
     G = (1/2lam)(I_1 - I_2) + (1/2)I_3, with the Dirichlet and Neumann parts restricted to
-    their own segments by zeroing the per-node weight rather than by separate node sets."""
+    their own segments by zeroing the per-node weight rather than by separate node sets.
+
+    `x0` defaults to the node set's own `bq.x0`. The identity holds for EVERY x0, so passing a
+    different one is legitimate and is exactly how the x0-invariance diagnostic works: any
+    variation in the result across x0 is pure quadrature error."""
+    if x0 is None:
+        x0 = bq.x0
     rN = complex_dot(ed.pts - x0, ed.normals)
     n = ed.U.shape[1]
     G = np.zeros((n, n))
@@ -412,7 +420,7 @@ def lowdin_transform(G, ttol=1e-3):
     return (Q*w**-0.5)@Q.T
 
 
-def boundary_quadrature(domain, lam_max, precision=1e-14, panel_frac=1.0,
+def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
                         clearance_frac=None, warn=True):
     """The entry point: a boundary node set for `domain`, accurate to `precision` for
     eigenfunctions up to spectral parameter `lam_max`.
@@ -428,6 +436,11 @@ def boundary_quadrature(domain, lam_max, precision=1e-14, panel_frac=1.0,
     order cap binding first -- the best achievable order is used and a warning names the
     corner and what it actually achieved, rather than silently missing the target. The
     achieved value is recorded in the returned `BoundaryQuad.precision`.
+
+    The default is 1e-13, not 1e-14: these integrals sit near the float64 roundoff floor, and a
+    270-degree corner typically lands at ~1.9e-14, so a 1e-14 default would warn on the
+    commonest domain in the suite while delivering essentially the same answer. Asking for 1e-14
+    explicitly is legitimate and will warn if it falls short, which is the point.
     """
     specs = corner_specs(domain)
     segs = domain.bdry.segments
@@ -462,7 +475,8 @@ def boundary_quadrature(domain, lam_max, precision=1e-14, panel_frac=1.0,
             panels.append(p._replace(order=orders.get(p.corner, 16)))
     bq = assemble_panels(domain, panels,
                          precision=max([precision] + list(achieved.values())
-                                       + list(smooth_ach.values())))
+                                       + list(smooth_ach.values())),
+                         x0=x0)
 
     if warn:
         short = {c: a for c, a in achieved.items() if a > precision}

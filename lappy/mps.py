@@ -6,9 +6,8 @@ from .geometry import PointSet, Polygon
 from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBasis, FourierBesselBasis
 from .cubature import polygon_cubature
 from .asymp import weyl_est
-from .rellich import build_rellich_data, rellich_gram_basis, rellich_gram_from_cauchy_data, \
-    lowdin_transform, orthonormalize_coef
-from .cauchy import CauchyData
+from .eigfun_integrals import (boundary_quadrature, EigfunData, gram as eigfun_gram,
+                               lowdin_transform)
 
 from .cache import instance_lru_cache
 import numpy as np
@@ -226,7 +225,7 @@ def make_ddiff_vander(basis, pts, vecs, wts=None):
 class MPSEigensolver(BaseEigensolver):
     def __init__(self, basis, bdry_pts, int_pts, bdry_normals=None, bc_param=0,
                  reg_type='svd', rtol=rtol_default, ttol=ttol_default, ltol=ltol_default,
-                 cauchy_data=None):
+                 bdry_quad=None):
 
         self.basis = basis
         self.bdry_pts = bdry_pts
@@ -247,23 +246,22 @@ class MPSEigensolver(BaseEigensolver):
         self.ttol = ttol
         self.ltol = ltol
 
-        # Boundary-only Cauchy-data / quadrature bundle used for Rellich-identity
-        # normalization (docs/rellich.md, docs/rellich_hadamard_mps.pdf). This is
-        # opaque, already-materialized geometry+quadrature data (as from
-        # rellich.build_rellich_data), mirroring bdry_pts/int_pts -- MPSEigensolver
-        # itself has no notion of a domain. None disables eigenfunction_coef's
-        # normalization (it falls back to raw coefficients with a warning).
-        self._cauchy_data = cauchy_data
+        # Corner-adapted boundary quadrature backing L^2-orthonormalization via the
+        # Rellich identity (eigfun_integrals.boundary_quadrature). Opaque,
+        # already-materialized geometry + quadrature data carrying its own reference point
+        # x0, mirroring bdry_pts/int_pts -- MPSEigensolver itself has no notion of a domain.
+        # None disables eigenfunction_coef's normalization (it falls back to raw
+        # coefficients with a warning).
+        self._bdry_quad = bdry_quad
 
     @property
-    def cauchy_data(self):
-        """The boundary Cauchy-data/quadrature bundle backing Rellich-identity
-        normalization (see rellich.build_rellich_data), or None if unavailable.
-        Exposed for reuse by code building other boundary-integral quantities
-        from the same basis/eigenfunctions (e.g. Hadamard-type shape-derivative
-        formulas) -- see lappy.cauchy for the generic Cauchy-data/kernel-assembler
-        API this is built on. lappy itself does not implement such formulas."""
-        return self._cauchy_data
+    def bdry_quad(self):
+        """The corner-adapted boundary quadrature backing L^2-orthonormalization (see
+        eigfun_integrals.boundary_quadrature), or None if unavailable. Exposed for reuse by
+        code building other boundary functionals from the same eigenfunctions (e.g.
+        Hadamard-type shape derivatives) via eigfun_integrals.weighted_integral -- lappy
+        itself implements no such formulas."""
+        return self._bdry_quad
 
     @classmethod
     def default_basis(domain, n):
@@ -280,8 +278,15 @@ class MPSEigensolver(BaseEigensolver):
     @classmethod
     def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False,
                     reg_type='svd', rtol=rtol_default, ttol=ttol_default,
-                    rellich=True, rellich_x0=None, rellich_mult=2, rellich_min_per_seg=4,
-                    rellich_margin=2.0, rellich_c_lam=1.0, rellich_beta=0.2):
+                    orthonorm=True, orthonorm_precision=1e-13, orthonorm_x0=None):
+        """Builds a solver for `domain`, including (by default) the corner-adapted boundary
+        quadrature that makes `eigenfunction_coef` return L^2-orthonormal eigenfunctions with
+        no further configuration.
+
+        `orthonorm_precision` is the only accuracy knob: the quadrature sizes itself from the
+        domain's geometry, `lam_max` and that target (eigfun_integrals.boundary_quadrature).
+        It needs no basis and has no grading orders, point-count multipliers or Nyquist
+        constants to set. Pass `orthonorm=False` to skip building it."""
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
         if lam_max is None:
@@ -304,22 +309,22 @@ class MPSEigensolver(BaseEigensolver):
         # normalize basis
         basis = basis.to_normalized((bdry_pts, int_pts))
 
-        # boundary-only (Rellich identity) normalization data: see docs/rellich.md.
-        # Robin boundaries are unsupported here; eigenfunction_coef falls back to raw
-        # (un-normalized) coefficients with a warning in that case.
-        cauchy_data = None
-        if rellich:
+        # Corner-adapted boundary quadrature for L^2-orthonormalization. Robin boundaries are
+        # unsupported (the Rellich identity's Robin form is out of scope); eigenfunction_coef
+        # falls back to raw coefficients with a warning in that case.
+        bdry_quad = None
+        if orthonorm:
             if domain.bc_type == 'rob':
                 warnings.warn("Rellich-identity orthonormalization is not supported for "
                               "Robin boundary conditions; eigenfunction_coef will return "
                               "un-normalized coefficients.")
             else:
-                cauchy_data = build_rellich_data(domain, basis, lam_max, rellich_x0, rellich_mult,
-                                                 rellich_min_per_seg, rellich_margin,
-                                                 rellich_c_lam, rellich_beta)
+                bdry_quad = boundary_quadrature(domain, lam_max,
+                                                precision=orthonorm_precision,
+                                                x0=orthonorm_x0)
 
         return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec,
-                   cauchy_data=cauchy_data)
+                   bdry_quad=bdry_quad)
         
     def _get_params(self, reg_type=None, rtol=None, ttol=None, ltol=None):
         """Helper to resolve parameters against instance defaults"""
@@ -362,17 +367,6 @@ class MPSEigensolver(BaseEigensolver):
         return self.tensions(lam, reg_type, rtol)[0]
     
     @instance_lru_cache(maxsize=64)
-    def _cauchy_gram(self, eig):
-        """Boundary-only (Rellich identity) L^2(Omega) Gram matrix of the basis at eig.
-        See docs/rellich.md; cached per eigenvalue since it is otherwise the same cost
-        order as one basis evaluation. NOTE: this is the basis-level (N x N) Gram matrix --
-        sandwiching it between two copies of a coefficient vector (as orthonormalize_coef
-        does) is the numerically risky pattern eigenfunction_coef no longer uses by default
-        (docs/rellich_hadamard_mps.pdf Sec. 3.1); kept for direct use by tests/benchmarks and
-        any external Hadamard-type consumer that genuinely needs the full basis Gram."""
-        return rellich_gram_basis(self.basis, eig, self._cauchy_data)
-
-    @instance_lru_cache(maxsize=64)
     def _nullspace_coef_raw(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         """Raw (arbitrarily-scaled) GSVD nullspace coefficients -- eigenfunction_coef's
         orthonorm=False path, factored out (and independently cached under a fixed
@@ -385,23 +379,23 @@ class MPSEigensolver(BaseEigensolver):
     def _orthonorm_transform_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         """Löwdin orthonormalization transform D (mult x mult) for eigenfunction_coef's
         orthonorm=True path, built via the safe "evaluate first, sandwich never" Rellich Gram
-        (docs/rellich_hadamard_mps.pdf Sec. 3.2): the raw candidate coefficients' OWN Cauchy
-        data is evaluated directly at the shared Rellich boundary node set (a single
-        un-sandwiched matrix-vector product -- basis(eig,pts)@coef, never coef.T@G_NxN@coef),
-        and Löwdin-orthogonalized from the resulting small (mult x mult) Gram. Stays entirely
+        ("evaluate first, sandwich never"): the raw candidate coefficients' OWN Cauchy data is
+        evaluated directly at the shared boundary node set (a single un-sandwiched
+        matrix-vector product -- basis(eig,pts)@coef, never coef.T@G_NxN@coef), and
+        Löwdin-orthogonalized from the resulting small (mult x mult) Gram. Stays entirely
         within nullspace_coef's own GSVD pencil (no extra GSVD call). Returns (D, G), or
-        (None, None) with a warning if no cauchy_data was supplied at construction."""
-        if self._cauchy_data is None:
-            warnings.warn("Rellich-identity normalization unavailable (no cauchy_data "
+        (None, None) with a warning if no bdry_quad was supplied at construction."""
+        if self._bdry_quad is None:
+            warnings.warn("Rellich-identity normalization unavailable (no bdry_quad "
                           "supplied at construction); returning un-normalized coefficients.")
             return None, None
+        bq = self._bdry_quad
         coef = self._nullspace_coef_raw(eig, mult, reg_type, rtol, ttol)
-        pts, normals, tangents = self._cauchy_data.pts, self._cauchy_data.normals, self._cauchy_data.tangents
-        Phi = self.basis(eig, pts) @ coef
-        Phi_N = self.basis.ddiff(eig, pts, normals) @ coef
-        Phi_T = self.basis.ddiff(eig, pts, tangents) @ coef
-        cd = CauchyData(pts, normals, tangents, self._cauchy_data.wts, Phi, Phi_N, Phi_T)
-        G = rellich_gram_from_cauchy_data(cd, eig, self._cauchy_data)
+        U = self.basis(eig, bq.pts) @ coef
+        U_N = self.basis.ddiff(eig, bq.pts, bq.normals) @ coef
+        U_T = self.basis.ddiff(eig, bq.pts, bq.tangents) @ coef
+        ed = EigfunData(bq.pts, bq.normals, bq.tangents, bq.wts, U, U_N, U_T)
+        G = eigfun_gram(ed, eig, bq)
         return lowdin_transform(G), G
 
     @instance_lru_cache(maxsize=64)
@@ -412,8 +406,8 @@ class MPSEigensolver(BaseEigensolver):
         computed via the boundary-only Rellich identity (docs/rellich.md) using the safe
         "evaluate first, sandwich never" transform (_orthonorm_transform_coef). Pass
         orthonorm=False to get the raw (arbitrarily-scaled) GSVD nullspace coefficients
-        instead. Falls back to raw coefficients with a warning if no cauchy_data was
-        supplied at construction (e.g. from_domain(..., rellich=False), a domain with
+        instead. Falls back to raw coefficients with a warning if no bdry_quad was
+        supplied at construction (e.g. from_domain(..., orthonorm=False), a domain with
         Robin boundary conditions, or manual construction)."""
         coef = self._nullspace_coef_raw(eig, mult, reg_type, rtol, ttol)
         if not orthonorm:
@@ -513,43 +507,43 @@ class MPSEigensolver(BaseEigensolver):
                 if U_ddiff is not None: U_ddiff = U_ddiff @ D.T
         return tuple([arr for arr in (U_B, U_I, U_extra, U_ddiff) if arr is not None])
 
-    def _rellich_cauchy_data_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
+    def _eigfun_data_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         """Evaluates the raw (unnormalized) candidate eigenfunctions' Cauchy data directly at
-        the shared Rellich boundary node set, via the GSVD-eval pipeline (nullspace_eval) --
+        the shared boundary node set, via the GSVD-eval pipeline (nullspace_eval) --
         never reconstructing a basis coefficient vector at all. Concatenates the node set with
         itself, paired with normals then tangents ("doubling trick"), to get both boundary
         derivatives from a single extra GSVD call. orthonorm=False here is required, not a
         default: this data is what _orthonorm_transform_eval is built FROM, so using
         orthonorm=True would recurse into the transform being constructed."""
-        pts = self._cauchy_data.pts
-        normals, tangents = self._cauchy_data.normals, self._cauchy_data.tangents
+        bq = self._bdry_quad
+        pts, normals, tangents = bq.pts, bq.normals, bq.tangents
         ddiff_pts = np.concatenate([pts, pts])
         ddiff_vecs = np.concatenate([normals, tangents])
         _, _, U_extra, U_ddiff = self.eigenfunction_eval_extras(
             eig, mult, extra_pts=pts, ddiff_pts=ddiff_pts, ddiff_vecs=ddiff_vecs,
             reg_type=reg_type, rtol=rtol, ttol=ttol, orthonorm=False)
         n = len(pts)
-        return CauchyData(pts, normals, tangents, self._cauchy_data.wts,
+        return EigfunData(pts, normals, tangents, bq.wts,
                           U_extra, U_ddiff[:n], U_ddiff[n:])
 
     @instance_lru_cache(maxsize=64)
     def _orthonorm_transform_eval(self, eig, mult=1, reg_type=None, rtol=None, ttol=None):
         """Löwdin orthonormalization transform D (mult x mult) for eigenfunction_eval_extras's
         orthonorm=True path, built via GSVD-eval (nullspace_eval) Cauchy data at the shared
-        Rellich boundary node set -- an independent transform from _orthonorm_transform_coef's
-        (different GSVD pencil: nullspace_eval decomposes A_I augmented with the Rellich-node
+        boundary node set -- an independent transform from _orthonorm_transform_coef's
+        (different GSVD pencil: nullspace_eval decomposes A_I augmented with the boundary-node
         rows, nullspace_coef does not), since for a degenerate cluster (mult>1) the two pencils'
         raw candidate bases need not be related by the same rotation. Agrees with
         _orthonorm_transform_coef up to a global sign for mult=1 (empirically verified: both
         reach ~1e-10 relative accuracy against an independent cubature reference on the same
-        test case). Returns (D, G), or (None, None) with a warning if no cauchy_data was
+        test case). Returns (D, G), or (None, None) with a warning if no bdry_quad was
         supplied at construction."""
-        if self._cauchy_data is None:
-            warnings.warn("Rellich-identity normalization unavailable (no cauchy_data "
+        if self._bdry_quad is None:
+            warnings.warn("Rellich-identity normalization unavailable (no bdry_quad "
                           "supplied at construction); returning un-normalized values.")
             return None, None
-        cd = self._rellich_cauchy_data_eval(eig, mult, reg_type, rtol, ttol)
-        G = rellich_gram_from_cauchy_data(cd, eig, self._cauchy_data)
+        ed = self._eigfun_data_eval(eig, mult, reg_type, rtol, ttol)
+        G = eigfun_gram(ed, eig, self._bdry_quad)
         return lowdin_transform(G), G
 
     @instance_lru_cache(maxsize=64)

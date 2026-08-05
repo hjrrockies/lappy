@@ -148,8 +148,13 @@ def exact_interior_factor(basis, lam, rellich_data, rtol=1e-13):
     mode came out exact.
     """
     import numpy as np
-    from lappy.rellich import rellich_gram_basis
-    G = rellich_gram_basis(basis, lam, rellich_data)
+    raise NotImplementedError(
+        "RETIRED with lappy.rellich. This experiment forms the BASIS-LEVEL (N x N) Rellich "
+        "Gram, which no longer exists: a basis-level Gram mixes columns centred at other "
+        "corners, which are plain analytic there, so no corner-adapted quadrature can serve "
+        "it -- see lappy/eigfun_integrals.py's module docstring. Its own conclusion is "
+        "recorded above and in NOTEBOOK: forming G was unaffordable (>30 min against 165s), "
+        "which is why cmd_inexact_rellich exists. Kept for the record, not for running.")
     G = 0.5 * (G + G.T)
     w, V = np.linalg.eigh(G)
     w = np.clip(w, 0.0, None)
@@ -160,7 +165,7 @@ def cmd_exact_interior(args):
     """Replace the sampled interior block with the exact Rellich Gram factor."""
     import numpy as np
     from lappy import bases, mps, MPSEigensolver
-    from lappy.rellich import build_rellich_data
+    from lappy.eigfun_integrals import boundary_quadrature
     from benchmarks.suite.domains import SUITE
     from common import manual_solve, polish_eigs, lambda_window
     from certify import certify_solver
@@ -179,7 +184,7 @@ def cmd_exact_interior(args):
     basis = basis.to_normalized((bdry_pts, int_pts))
 
     a, b = lambda_window(dom, n_eigs)
-    rd = build_rellich_data(dom, basis, lam_max=b)
+    rd = boundary_quadrature(dom, b)   # no basis needed; sizes itself from geometry+lam
 
     solver = MPSEigensolver(basis, bdry_pts, int_pts, rtol=1e-14, ttol=1e-3)
     A_B = solver.A_B
@@ -239,7 +244,8 @@ def rellich_interior_block(basis, domain, bdry_pts, normals, x0=None):
 
     "Inexact" in two senses, both harmless here:
       * it reuses the ordinary boundary quadrature rather than the dense graded
-        one ``build_rellich_data`` constructs, so ``G`` is only approximated;
+        one ``eigfun_integrals.boundary_quadrature`` constructs, so ``G`` is only
+        approximated;
       * the identity in this form is exact for functions vanishing on the
         boundary. Trial functions in the search do not, but their boundary
         residual is precisely the quantity being minimized, so the error
@@ -250,7 +256,7 @@ def rellich_interior_block(basis, domain, bdry_pts, normals, x0=None):
     """
     import numpy as np
     from lappy.utils import complex_dot
-    from lappy.cauchy import default_x0
+    from lappy.eigfun_integrals import default_x0
     from lappy import mps
 
     if x0 is None:
@@ -362,7 +368,7 @@ def cmd_exact_polish(args):
     """
     import numpy as np
     from lappy import bases, mps, opt, MPSEigensolver
-    from lappy.rellich import build_rellich_data
+    from lappy.eigfun_integrals import boundary_quadrature
     from benchmarks.suite.domains import SUITE
     from common import manual_solve, polish_eigs, lambda_window
 
@@ -399,7 +405,7 @@ def cmd_exact_polish(args):
     sampled = sampled[:n_eigs]
 
     # (b) the same coarse locations, refined against the exact interior norm
-    rd = build_rellich_data(dom, basis, lam_max=b)
+    rd = boundary_quadrature(dom, b)   # no basis needed; sizes itself from geometry+lam
 
     def sigma_exact(lam):
         A_B = solver.A_B(lam)
