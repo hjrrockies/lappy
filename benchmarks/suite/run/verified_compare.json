@@ -1,0 +1,884 @@
+[
+ {
+  "key": "square",
+  "n_basis": 120,
+  "rc": 0,
+  "seconds": 45.25697183609009,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.654592902574258,
+  "new_digits": 15.654592902574258,
+  "digit_source": "true",
+  "base_seconds": 26.816824197769165,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.7763568394002505e-15,
+  "bq_nodes": 80,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "rect_near_deg_1e3",
+  "n_basis": 120,
+  "rc": 0,
+  "seconds": 36.43267798423767,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.539955165191408,
+  "new_digits": 15.539955165191408,
+  "digit_source": "true",
+  "base_seconds": 17.352018117904663,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.5543122344752192e-15,
+  "bq_nodes": 80,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "rect_near_deg_1e5",
+  "n_basis": 120,
+  "rc": 0,
+  "seconds": 39.802303075790405,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.443735194357975,
+  "new_digits": 15.443735194357975,
+  "digit_source": "true",
+  "base_seconds": 20.72775387763977,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.5543122344752192e-15,
+  "bq_nodes": 80,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "rect_thin",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 150.0859169960022,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.23961955460344,
+  "new_digits": 15.23961955460344,
+  "digit_source": "true",
+  "base_seconds": 68.97527313232422,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 2.1094237467877974e-15,
+  "bq_nodes": 104,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "eq_tri",
+  "n_basis": 120,
+  "rc": 0,
+  "seconds": 45.45580983161926,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.568678273867665,
+  "new_digits": 15.568678273867665,
+  "digit_source": "true",
+  "base_seconds": 26.83706498146057,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 3.774758283725532e-15,
+  "bq_nodes": 78,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "iso_right_tri",
+  "n_basis": 120,
+  "rc": 0,
+  "seconds": 37.086297035217285,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 14.616370264205539,
+  "new_digits": 14.616370264205539,
+  "digit_source": "true",
+  "base_seconds": 16.638237953186035,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.3100631690576847e-14,
+  "bq_nodes": 78,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "disk",
+  "n_basis": 120,
+  "rc": 0,
+  "seconds": 93.02513575553894,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.234360233800112,
+  "new_digits": 15.234360233800112,
+  "digit_source": "true",
+  "base_seconds": 128.04794597625732,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 8.43769498715119e-15,
+  "bq_nodes": 42,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "sector_reflex",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 85.68905186653137,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 14.661046449364822,
+  "new_digits": 14.661046449364822,
+  "digit_source": "true",
+  "base_seconds": 37.5822958946228,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 5.206945985491984e-14,
+  "bq_nodes": 104,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "sector_sharp_p65",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 26.434988021850586,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.52217369272489,
+  "new_digits": 15.52217369272489,
+  "digit_source": "true",
+  "base_seconds": 12.232583999633789,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.9872992140790302e-14,
+  "bq_nodes": 80,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "sector_sharp_p133",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 38.819124937057495,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.166022111862583,
+  "new_digits": 15.166022111862583,
+  "digit_source": "true",
+  "base_seconds": 17.271472692489624,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 2.0650148258027912e-14,
+  "bq_nodes": 98,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "sector_slit",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 830.529541015625,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 15.442579558196222,
+  "new_digits": 15.442579558196222,
+  "digit_source": "true",
+  "base_seconds": 379.8317320346832,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 6.9e-01)",
+   "rellich-boundary",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 0.6893704199370102,
+  "bq_nodes": 76,
+  "bq_precision": Infinity,
+  "error": null
+ },
+ {
+  "key": "L_shape",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 73.09723615646362,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 13.38989699711757,
+  "new_digits": 13.38989699711757,
+  "digit_source": "cert",
+  "base_seconds": 34.948582887649536,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.5654144647214707e-14,
+  "bq_nodes": 140,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "H_shape",
+  "n_basis": 480,
+  "rc": 0,
+  "seconds": 639.387423992157,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 9.763592329121565,
+  "new_digits": 9.763592329121565,
+  "digit_source": "cert",
+  "base_seconds": 300.8878483772278,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.617594946878853e-12,
+  "bq_nodes": 268,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "GWW1",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 270.30555391311646,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 8.920297919163756,
+  "new_digits": 8.920290015992983,
+  "digit_source": "cert",
+  "base_seconds": 126.44158983230591,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 5.666533908765814e-11,
+  "bq_nodes": 440,
+  "bq_precision": 1.9693580100010877e-11,
+  "error": null
+ },
+ {
+  "key": "GWW2",
+  "n_basis": 480,
+  "rc": 0,
+  "seconds": 561.9227392673492,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 9.988005019169949,
+  "new_digits": 9.987993363866773,
+  "digit_source": "cert",
+  "base_seconds": 245.45070910453796,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 4.4194536918951144e-11,
+  "bq_nodes": 440,
+  "bq_precision": 9.23033871558232e-10,
+  "error": null
+ },
+ {
+  "key": "reg_ngon_5",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 164.21859622001648,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 12.762647644495903,
+  "new_digits": 12.769182079860105,
+  "digit_source": "cert",
+  "base_seconds": 98.52636218070984,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 2.539080057317733e-13,
+  "bq_nodes": 632,
+  "bq_precision": 6.181788414494349e-10,
+  "error": null
+ },
+ {
+  "key": "reg_ngon_6",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 264.4887158870697,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 12.101563276328125,
+  "new_digits": 12.100808588507144,
+  "digit_source": "cert",
+  "base_seconds": 157.47304391860962,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 5.662137425588298e-15,
+  "bq_nodes": 96,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "reg_ngon_7",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 186.9107449054718,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 10.73675029983312,
+  "new_digits": 10.736733571783583,
+  "digit_source": "cert",
+  "base_seconds": 113.72021794319153,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.0336176359260207e-13,
+  "bq_nodes": 868,
+  "bq_precision": 4.2166270475263445e-13,
+  "error": null
+ },
+ {
+  "key": "reg_ngon_8",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 304.5280933380127,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 10.39141310629641,
+  "new_digits": 10.391528453578694,
+  "digit_source": "cert",
+  "base_seconds": 173.23151111602783,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 6.650235917504688e-14,
+  "bq_nodes": 844,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "chevron_1_15",
+  "n_basis": 480,
+  "rc": 0,
+  "seconds": 555.3776259422302,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 6.307919846616627,
+  "new_digits": 6.307919396860494,
+  "digit_source": "cert",
+  "base_seconds": 258.62370800971985,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.0e-08)",
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.040759911585809e-08,
+  "bq_nodes": 184,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "chevron_1_2",
+  "n_basis": 480,
+  "rc": 0,
+  "seconds": 505.9147069454193,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 8.832712574396377,
+  "new_digits": 8.83270849650513,
+  "digit_source": "cert",
+  "base_seconds": 228.21518898010254,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 2.600819559717138e-11,
+  "bq_nodes": 156,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "chevron_2_3",
+  "n_basis": 160,
+  "rc": 0,
+  "seconds": 98.71199417114258,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 3.6500657216192858,
+  "new_digits": 3.6500657216192858,
+  "digit_source": "cert",
+  "base_seconds": 48.42089104652405,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 2.0e-07)",
+   "mesh/dunavant10 (boundary spread 3.2e-08)",
+   "mesh/dunavant10 (boundary spread 6.4e-07)",
+   "mesh/dunavant10 (boundary spread 7.6e-06)",
+   "mesh/dunavant10 (boundary spread 7.8e-06)",
+   "mesh/dunavant10 (boundary spread 9.9e-08)",
+   "rellich-boundary",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 7.849724657948975e-06,
+  "bq_nodes": 300,
+  "bq_precision": 0.0006703365569846742,
+  "error": null
+ },
+ {
+  "key": "chevron_2_4",
+  "n_basis": 160,
+  "rc": 0,
+  "seconds": 118.45671105384827,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 3.2980837625767,
+  "new_digits": 3.2980837625767,
+  "digit_source": "cert",
+  "base_seconds": 69.28120183944702,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.1e-08)",
+   "mesh/dunavant10 (boundary spread 1.6e-05)",
+   "mesh/dunavant10 (boundary spread 1.9e-07)",
+   "mesh/dunavant10 (boundary spread 2.8e-06)",
+   "mesh/dunavant10 (boundary spread 3.7e-07)",
+   "mesh/dunavant10 (boundary spread 4.5e-07)",
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.5970338215098856e-05,
+  "bq_nodes": 276,
+  "bq_precision": 0.0006083828461243002,
+  "error": null
+ },
+ {
+  "key": "chevron_1_125",
+  "n_basis": 480,
+  "rc": 0,
+  "seconds": 632.0665090084076,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 5.029722676997629,
+  "new_digits": 5.02987151349574,
+  "digit_source": "cert",
+  "base_seconds": 308.7800579071045,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.7e-06)",
+   "mesh/dunavant10 (boundary spread 1.9e-07)",
+   "mesh/dunavant10 (boundary spread 1.9e-08)",
+   "mesh/dunavant10 (boundary spread 2.4e-08)",
+   "mesh/dunavant10 (boundary spread 4.4e-08)",
+   "mesh/dunavant10 (boundary spread 8.3e-08)",
+   "rellich-boundary",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 1.651283909720469e-06,
+  "bq_nodes": 356,
+  "bq_precision": 4.83487848645936e-07,
+  "error": null
+ },
+ {
+  "key": "iso_tri_h05",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 110.78198385238647,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 12.503779926375143,
+  "new_digits": 12.503615162599797,
+  "digit_source": "cert",
+  "base_seconds": 47.29017901420593,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 8.975956644619032e-10,
+  "bq_nodes": 224,
+  "bq_precision": 3.456944686064389e-08,
+  "error": null
+ },
+ {
+  "key": "iso_tri_h1",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 67.38957619667053,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 14.665588286875721,
+  "new_digits": 14.665588286875721,
+  "digit_source": "true",
+  "base_seconds": 30.214945077896118,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.965094753586527e-14,
+  "bq_nodes": 78,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "iso_tri_h4",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 127.00099396705627,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 11.336972600342097,
+  "new_digits": 11.336924292861603,
+  "digit_source": "cert",
+  "base_seconds": 58.72392702102661,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.8e-07)",
+   "mesh/dunavant10 (boundary spread 5.2e-07)",
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 5.228314042815541e-07,
+  "bq_nodes": 320,
+  "bq_precision": 3.5413975330023106e-07,
+  "error": null
+ },
+ {
+  "key": "iso_tri_h16",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 161.2693920135498,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 11.411203188786223,
+  "new_digits": 11.410748417979061,
+  "digit_source": "cert",
+  "base_seconds": 75.9006278514862,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 7.919997990768479e-11,
+  "bq_nodes": 364,
+  "bq_precision": 8.906685294851613e-07,
+  "error": null
+ },
+ {
+  "key": "parallelogram_60",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 100.78846526145935,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 12.206696486323574,
+  "new_digits": 12.206696486323574,
+  "digit_source": "cert",
+  "base_seconds": 46.651293992996216,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 5.218048215738236e-15,
+  "bq_nodes": 84,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "parallelogram_p65",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 226.18477582931519,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 7.5021146865312875,
+  "new_digits": 7.502065091873968,
+  "digit_source": "cert",
+  "base_seconds": 105.56153607368469,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 3.276412474662038e-11,
+  "bq_nodes": 352,
+  "bq_precision": 9.922653636529333e-07,
+  "error": null
+ },
+ {
+  "key": "parallelogram_p127",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 306.53622579574585,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 4.115582234701851,
+  "new_digits": 4.115540432600958,
+  "digit_source": "cert",
+  "base_seconds": 151.22270894050598,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.0e-08)",
+   "mesh/dunavant10 (boundary spread 1.4e-08)",
+   "mesh/dunavant10 (boundary spread 5.3e-08)",
+   "rellich-boundary",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 3.5020757782611156e-07,
+  "bq_nodes": 380,
+  "bq_precision": 2.267946585865488e-06,
+  "error": null
+ },
+ {
+  "key": "right_trapezoid",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 40.245009899139404,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 11.374071921937862,
+  "new_digits": 11.374095838794924,
+  "digit_source": "cert",
+  "base_seconds": 18.59452986717224,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 7.970671900281445e-10,
+  "bq_nodes": 212,
+  "bq_precision": 1.922930703557313e-10,
+  "error": null
+ },
+ {
+  "key": "spiral",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 438.1469929218292,
+  "base_bucket": 3,
+  "new_bucket": 3,
+  "base_digits": 1.5751153573309966,
+  "new_digits": 1.5751139422434721,
+  "digit_source": "cert",
+  "base_seconds": 175.95090889930725,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.3e-03)",
+   "mesh/dunavant10 (boundary spread 2.4e-05)",
+   "mesh/dunavant10 (boundary spread 4.7e-03)"
+  ],
+  "l2_spread_max": 0.004720359805091445,
+  "bq_nodes": 3312,
+  "bq_precision": 1.3575901363083176e-06,
+  "error": null
+ },
+ {
+  "key": "spiral_t25",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 0.6707668304443359,
+  "base_bucket": 3,
+  "new_bucket": 3,
+  "base_digits": null,
+  "new_digits": null,
+  "digit_source": "",
+  "base_seconds": null,
+  "l2_methods": null,
+  "l2_spread_max": null,
+  "bq_nodes": null,
+  "bq_precision": null,
+  "error": "construction: RuntimeError: corner_branch_cut_polyline: no valid polyline cut found for corner 0"
+ },
+ {
+  "key": "ellipse_a2",
+  "n_basis": 240,
+  "rc": 0,
+  "seconds": 189.48138284683228,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 13.601180720140741,
+  "new_digits": 13.567707592172498,
+  "digit_source": "cert",
+  "base_seconds": 88.46234083175659,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 5.10702591327572e-15,
+  "bq_nodes": 168,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "ellipse_a3",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 373.88508319854736,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 12.52351959234445,
+  "new_digits": 12.631828239547815,
+  "digit_source": "cert",
+  "base_seconds": 161.89161705970764,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 6.751115222414228e-10,
+  "bq_nodes": 512,
+  "bq_precision": 2.8212415267080894e-11,
+  "error": null
+ },
+ {
+  "key": "ellipse_a4",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 426.12353515625,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 13.07068178328097,
+  "new_digits": 13.129644342294412,
+  "digit_source": "cert",
+  "base_seconds": 188.6455271244049,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 1.9206858326015208e-14,
+  "bq_nodes": 512,
+  "bq_precision": 1.2535274005255554e-07,
+  "error": null
+ },
+ {
+  "key": "stadium",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 370.9749789237976,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 2.8348052503140866,
+  "new_digits": 2.8348052503140866,
+  "digit_source": "cert",
+  "base_seconds": 210.74598693847656,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.4e-07)",
+   "mesh/dunavant10 (boundary spread 2.0e-07)",
+   "mesh/dunavant10 (boundary spread 5.9e-07)",
+   "mesh/dunavant10 (boundary spread 6.9e-07)",
+   "rellich-boundary",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 2.7296183802150153e-06,
+  "bq_nodes": 80,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "stadium_L2",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 372.8660011291504,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 2.7693189410065933,
+  "new_digits": 2.7693169300471507,
+  "digit_source": "cert",
+  "base_seconds": 193.1197910308838,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.5e-07)",
+   "mesh/dunavant10 (boundary spread 1.6e-07)",
+   "mesh/dunavant10 (boundary spread 2.6e-07)",
+   "mesh/dunavant10 (boundary spread 3.0e-06)",
+   "mesh/dunavant10 (boundary spread 3.5e-06)",
+   "mesh/dunavant10 (boundary spread 4.8e-06)",
+   "mesh/dunavant10 (boundary spread 8.4e-07)",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 6.1969612186185685e-06,
+  "bq_nodes": 84,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "mushroom",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 248.42849683761597,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 11.532521077129662,
+  "new_digits": 11.531387393492137,
+  "digit_source": "cert",
+  "base_seconds": 235.46812295913696,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 2.850386593422627e-12,
+  "bq_nodes": 166,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "mushroom_thin",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 261.63468527793884,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 7.399148643120212,
+  "new_digits": 7.399141915641668,
+  "digit_source": "cert",
+  "base_seconds": 206.70240783691406,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 3.869159437286385e-09,
+  "bq_nodes": 170,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "mushroom_neck01",
+  "n_basis": 320,
+  "rc": 0,
+  "seconds": 296.08264803886414,
+  "base_bucket": 2,
+  "new_bucket": 2,
+  "base_digits": 5.013787834332005,
+  "new_digits": 5.013787160410754,
+  "digit_source": "cert",
+  "base_seconds": 195.0177731513977,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 1.3e-06)",
+   "mesh/dunavant10 (boundary spread 2.0e-06)",
+   "mesh/dunavant10 (boundary spread 2.8e-06)",
+   "rellich-boundary",
+   "rellich-boundary (> mesh/dunavant10)"
+  ],
+  "l2_spread_max": 2.7893736700423943e-06,
+  "bq_nodes": 172,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "cut_square_r025",
+  "n_basis": 640,
+  "rc": 0,
+  "seconds": 695.3188760280609,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 12.216709221169687,
+  "new_digits": 12.216709221169687,
+  "digit_source": "cert",
+  "base_seconds": 317.2600431442261,
+  "l2_methods": [
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 3.24255289285702e-10,
+  "bq_nodes": 90,
+  "bq_precision": 1e-13,
+  "error": null
+ },
+ {
+  "key": "cut_square_r05",
+  "n_basis": 640,
+  "rc": 0,
+  "seconds": 769.4076342582703,
+  "base_bucket": 1,
+  "new_bucket": 1,
+  "base_digits": 11.701294282389044,
+  "new_digits": 11.699952249541305,
+  "digit_source": "cert",
+  "base_seconds": 350.9721202850342,
+  "l2_methods": [
+   "mesh/dunavant10 (boundary spread 8.9e-08)",
+   "rellich-boundary"
+  ],
+  "l2_spread_max": 8.884806923514788e-08,
+  "bq_nodes": 94,
+  "bq_precision": 1e-13,
+  "error": null
+ }
+]

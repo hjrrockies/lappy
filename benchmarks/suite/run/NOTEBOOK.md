@@ -2574,3 +2574,88 @@ a **stress test rather than the error of the value actually used**, i.e.
 conservative in the right direction -- which is consistent with the digits not
 moving at any node density. Not tested; the test is probe `x0` placed at other
 singular corners of a multi-corner domain.
+
+---
+
+## The quadrature was missing its advertised precision, and `nu < 1` was why
+
+The boundary-certification run left a loose end: `bq.precision` claimed 1e-13 on 40 of 44
+domains while the measured x0-spread exceeded 1e-8 on 22 of 43. Chasing that down took four
+dead hypotheses, two real mechanisms and one instrument change.
+
+### Killed, in order, so nobody repeats them
+
+| hypothesis | test | result |
+|---|---|---|
+| dropped `u != 0` trace terms | full 4-kernel Rellich form vs the Dirichlet branch | changes G by 5e-13, spread unmoved |
+| FundamentalBasis poles near the boundary | `fs_frac` 0.5 vs 0.0 (316 vs 332 cols, GWW1); `fs_d` 0.25..4.0 (ellipse) | <1% change; identical to 3 s.f. |
+| basis composition (FB vs FB+FS) | basis audit across the suite | `right_trapezoid` pure FB and dirty, `reg_ngon_6` mixed and clean |
+| the MPS residual dominating the spread | fixed node set, `n_basis` 60 -> 480 | `sup|u|` falls six orders, spread identical to 3 s.f. |
+
+The last one deserves emphasis because it was the most plausible: the eigenfunctions in
+question are resolved to sigma ~ 1e-16 and `sup|u|` ~ 1e-15, which is exactly the regime
+where the rule's promise is supposed to hold.
+
+### Mechanism 1: the criterion was wrong, not the rule
+
+Per-panel attribution (`benchmarks/eigfun_quad/sizing_audit.py` -- refine one panel, difference
+the integral, repeat) localised it immediately. On GWW1 every corner-adapted panel BEATS its
+model (ratios 0.01-0.3); every failure is a `legendre` panel at ratios 1e8-1e9.
+
+`corner_specs` marked a corner singular when `nu < 1`, i.e. reentrant, with the comment "a
+smooth rule is already exact" otherwise. The Rellich integrand is `r^(2nu-2)`, so what matters
+is whether that exponent is an INTEGER. At nu=4/3 (a 135-degree corner) the eigenfunction is
+bounded, its normal derivative `r^(1/3)` even vanishes -- and the integrand `r^(2/3)` defeats
+Gauss-Legendre, which converges on `tau^gamma` at `n^-(2 gamma + 2)`. Fitted 2.64, 3.31, 4.96
+against predicted 2.67, 3.33, 5.00.
+
+Both directions matter. "nu is not an integer" is ALSO wrong: it hands the corner rule to
+nu=6.78 corners, where `r^11.55` is already smooth, and makes them worse (1.2e-11 -> 8.9e-10)
+because the corner rule is not exact on constants. `quad.smooth_power_error` asks the smooth
+rule what it can deliver, which settles both cases.
+
+### Mechanism 2: on a curved boundary, the parametrization can cost more than the eigenfunction
+
+`int (r.N) ds = 2|Omega|` -- divergence theorem, no lambda, no basis, no eigenfunction -- is
+the sharpest test in the subject and isolates the geometry completely. An ellipse fails it at
+the node count the oscillation model asks for (1.3e-05 at 46 nodes) while disk, stadium,
+mushroom, cut_square and every polygon are machine exact. Normalized arclength on a
+varying-speed curve is analytic but its strip of analyticity narrows with eccentricity.
+
+NOT the arclength table's tolerance, which was the natural suspect: identical to three digits
+at tol 1e-4, 1e-6, 1e-8 while build cost goes 0.0s, 0.9s, 65s. Vary the suspected cause and
+check that the symptom responds, before optimizing it.
+
+### Instrument change: prefer refinement to x0-invariance
+
+x0-invariance is a fine detector -- it found all of this -- but it is not an error bar,
+because lambda enters the identity and an inexact lambda reintroduces x0-dependence. It
+misleads in both directions: `L_shape` spread 3.3e-12 against quadrature 1.4e-13; `H_shape`
+spread 4.1e-11 against quadrature 1.0e-08. `verify_gram` (refine, difference) measures the
+quadrature alone. That also overturned a comment in `scripts/hshape_eigfunc_norm.py` blaming
+H_shape's 1.4e-8 cubature discrepancy on the cubature -- the boundary rule was the weaker
+method there.
+
+That script was also unseeded, so its x0-spread ranged 1.2e-14 to 6.3e-12 across draws,
+straddling its own 1e-12 bar. It passed or failed by luck.
+
+### What the re-run showed, and what it could not
+
+44 domains, defaults flipped: 32/10/2, no switches, no regressions, four small gains on
+exactly the targeted domains (see BUCKETS.md). Cost 2.0x nodes for +1.5% wall time.
+
+The certified digits could not have moved: `eps` is scale-invariant. `right_trapezoid`'s
+quadrature improved ten orders and its bound is unchanged to two decimals. The suite is the
+regression test; `verify_gram` is where the result is.
+
+### Still open
+
+1. **`stadium`.** Exact parametrization, integral nu, and its integrals sit at 1.5e-04
+   because its boundary data carries far more harmonics than `2 sqrt(lam) L` predicts. No
+   geometry-only rule can anticipate that. `smooth_safety` is the blunt lever (1.5e-04 ->
+   1.0e-08 at 3x); a posteriori verification is the honest one.
+2. **The corner model is pessimistic for convex non-integer nu**, by up to seven orders
+   (`iso_tri_h05` reports 3e-08, delivers 4.8e-16). It drives orders to the cap, which is
+   where reg_ngon_5/7/8's 7-9x node counts come from. Tightening it is cheap accuracy.
+3. **`H_shape` has a floor near 3e-10** that neither more smooth nodes nor deeper refinement
+   moves. Not diagnosed.

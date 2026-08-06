@@ -328,3 +328,86 @@ digit -- they are insurance, not a correction.
 1e-13 on 40 domains while the measured spread exceeded 1e-8 on 22 of them, and
 on `sector_slit` (whose nu=0.504 corner is demoted to a smooth rule) it claimed
 1e-13 against a measured 6.9e-01. See NOTEBOOK.md for the partial diagnosis.
+
+---
+
+# Re-run with the corrected quadrature (tag `verified`)
+
+All 44 domains re-run after the two sizing fixes were made default: the singular-corner
+criterion (`nonintegral`, no longer `nu < 1`) and geometry-aware sizing of curved segments
+(`resolve_geometry`). Compared against tag `orth` domain by domain, at the same `n_basis`.
+
+**Verdict: 32 / 10 / 2. No domain changed bucket. No eigenvalue lost a digit.**
+
+Four domains gained, and they are exactly the ones the two fixes target:
+
+    reg_ngon_5   +0.011     nu = 5/3, now on the corner-adapted rule
+    ellipse_a2   +0.027     geometry-aware sizing
+    ellipse_a4   +0.060     geometry-aware sizing
+    ellipse_a3   +0.108     geometry-aware sizing
+
+Cost: 6760 -> 13274 boundary nodes (2.0x), and total solve+certify time 5473s -> 5554s,
+i.e. **+1.5%** -- the node set is built once per solve and reused for every lambda, so
+doubling it is close to free next to the GSVD work.
+
+| domain | nodes orth→verified | `precision` reported | digits orth → verified |
+|---|---|---|---|
+| `sector_slit` | 76 → 76 | **inf** | 15.44 → 15.44 |
+| `GWW1` | 204 → 440 | 2e-11 | 8.92 → 8.92 |
+| `GWW2` | 204 → 440 | 9e-10 | 9.99 → 9.99 |
+| `reg_ngon_5` | 90 → 632 | 6e-10 | 12.76 → 12.77 |
+| `reg_ngon_7` | 98 → 868 | 4e-13 | 10.74 → 10.74 |
+| `reg_ngon_8` | 112 → 844 | 1e-13 | 10.39 → 10.39 |
+| `chevron_2_3` | 300 → 300 | 7e-04 | 3.65 → 3.65 |
+| `chevron_2_4` | 276 → 276 | 6e-04 | 3.30 → 3.30 |
+| `chevron_1_125` | 228 → 356 | 5e-07 | 5.03 → 5.03 |
+| `iso_tri_h05` | 96 → 224 | 3e-08 | 12.50 → 12.50 |
+| `iso_tri_h4` | 84 → 320 | 4e-07 | 11.34 → 11.34 |
+| `iso_tri_h16` | 124 → 364 | 9e-07 | 11.41 → 11.41 |
+| `parallelogram_p65` | 112 → 352 | 1e-06 | 7.50 → 7.50 |
+| `parallelogram_p127` | 160 → 380 | 2e-06 | 4.12 → 4.12 |
+| `right_trapezoid` | 84 → 212 | 2e-10 | 11.37 → 11.37 |
+| `spiral` | 1676 → 3312 | 1e-06 | 1.58 → 1.58 |
+| `ellipse_a2` | 46 → 168 | 1e-13 | 13.54 → 13.57 |
+| `ellipse_a3` | 50 → 512 | 3e-11 | 12.52 → 12.63 |
+| `ellipse_a4` | 56 → 512 | 1e-07 | 13.07 → 13.13 |
+| `mushroom_neck01` | 170 → 172 | 1e-13 | 5.01 → 5.01 |
+
+(Domains not listed are byte-identical in node count and digits: exact parametrization and
+integral `nu` cost nothing to check, which is 24 of the 44.)
+
+### The certified digits were never going to move, and that is the point
+
+`eps = sqrt(area) ||u||_inf,bdry / ||u||_L2` is **scale-invariant**, and the numerator is
+what a Moler--Payne bound is made of. Improving the denominator's *accuracy* cannot move it.
+The cleanest demonstration in the table: `right_trapezoid`'s quadrature improved by ten
+orders (1.8e-06 -> 2.9e-16, measured by `verify_gram`) and its certified digits are
+unchanged to two decimals.
+
+So this re-run is a **regression test, not a result**. The result is in the integrals
+themselves:
+
+    domain            nodes        before        after      (verify_gram, the actual integrand)
+    right_trapezoid    84/212     1.8e-06      2.9e-16
+    GWW1              204/440     3.2e-05      5.0e-13
+    reg_ngon_7         98/868     2.6e-05      1.6e-13
+    iso_tri_h05        96/224     1.2e-11      4.8e-16
+    ellipse_a2         46/168     1.0e-06      3.9e-16
+    ellipse_a4         56/512     9.2e-06      7.1e-16
+
+That matters for `weighted_integral`'s other consumers -- Hadamard-type shape derivatives,
+where the integral's own accuracy *is* the answer -- and not for the eigenvalue bound.
+
+### `precision` is now a number you can act on
+
+The third column above is the new honest report, and it is the most useful output of the
+run. Previously every one of these domains claimed 1e-13. Now:
+
+* `sector_slit` reports **inf** -- its nu=0.504 corner is inadmissible and was demoted to a
+  smooth rule, so there is no bound at all. (Measured error there: 6.9e-01.)
+* the chevrons report 6e-04, `spiral` 1e-06, the eccentric ellipses 1e-07 to 3e-11: these
+  geometries are genuinely hard and now say so.
+* several reports are conservative rather than tight -- `iso_tri_h05` says 3e-08 where
+  `verify_gram` measures 4.8e-16 -- because the corner model is pessimistic for convex
+  non-integer `nu`. That errs in the direction that cannot mislead, and tightening it is
+  the obvious next piece of work.
