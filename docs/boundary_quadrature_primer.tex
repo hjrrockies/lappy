@@ -1,0 +1,666 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+\theoremstyle{definition}
+\newtheorem{exercise}{Exercise}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\newcommand{\dd}{\,\mathrm{d}}
+\newcommand{\Om}{\Omega}
+\newcommand{\pd}[2]{\frac{\partial #1}{\partial #2}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Computing $\|u\|_{L^2}$ from the Boundary\\
+\large A primer on \texttt{lappy}'s boundary quadrature}
+\author{lappy development notes}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+This is a working introduction to the mathematics behind
+\code{lappy.eigfun\_integrals}, aimed at someone who knows vector calculus and a
+little numerical analysis and wants to understand --- and modify --- the code as
+it stands today. It develops one identity, shows why discretizing it is harder
+than it looks, and explains each of the three things the code has to get right
+before it can claim an answer to $10^{-13}$. Everything is checkable: every
+number quoted can be reproduced by the snippets in the text, and the exercises at
+the end are the ones worth doing first.
+
+\medskip\noindent
+The companion document \code{corner\_quadrature.pdf} is the research record --- it
+derives the corner rule properly and reports what was tried and discarded. Read
+this one first.
+\end{abstract}
+
+\tableofcontents
+
+\section{The problem, and why the boundary}
+
+We solve $-\Delta u=\lambda u$ in a planar domain $\Om$ with $u=0$ on
+$\partial\Om$. A method-of-particular-solutions (MPS) eigensolver gives us
+$\lambda$ and a coefficient vector: $u$ is a finite combination of functions that
+each solve the PDE \emph{exactly} in $\Om$, chosen so that $u$ is as close to
+zero on $\partial\Om$ as the basis allows. So $u$ is not an approximation in the
+finite-element sense; it is an exact solution of the PDE with a small nonzero
+boundary trace.
+
+Very often we then need the $L^2$ norm,
+\begin{equation}
+  \|u\|_{L^2(\Om)}^2 = \int_\Om u^2 \dd A,
+\end{equation}
+because eigenfunctions are only defined up to scale and nearly every downstream
+formula wants them normalized:
+
+\begin{itemize}
+\item to return orthonormal eigenfunctions from a degenerate cluster;
+\item to certify an eigenvalue --- the Moler--Payne bound is a ratio of a
+      boundary sup-norm to an interior $L^2$ norm;
+\item to evaluate shape derivatives (Hadamard-type formulas), which are boundary
+      integrals of normalized eigenfunctions.
+\end{itemize}
+
+The obvious route is a cubature rule on the interior: triangulate $\Om$, sum
+$w_i u(x_i)^2$. This works, and \code{lappy} still has it
+(\code{lappy.cubature}), but it is the expensive and fragile half of any
+computation that uses it. A triangulation is a data structure to build, refine
+and store; on a curved boundary the polygonal mesh does not even cover $\Om$
+exactly; on a spiral domain the mesh takes longer to build than the eigenvalue
+took to find.
+
+The alternative is to compute an \emph{area} integral from \emph{boundary} data
+only. That is what the Rellich identity does, and it is the subject of this
+primer.
+
+\section{The identity}
+
+\subsection{Statement}
+
+Fix any point $x_0\in\R^2$ --- it is a free parameter, and nothing below assumes
+anything about it. Write $r:=x-x_0$ and let $n$ be the outward unit normal.
+
+\begin{proposition}[Rellich--Pohozaev, Dirichlet form]\label{prop:rellich}
+Let $u$ solve $-\Delta u=\lambda u$ in $\Om\subset\R^2$ with $u=0$ on
+$\partial\Om$. Then
+\begin{equation}\label{eq:rellich}
+  \int_\Om u^2 \dd A
+  \;=\; \frac{1}{2\lambda}\int_{\partial\Om} (r\cdot n)
+        \left(\pd{u}{n}\right)^{\!2} \dd s .
+\end{equation}
+\end{proposition}
+
+Everything on the right is boundary data: the geometry ($r\cdot n$) and the
+normal derivative of $u$. No interior evaluation appears at all.
+
+\subsection{Proof, in full}
+
+The trick is to multiply the equation by $r\cdot\nabla u$ --- the derivative of
+$u$ in the radial direction from $x_0$ --- and integrate. This is the standard
+Pohozaev manoeuvre and it is worth doing once by hand.
+
+\begin{proof}
+Both sides of $-\Delta u=\lambda u$ are multiplied by $r\cdot\nabla u$ and
+integrated over $\Om$. Take the right-hand side first. Since
+$u\,(r\cdot\nabla u)=\tfrac12 r\cdot\nabla(u^2)$, the divergence theorem gives
+\begin{equation}
+  \lambda\!\int_\Om u\,(r\cdot\nabla u)
+  = \frac{\lambda}{2}\int_\Om r\cdot\nabla(u^2)
+  = \frac{\lambda}{2}\left[\int_{\partial\Om}(r\cdot n)\,u^2
+      - \int_\Om u^2\,\nabla\!\cdot\! r\right]
+  = -\lambda\!\int_\Om u^2 ,
+\end{equation}
+using $u=0$ on $\partial\Om$ to kill the boundary term and $\nabla\cdot r=2$ in
+the plane. (In $\R^d$ that $2$ would be $d$; the identity's constants are
+dimension-dependent, and \code{lappy} is planar throughout.)
+
+For the left-hand side, integrate by parts once:
+\begin{equation}\label{eq:byparts}
+  \int_\Om \Delta u\,(r\cdot\nabla u)
+  = \int_{\partial\Om}\pd{u}{n}(r\cdot\nabla u)
+    - \int_\Om \nabla u\cdot\nabla(r\cdot\nabla u).
+\end{equation}
+For the last integrand, note $\nabla(r\cdot\nabla u)=\nabla u+(r\cdot\nabla)\nabla u$,
+so
+\begin{equation}
+  \nabla u\cdot\nabla(r\cdot\nabla u)
+  = |\nabla u|^2 + \tfrac12\, r\cdot\nabla\big(|\nabla u|^2\big),
+\end{equation}
+and applying the divergence theorem to the second piece,
+\begin{equation}
+  \int_\Om \nabla u\cdot\nabla(r\cdot\nabla u)
+  = \int_\Om|\nabla u|^2
+    + \frac12\int_{\partial\Om}(r\cdot n)|\nabla u|^2
+    - \int_\Om|\nabla u|^2
+  = \frac12\int_{\partial\Om}(r\cdot n)|\nabla u|^2 .
+\end{equation}
+Now use the boundary condition. Because $u\equiv0$ along $\partial\Om$, its
+tangential derivative vanishes there, so the gradient is purely normal:
+$\nabla u=(\partial u/\partial n)\,n$ on $\partial\Om$. Hence
+$r\cdot\nabla u=(r\cdot n)\,\partial u/\partial n$ and
+$|\nabla u|^2=(\partial u/\partial n)^2$, and \eqref{eq:byparts} collapses to
+\begin{equation}
+  \int_\Om \Delta u\,(r\cdot\nabla u)
+  = \int_{\partial\Om}(r\cdot n)\left(\pd{u}{n}\right)^{\!2}
+    - \frac12\int_{\partial\Om}(r\cdot n)\left(\pd{u}{n}\right)^{\!2}
+  = \frac12\int_{\partial\Om}(r\cdot n)\left(\pd{u}{n}\right)^{\!2}.
+\end{equation}
+Since $\int(-\Delta u)(r\cdot\nabla u)=\lambda\int u(r\cdot\nabla u)$, the two
+computations give
+$-\tfrac12\int_{\partial\Om}(r\cdot n)(\partial u/\partial n)^2
+ = -\lambda\int_\Om u^2$, which is \eqref{eq:rellich}.
+\end{proof}
+
+\subsection{Three consequences worth internalizing}
+
+\paragraph{(i) $x_0$ is free, and that is a gift.} The proof never used any
+property of $x_0$. So \eqref{eq:rellich} holds for every choice, and if you
+evaluate the right-hand side numerically at two different $x_0$ and get two
+different answers, the difference is \emph{error} --- you have a diagnostic that
+costs nothing and needs no reference solution. \code{lappy} uses this, with a
+caveat we return to in \S\ref{sec:instruments}.
+
+\paragraph{(ii) A corner can be made to disappear.} If $x_0$ sits exactly at a
+corner, then on both straight edges meeting there, $r=x-x_0$ points \emph{along}
+the edge while $n$ is perpendicular to it, so $r\cdot n\equiv0$ on those edges.
+Whatever nasty behaviour $\partial u/\partial n$ has at that corner is multiplied
+by an exact zero. This is why \code{default\_x0} places $x_0$ on a singular
+corner when there is one. It handles one corner exactly and for free --- but
+$x_0$ is a single point, so a domain with several bad corners cannot be rescued
+this way, which is the entire reason the rest of this document exists.
+
+\paragraph{(iii) Setting $u\equiv1$ is not allowed, but the same trick is.} You
+cannot test \eqref{eq:rellich} with $u=1$ (it is not an eigenfunction). But the
+divergence theorem alone gives a closely related identity that is pure geometry,
+\begin{equation}\label{eq:area}
+  \int_{\partial\Om}(r\cdot n)\dd s = \int_\Om \nabla\cdot r \dd A = 2\,|\Om| ,
+\end{equation}
+again for \emph{any} $x_0$. Equation \eqref{eq:area} contains no $\lambda$, no
+eigenfunction and no basis, so it isolates the quadrature's treatment of the
+\emph{geometry}. It turns out to be the sharpest single test in the whole
+subject; \S\ref{sec:geom} is about what it revealed.
+
+\subsection{A worked example you should reproduce}
+
+Take the unit disk, $\Om=\{|x|<1\}$, and $x_0=0$, so $r\cdot n=1$ everywhere on
+$\partial\Om$. The Dirichlet eigenfunctions are
+$u=J_m(kr)\cos(m\theta)$ with $k=j_{m,n}$, the $n$-th positive zero of $J_m$.
+On the boundary $\partial u/\partial n = k\,J_m'(k)\cos(m\theta)$, so the right
+side of \eqref{eq:rellich} is
+\begin{equation}
+  \frac{1}{2k^2}\int_0^{2\pi} k^2 J_m'(k)^2\cos^2(m\theta)\dd\theta
+  = \frac{\pi}{2}J_m'(j_{m,n})^2
+  = \frac{\pi}{2}J_{m+1}(j_{m,n})^2 ,
+\end{equation}
+using $J_m'(j_{m,n})=-J_{m+1}(j_{m,n})$, and that is exactly the classical
+formula for $\|u\|^2$ on the disk. The identity is not merely true, it is
+\emph{recognizably} true on the one domain where you know everything.
+
+\section{Discretizing: panels and nodes}
+
+To evaluate \eqref{eq:rellich} we need a quadrature rule on $\partial\Om$: nodes
+$x_i$, weights $w_i$, normals $n_i$, and
+$\int f \dd s \approx \sum_i w_i f(x_i)$.
+
+\code{lappy} builds this once per solve and reuses it for every $\lambda$,
+because the node set depends only on the geometry, on an upper bound
+$\lambda_{\max}$ for the eigenvalues of interest, and on a requested accuracy ---
+never on the basis or on $u$. That is the design constraint to keep in mind: a
+routine that needs to look at $u$ to place nodes cannot live here.
+
+The boundary is a list of \emph{segments} (a line, an arc, a spline), each
+parametrized by normalized arclength $\tau\in[0,1]$, so that a node at $\tau$
+sits at arclength $\tau\cdot L_{\text{seg}}$ and the weights carry no per-node
+Jacobian. Each segment is cut into \emph{panels}, and each panel gets its own
+rule:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\code{legendre} & plain Gauss--Legendre; used on smooth stretches \\
+\code{cornerjac}, \code{cornerinterp} & corner-adapted rules, anchored at a corner\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The entry point is
+\begin{verbatim}
+    from lappy.eigfun_integrals import boundary_quadrature
+    bq = boundary_quadrature(domain, lam_max, precision=1e-13)
+\end{verbatim}
+and \code{bq} carries \code{pts}, \code{normals}, \code{tangents}, \code{wts},
+its own reference point \code{x0}, the \code{panels} it was built from, and two
+fields that report honesty rather than data: \code{precision} and
+\code{shortfalls} (\S\ref{sec:hard}).
+
+Given \code{bq}, evaluating the identity is three lines:
+\begin{verbatim}
+    from lappy.eigfun_integrals import eigfun_cauchy_data, gram
+    ed = eigfun_cauchy_data(basis, lam, coef, bq)   # u, du/dn, du/dt at nodes
+    G  = gram(ed, lam, bq)                          # (mult x mult) Gram matrix
+\end{verbatim}
+For a single eigenfunction \code{G} is $1\times1$ and equals $\|u\|^2$. For a
+degenerate cluster of multiplicity $m$ it is the $m\times m$ matrix of inner
+products $\langle u_i,u_j\rangle$, from which \code{lowdin\_transform} produces
+an orthonormal combination. Note the order of operations: the basis is contracted
+with the coefficients \emph{first}, and only then are integrals formed. Never
+assemble a basis-level Gram matrix and sandwich it --- \S\ref{sec:scope}.
+
+\section{Why this is not just ``call Gauss--Legendre''}
+
+If $\partial\Om$ is smooth and $u$ is smooth, Gauss--Legendre converges
+spectrally and there is no story. The story is corners.
+
+\subsection{What an eigenfunction looks like at a corner}
+
+Put a corner at the origin with interior angle $\alpha$, edges along $\theta=0$
+and $\theta=\alpha$, and define
+\begin{equation}
+  \nu := \frac{\pi}{\alpha}.
+\end{equation}
+So a right angle has $\nu=2$, a straight-through ``corner'' $\nu=1$, a
+$270^\circ$ reentrant corner $\nu=2/3$, and a slit ($\alpha\to2\pi$) $\nu\to1/2$.
+Every Dirichlet solution has the local expansion
+\begin{equation}\label{eq:expansion}
+  u(r,\theta)=\sum_{k\ge1}c_k\,J_{k\nu}\!\big(\sqrt\lambda\,r\big)\sin(k\nu\theta),
+\end{equation}
+which is worth reading twice: the angular functions $\sin(k\nu\theta)$ are
+exactly those vanishing on both edges, and the radial factors are then forced to
+be Bessel functions of matching order.
+
+On the edge $\theta=0$ the normal derivative is $-\frac1r\partial_\theta u$, and
+using $J_\mu(z)=(z/2)^\mu A_\mu(z^2)$ with $A_\mu$ entire and $A_\mu(0)\ne0$,
+\begin{equation}\label{eq:dudn}
+  \pd{u}{n}\bigg|_{\theta=0}= r^{\nu-1}F(r),
+  \qquad\text{so}\qquad
+  \left(\pd{u}{n}\right)^{\!2} = r^{2\nu-2}G(r),
+\end{equation}
+where $F$ and $G$ are series in powers $r^{k\nu}$ and $r^{2q}$. \textbf{This is
+the single most important formula in this document.} The integrand of
+\eqref{eq:rellich} near a corner is a smooth series multiplied by $r^{2\nu-2}$.
+
+\subsection{Gauss--Legendre on $r^\gamma$}
+
+So the question is: how well does a Gauss rule integrate $\tau^\gamma$ with
+$\gamma=2\nu-2$? Write it down and try it:
+\begin{verbatim}
+    from lappy.quad import smooth_power_error
+    smooth_power_error(gamma, order)   # relative error on int_0^1 tau^gamma
+\end{verbatim}
+
+\begin{center}
+\begin{tabular}{lccccc}
+\toprule
+$\gamma=2\nu-2$ & $\nu$ & $\alpha$ & $n=16$ & $n=64$ & fitted rate \\
+\midrule
+$1/3$    & $7/6$   & $154^\circ$ & $8.0\times10^{-5}$  & $2.1\times10^{-6}$  & $n^{-2.6}$\\
+$2/3$    & $4/3$   & $135^\circ$ & $1.2\times10^{-5}$  & $1.2\times10^{-7}$  & $n^{-3.3}$\\
+$1$      & $3/2$   & $120^\circ$ & $0$                 & $0$                 & exact\\
+$3/2$    & $7/4$   & $103^\circ$ & $1.7\times10^{-7}$  & $1.8\times10^{-10}$ & $n^{-5.0}$\\
+$11.55$  & $6.78$  & $27^\circ$  & $8.7\times10^{-16}$ & $3.5\times10^{-16}$ & exact\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip\noindent
+Three things to take from this table.
+
+\paragraph{Integer $\gamma$ is exact.} An $n$-point Gauss rule integrates
+polynomials of degree $\le 2n-1$ exactly, and $\tau^\gamma$ with integer $\gamma$
+is a polynomial. So $\nu\in\{1,\tfrac32,2,\tfrac52,3,\dots\}$ --- which includes
+every right angle and every $120^\circ$ corner --- costs nothing at all.
+
+\paragraph{Non-integer $\gamma$ converges algebraically, at rate $n^{-(2\gamma+2)}$.}
+The function $\tau^\gamma$ is continuous but not analytic at $0$: some derivative
+blows up. Gauss--Legendre's spectral convergence needs analyticity, and without
+it the classical result is an algebraic rate governed by how many derivatives
+exist. The fitted rates above match $2\gamma+2$ to two digits ($2.64$ vs $2.67$,
+$3.31$ vs $3.33$, $4.96$ vs $5.00$), which is a satisfying check to run yourself.
+
+\paragraph{The rate is what matters, not the exponent's sign.} At
+$\gamma=11.55$ the predicted rate is $n^{-25}$: the function is so smooth that
+Gauss is at roundoff by order 16, even though $\gamma$ is irrational. At
+$\gamma=2/3$ the rate is $n^{-3.3}$ and you will \emph{never} reach $10^{-13}$
+--- order 64 gives $10^{-7}$, and quadrupling again buys three digits.
+
+\subsection{The criterion \texttt{lappy} uses, and the one it used to use}
+
+Here is the practical payoff, and a mistake worth learning from. For a long time
+the code decided a corner ``needs the special rule'' when $\nu<1$, i.e.\ when the
+corner is \emph{reentrant}, on the reasoning that a convex corner has bounded $u$
+and bounded $\partial u/\partial n$, so a smooth rule should be fine.
+
+That reasoning is wrong, and the table above says why. At a $135^\circ$ corner,
+$\nu=4/3$: the eigenfunction is bounded, its normal derivative $r^{1/3}$ even
+\emph{vanishes} at the corner --- and the integrand is $r^{2/3}$, which Gauss
+integrates at rate $n^{-3.3}$. Nothing is singular in the everyday sense, and the
+quadrature still fails. What matters is not whether $2\nu-2$ is negative but
+whether it is an \emph{integer}.
+
+Equally, the opposite over-correction is also wrong: ``use the corner rule
+whenever $\nu$ is not an integer'' hands the special rule to $\nu=6.78$ corners
+that do not need it and makes them \emph{worse}, because the corner rule is built
+to be exact on a singular class and is not even exact on constants
+(\S\ref{sec:looks-like-bugs}). So \code{lappy} asks the question directly ---
+what does a smooth rule achieve on $\tau^{2\nu-2}$ at the order this segment is
+getting? --- and uses the corner rule exactly when the answer is not good enough.
+Measured on real domains, by refining the node set and differencing the integral:
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+domain & nodes & before & after\\
+\midrule
+\code{right\_trapezoid} & $84\to212$ & $1.8\times10^{-6}$ & $2.9\times10^{-16}$\\
+\code{GWW1} & $204\to440$ & $3.2\times10^{-5}$ & $5.0\times10^{-13}$\\
+\code{iso\_tri\_h05} & $96\to224$ & $1.2\times10^{-11}$ & $4.8\times10^{-16}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{The corner-adapted rule, in one page}
+
+When a corner does need help, the fix is to build a rule matched to the class
+\eqref{eq:dudn} rather than to polynomials. Two ideas, both standard:
+
+\paragraph{Absorb the singularity into the weight.} Gauss--Jacobi rules integrate
+$\int_0^1\tau^{\gamma}(\text{polynomial})\dd\tau$ exactly, with $\gamma$ as a
+weight exponent. Taking $\gamma=2\nu-2$ handles the $r^{2\nu-2}$ prefactor by
+construction, leaving a smooth series for the polynomial part.
+
+\paragraph{Rationalize the exponents.} $G$ in \eqref{eq:dudn} contains powers
+$r^{k\nu}$ \emph{and} $r^{2q}$ --- two incommensurate families. A substitution
+$\tau=t^{q}$ with $\nu=p/q$ turns both into integer powers of $t$, so a
+polynomial rule in $t$ is exact on the whole class. This works beautifully in
+theory and fails in practice for $q\ge4$: the innermost node lands at
+$t_{\min}^q$, which underflows the coordinate representation (a node at
+$p_0+\tau L\hat d$ rounds onto $p_0$ itself), and the accuracy is destroyed.
+\code{lappy} therefore takes the node \emph{placement} from the mild exponent
+$\nu$ and gets exactness from the \emph{weights} instead, via an interpolatory
+rule on the true exponent set. That is the difference between \code{cornerjac}
+(substitution; only safe for straight edges with $2/\nu$ integral) and
+\code{cornerinterp} (the general case).
+
+Two practical consequences follow, and both look like bugs the first time.
+
+\subsection{Two things that look like bugs}\label{sec:looks-like-bugs}
+
+\paragraph{The weights do not sum to the panel length.} A corner rule is exact on
+$\{\gamma+k\nu+m\}$, a set that does not contain $\tau^0$. It therefore does not
+integrate constants, and $\sum_i w_i \ne L$ on that panel. Renormalizing would
+destroy exactness on the class the rule exists for. (This is also why feeding a
+corner rule an integrand with no corner structure --- a plane wave, say --- gives
+a bad answer, and why a naive ``always use the corner rule'' criterion loses.)
+
+\paragraph{Accuracy is not monotone in the order.} Past a $\nu$-dependent
+threshold, raising the order makes things \emph{worse}: the integrand's dynamic
+range ($\tau^{2\nu-2}\sim6\times10^8$ at $\tau\sim10^{-9}$) against
+correspondingly tiny weights means roundoff, not truncation, dominates. Order
+selection therefore \emph{scans} a calibrated curve for the best order; it never
+increases the order until a target is met.
+
+\section{Three requirements, not one}\label{sec:sizing}
+
+Choosing each panel's order is where the code spends its cleverness. A panel must
+resolve all of the following, and the required order is the largest of the three.
+
+\paragraph{1. Oscillation.} An eigenfunction oscillates at wavenumber
+$\sqrt\lambda$, and the integrand is a \emph{product} of two derivatives, so it
+oscillates at $2\sqrt\lambda$. Over a segment of length $L$ that is a total phase
+$k=2\sqrt{\lambda_{\max}}\,L$, and \code{smooth\_order\_for\_precision} finds the
+smallest Gauss order integrating $e^{ik\tau}$ to the target. Model integrand,
+closed-form answer, so the sizing is self-certifying rather than calibrated
+offline.
+
+\paragraph{2. The corner class.} As \S4: if the smooth rule cannot handle
+$\tau^{2\nu-2}$, the panel is corner-anchored and its order comes from a model
+integrand in the corner's own exponent family
+(\code{corner\_order\_for\_precision}).
+
+\paragraph{3. The parametrization.}\label{sec:geom} This one is easy to forget,
+and it is the subject of the newest part of the code. Panels live in
+\emph{normalized arclength}. For a straight edge or a circular arc, that
+parametrization is exact and free. For a curve of varying speed --- an ellipse
+--- the arclength map is analytic but its strip of analyticity narrows as the
+curve becomes eccentric, and Gauss--Legendre's convergence rate narrows with it.
+
+You can see this with no eigenfunction at all, using the pure-geometry identity
+\eqref{eq:area}:
+
+\begin{center}
+\begin{tabular}{lcccccc}
+\toprule
+order & 16 & 32 & 64 & 128 & 192 & 256\\
+\midrule
+disk          & $3$e$-16$ & $3$e$-16$ & $3$e$-16$ & $3$e$-16$ & $3$e$-16$ & $3$e$-16$\\
+ellipse $a=2$ & $5$e$-03$ & $2$e$-04$ & $4$e$-07$ & $3$e$-12$ & $5$e$-15$ & $2$e$-15$\\
+ellipse $a=4$ & $4$e$-02$ & $1$e$-02$ & $2$e$-03$ & $8$e$-05$ & $3$e$-06$ & $1$e$-07$\\
+ellipse $a=6$ & $6$e$-02$ & $3$e$-02$ & $1$e$-02$ & $2$e$-03$ & $5$e$-04$ & $1$e$-04$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip\noindent
+A circle is exact at every order because its arclength map is linear. An
+$a=2$ ellipse needs about $170$ nodes where the oscillation model asked for $46$.
+An $a=6$ ellipse cannot be resolved at any order you would want to use.
+\code{geometry\_order\_for\_precision} sizes each segment on
+\eqref{eq:area}, so this is caught automatically --- and costs nothing on
+every exactly-parametrized boundary, because there the geometry order never
+exceeds the oscillation order.
+
+\begin{remark}
+A natural guess is that the culprit is the interpolation tolerance of the
+arclength table. It is not: the error is identical to three digits at
+$\text{tol}=10^{-4}$, $10^{-6}$ and $10^{-8}$, while the table's build cost goes
+$0.0$s, $0.9$s, $65$s. Refining it is pure expense. The lesson is worth
+generalizing --- before optimizing a suspected cause, vary it and check that the
+symptom responds.
+\end{remark}
+
+\section{What is out of reach, and how the code says so}\label{sec:hard}
+
+Some geometry is genuinely hard, and the design goal is not to pretend otherwise.
+Three examples, all in the benchmark suite:
+
+\begin{itemize}
+\item a \textbf{near-slit corner} ($\nu\to\tfrac12$), where the integrand
+      $r^{2\nu-2}\to r^{-1}$ is barely integrable and $90\%$ of the integral
+      lives within $10^{-9}$ of the corner;
+\item an \textbf{eccentric ellipse}, per \S\ref{sec:sizing};
+\item a \textbf{coiled spiral}, with many corners and long thin channels.
+\end{itemize}
+
+For these, \code{boundary\_quadrature} does three things instead of quietly
+returning a wrong number:
+\begin{enumerate}
+\item \code{bq.precision} reports what the rule can support, not what was asked
+      for. A singular corner that had to be demoted to a smooth rule gets
+      $\infty$, because there is no bound at all in that case.
+\item \code{bq.shortfalls} names each corner or segment that fell short, and why.
+\item a warning distinguishes the \emph{cause} --- in particular an eccentric
+      ellipse warns that the \emph{parametrization} is the limit, so you do not
+      go hunting for a bug in the eigenfunction.
+\end{enumerate}
+
+There is a fourth class, currently labelled rather than solved: a stadium has
+exact parametrization and integer $\nu$, yet its integrals sit near
+$10^{-4}$, because its boundary data carries far more harmonics than
+$2\sqrt\lambda L$ predicts. No geometry-only rule can anticipate that --- it is a
+property of the solution, not of the domain --- so the honest tool there is the
+a posteriori check of the next section.
+
+\section{How to check your own work}\label{sec:instruments}
+
+\paragraph{Refine and difference (the reliable one).}
+\begin{verbatim}
+    from lappy.eigfun_integrals import verify_gram
+    G, G_ref, err = verify_gram(basis, lam, coef, bq, domain)
+\end{verbatim}
+recomputes the Gram on a systematically refined node set and returns the change.
+This measures the quadrature and nothing else. It is the instrument to reach for.
+
+\paragraph{Vary $x_0$ (the free detector, with a caveat).} By
+Proposition~\ref{prop:rellich} the answer cannot depend on $x_0$, so evaluating
+\code{gram(ed, lam, bq, x0=...)} at several points and looking at the spread
+costs three matrix products and needs no reference. It is what first exposed the
+$\nu<1$ mistake. But it is a detector, not an error bar: it also carries the
+\emph{eigenvalue's} error, since $\lambda$ enters through $1/(2\lambda)$ and
+through the Cauchy data, so an inexact $\lambda$ makes $u$ not quite an
+eigenfunction and the $x_0$-dependence reappears. Measured, the two can differ by
+three orders in either direction --- on one domain the spread reads
+$3.3\times10^{-12}$ where the quadrature error is $1.4\times10^{-13}$; on another
+it reads $4.1\times10^{-11}$ where the quadrature error is $1.0\times10^{-8}$.
+
+\paragraph{Compare against closed forms (the ground truth).} \code{lappy.reference}
+has exact eigenfunctions and exact $L^2$ norms for rectangles, isosceles right
+triangles, disks, circular sectors of arbitrary angle, and polyominoes. These are
+the only unimpeachable references, and every test in
+\code{tests/test\_eigfun\_integrals.py} uses one.
+
+\begin{remark}[on instruments]
+Do not use \code{mpmath.quad} as a reference for these integrands. As
+$\nu\to\tfrac12$ the endpoint behaviour approaches $r^{-1}$ and it errs by
+$4\times10^{-2}$ even at 40 digits --- manufacturing convincing, entirely
+spurious, convergence plateaus. This cost a real amount of time.
+\end{remark}
+
+\section{Scope: what this machinery is \emph{not} for}\label{sec:scope}
+
+The rule is matched to \emph{eigenfunction}-level data. At a corner, an exact
+eigenfunction's local structure is purely the corner family \eqref{eq:expansion},
+which is exactly what the rule integrates.
+
+It is not appropriate for a basis-level $N\times N$ Gram matrix. A basis column
+centred at some other corner is plain analytic at this one, with $O(1)$ amplitude
+at every corner simultaneously --- the wrong class entirely. Measured, the corner
+rule beats a graded rule by 3--8 orders on corner-family blocks and \emph{loses}
+by 2--4 on mixed ones, which is why \code{lappy} retired the basis-level path
+rather than adapting it. Hence the slogan in the module docstring: evaluate
+first, sandwich never. Contract the basis with the coefficients, \emph{then}
+integrate.
+
+\section{Exercises}
+
+These are in the order I would do them. Each should take minutes, and each has a
+number you can check against.
+
+\begin{exercise}[the geometry identity]
+For \code{disk(1.0)}, \code{rect(1,1)} and \code{ellipse(2,1)}, build a node set
+and evaluate $\sum_i w_i\,(x_i-x_0)\cdot n_i$ against $2|\Om|$, for two or three
+different $x_0$. Which domains are exact, and which is not? Then re-run the
+ellipse with \code{resolve\_geometry=False} and explain the difference.
+\end{exercise}
+
+\begin{exercise}[the disk, in closed form]
+Using \code{lappy.reference.disk\_eigfun}, form the Cauchy data of $J_2(j_{2,1}r)\cos2\theta$
+on the boundary by hand, evaluate \eqref{eq:rellich} with the quadrature, and
+compare to $\tfrac{\pi}{2}J_3(j_{2,1})^2$. You should get $10^{-15}$ or better.
+Now do it for a circular sector of angle $\tfrac32\pi$ with
+\code{sector\_eigfun}, whose apex is a reentrant corner, and try $x_0$ at the
+apex versus $x_0$ elsewhere.
+\end{exercise}
+
+\begin{exercise}[the rate law]
+Reproduce the $\tau^\gamma$ table with \code{smooth\_power\_error} and fit the
+convergence rate for $\gamma=1/3,\,2/3,\,3/2$. Confirm $n^{-(2\gamma+2)}$. Then
+try $\gamma=4.5$ and explain why the fit breaks down. (Hint: look at the size of
+the numbers, not the trend.)
+\end{exercise}
+
+\begin{exercise}[the criterion]
+Build a regular octagon ($\nu=4/3$ at every corner) and compare
+\code{boundary\_quadrature(..., nonintegral=False)} with the default. Inspect
+\code{bq.panels} to see which rules were assigned, then use \code{verify\_gram}
+on a real MPS eigenfunction to measure what changed. Predict the answer for a
+regular hexagon ($\nu=3/2$) \emph{before} running it.
+\end{exercise}
+
+\begin{exercise}[reading a refusal]
+Build a node set for \code{ellipse(6,1)} and for a sector of angle $1.984\pi$.
+Read \code{bq.precision}, \code{bq.shortfalls} and the warnings. For each, say in
+one sentence which of the three requirements in \S\ref{sec:sizing} failed, and
+whether more nodes would help.
+\end{exercise}
+
+\begin{exercise}[the whole pipeline]
+Take \code{L\_shape()}, build an \code{MPSEigensolver} with
+\code{from\_domain}, solve for the first eigenvalue, and check that
+\code{eigenfunction\_coef} returns coefficients whose Gram is $1$ to
+$10^{-13}$. Then verify the same norm against interior cubature
+(\code{lappy.cubature.polygon\_cubature}) and explain which of the two you would
+trust if they disagreed at $10^{-9}$.
+\end{exercise}
+
+\section{Answers to check against}
+
+Run on the code as of this writing. If you get these, you have wired things up
+correctly; if you get something else, the discrepancy is the interesting part.
+
+\medskip
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Exercise & quantity & value \\
+\midrule
+1 & disk, rect: $|\!\sum w\,(r\cdot n)-2|\Om||$ & $\le3\times10^{-15}$, any $x_0$\\
+1 & ellipse $(2,1)$, default & $1.4\times10^{-15}$ at 168 nodes\\
+1 & ellipse $(2,1)$, \code{resolve\_geometry=False} & $1.5\times10^{-5}$ at 46 nodes\\
+\midrule
+2 & disk $J_2$ mode, quadrature & $0.181230398151804$\\
+2 & $\tfrac{\pi}{2}J_3(j_{2,1})^2$ & $0.181230398151804$\\
+\midrule
+3 & fitted rates, $\gamma=\tfrac13,\tfrac23,\tfrac32$ & $2.64,\;3.31,\;4.96$\\
+3 & predicted $2\gamma+2$ & $2.67,\;3.33,\;5.00$\\
+\midrule
+4 & octagon ($\nu=4/3$), default & \code{cornerinterp}, 824 nodes\\
+4 & octagon, \code{nonintegral=False} & \code{legendre}, 96 nodes\\
+4 & hexagon ($\nu=3/2$), either way & \code{legendre}, 84 nodes\\
+\midrule
+5 & \code{ellipse(6,1)} & \code{precision} $=9.9\times10^{-5}$, segment shortfall\\
+5 & sector of $1.984\pi$ & \code{precision} $=\infty$, corner demoted\\
+\midrule
+6 & \code{L\_shape}, boundary Gram & $|G-1| = 2.2\times10^{-16}$\\
+6 & \code{L\_shape}, interior cubature & $|{\cdot}-1| = 5.9\times10^{-11}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip\noindent
+Exercise 3's fit breaks down at $\gamma=4.5$ because the error has already reached
+roundoff ($\sim10^{-15}$) by order 32; there is no trend left to fit. Exercise 4's
+hexagon is the control: $\nu=3/2$ gives $\gamma=1$, an exact polynomial, so
+nothing should change and nothing does. Exercise 5's two failures are deliberately
+different --- one names a \emph{segment} and blames the parametrization, the other
+names a \emph{corner} and refuses to quote a number at all. Exercise 6 is the one
+to think hardest about: the boundary route is five orders better than the interior
+cubature it is being compared to, which is why the comparison is reported as a
+cross-check and not as an error bar.
+
+\section*{Where to read next}
+
+\begin{itemize}
+\item \code{docs/corner\_quadrature.pdf} --- the research record: the corner rule
+      derived properly, the failure of the graded rule quantified, and an
+      addendum listing what did not survive contact with real domains.
+\item \code{docs/rellich.md} --- the identity in its general (Zaremba) form,
+      covering mixed boundary conditions.
+\item \code{docs/eigfun\_integrals.md} --- the API and its accuracy record.
+\item \code{lappy/eigfun\_integrals.py} --- the implementation. The docstrings
+      carry the measurements; read \code{boundary\_quadrature} and
+      \code{corner\_specs} first.
+\item \code{tests/test\_eigfun\_integrals.py} --- worked, checked examples of
+      every claim above, against closed forms.
+\end{itemize}
+
+\end{document}
