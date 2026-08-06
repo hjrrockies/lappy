@@ -360,7 +360,9 @@ Corner-quadrature experiments should always report the edge/arc split.
 
 \section{Recommended construction}
 
-For each corner with $\nu<1$, and each straight edge meeting it:
+For each corner needing the rule (Section~\ref{sec:criterion} --- \emph{not} simply
+$\nu<1$, which is what this section originally said), and each straight edge
+meeting it:
 \begin{enumerate}
 \item Work in corner-local coordinates $(r,\theta)$; never form
 $p_0+\tau L\hat d$.
@@ -496,6 +498,123 @@ order is 16 while the floor-based cap is 75, and using the cap gives
 $4.2\times10^{-9}$. Order selection must therefore scan a calibrated curve, not
 increase the order until a target is met.
 
+\subsection{The criterion is not $\nu<1$}\label{sec:criterion}
+
+Every section above frames the problem around \emph{reentrant} corners, and the
+implementation followed: a corner got the adapted rule when $\nu<1$, on the
+reasoning that a convex corner's eigenfunction is bounded and so a smooth rule is
+already exact. That reasoning is wrong, and it cost the suite several orders on
+domains with no reentrant corner at all.
+
+What~\eqref{eq:G} actually says is that the integrand carries $r^{2\nu-2}$, and
+nothing in its derivation assumed $\nu<1$. The relevant question is therefore not
+whether $2\nu-2$ is negative but whether it is an \emph{integer}. At
+$\alpha=\frac34\pi$ we have $\nu=4/3$: the eigenfunction is bounded, its normal
+derivative $r^{1/3}$ vanishes at the corner, and the integrand is $r^{2/3}$ ---
+continuous, with an infinite derivative, and Gauss--Legendre converges on it
+algebraically. The analytic model integrand used to \emph{size} a smooth panel
+cannot see this at all, so the rule reports success while missing by orders.
+
+The test that works is direct: ask what an $n$-point Gauss--Legendre rule does to
+$\int_0^1\tau^{\gamma}\dd\tau$ with $\gamma=2\nu-2$ (\verb|quad.smooth_power_error|).
+\medskip
+
+\begin{center}
+\begin{tabular}{lccl}
+\toprule
+$\gamma=2\nu-2$ & $\nu$ & $n=16$ & $n=64$ \\
+\midrule
+$0.333$  & $1.167$ & $8.0\times10^{-5}$ & $2.1\times10^{-6}$ \\
+$0.667$  & $1.333$ & $1.2\times10^{-5}$ & $1.2\times10^{-7}$ \\
+$1.000$  & $1.500$ & $0$                & $0$ \\
+$2.500$  & $2.250$ & $1.7\times10^{-9}$ & $1.2\times10^{-13}$ \\
+$11.550$ & $6.775$ & $8.7\times10^{-16}$& $3.5\times10^{-16}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\medskip
+
+\noindent
+Integer $\gamma$ is a polynomial and integrates exactly, so $\nu=3/2$ or $2$ needs
+nothing. Large fractional $\gamma$ has so many continuous derivatives that the
+algebraic rate is indistinguishable from spectral at any usable order. Only small
+fractional powers --- corners near $135^\circ$ --- genuinely defeat a smooth rule.
+
+Both directions matter. A naive ``$\nu$ is not an integer'' criterion is also
+wrong: it hands the adapted rule to $\nu=6.78$ corners that do not need it and
+makes them \emph{worse} ($1.2\times10^{-11}\to8.9\times10^{-10}$, measured on
+\verb|iso_tri_h05|), because the rule is not exact on constants and the integrand
+there has no singular structure to exploit. Asking the smooth rule what it can
+deliver settles both cases. Measured end to end, by refining the node set and
+differencing the integral:
+\medskip
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+domain & nodes & before & after \\
+\midrule
+\verb|right_trapezoid| & $84\to212$ & $1.8\times10^{-6}$  & $2.9\times10^{-16}$\\
+\verb|GWW1|            & $204\to440$& $3.2\times10^{-5}$  & $5.0\times10^{-13}$\\
+\verb|reg_ngon_7|      & $98\to868$ & $2.6\times10^{-5}$  & $1.6\times10^{-13}$\\
+\verb|iso_tri_h05|     & $96\to224$ & $1.2\times10^{-11}$ & $4.8\times10^{-16}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{On a curved boundary the parametrization can cost more than the eigenfunction}
+
+The analysis above sizes panels for the eigenfunction: its corner exponents and its
+$\sqrt\lambda$ oscillation. On a curved segment that is not the whole cost. Panels
+live in normalized arclength, and for a curve of varying speed that map is analytic
+but with a strip of analyticity that narrows as the curve becomes eccentric ---
+taking Gauss--Legendre's rate with it.
+
+This is measurable with no eigenfunction at all. By the divergence theorem
+$\int_{\partial\Om} r_N\dd s = 2|\Om|$ for any $x_0$, a closed form containing no
+$\lambda$, no basis and no solution:
+\medskip
+
+\begin{center}
+\begin{tabular}{lcccccc}
+\toprule
+order & 16 & 32 & 64 & 128 & 192 & 256\\
+\midrule
+disk         & $3$e$-16$ & $3$e$-16$ & $3$e$-16$ & $3$e$-16$ & $3$e$-16$ & $3$e$-16$\\
+ellipse $a=2$& $5$e$-03$ & $2$e$-04$ & $4$e$-07$ & $3$e$-12$ & $5$e$-15$ & $2$e$-15$\\
+ellipse $a=4$& $4$e$-02$ & $1$e$-02$ & $2$e$-03$ & $8$e$-05$ & $3$e$-06$ & $1$e$-07$\\
+ellipse $a=6$& $6$e$-02$ & $3$e$-02$ & $1$e$-02$ & $2$e$-03$ & $5$e$-04$ & $1$e$-04$\\
+\bottomrule
+\end{tabular}
+\end{center}
+\medskip
+
+\noindent
+A circle is exact at any order because its arclength map is linear; so is a straight
+edge. Sizing each segment on this identity as well as on the oscillation
+(\verb|eigfun_integrals.geometry_order_for_precision|) costs an $a=2$ ellipse
+$46\to168$ nodes and takes its eigenfunction integrals from $1.0\times10^{-6}$ to
+$3.9\times10^{-16}$, while every exactly-parametrized boundary pays nothing.
+
+This is \emph{not} the arclength table's interpolation tolerance, which was the
+natural suspect: the error is identical to three digits at $\mathrm{tol}=10^{-4}$,
+$10^{-6}$ and $10^{-8}$, while the table's build cost goes $0.0$s, $0.9$s, $65$s.
+Refining it is pure expense.
+
+Past about $a=4$ no usable order suffices. That is reported rather than chased:
+\verb|BoundaryQuad.precision| stops claiming $10^{-13}$, \verb|shortfalls| names the
+segment, and the warning says the parametrization is the limit so the reader does
+not go looking for a defect in the eigenfunction. The same applies to a corner too
+close to the slit limit to be admissible, where \verb|precision| is $\infty$.
+
+A third class remains open and is labelled rather than fixed: a \verb|stadium| has
+exact parametrization and integer $\nu$, yet its integrals sit at $1.5\times10^{-4}$
+because its boundary data carries far more harmonics than $2\sqrt\lambda\,L$
+predicts. No geometry-only rule can know that --- it is a property of the solution.
+Measured against the Cauchy data's own spectrum the model errs in both directions:
+a circle needs 4 harmonics where the model assumes 64, an ellipse needs 80 where it
+assumes 8.
+
 \subsection{Scope, sharpened}
 
 The rule is matched to \emph{eigenfunction}-level Cauchy data, whose local
@@ -511,5 +630,23 @@ for these integrands: as $\nu\to1/2$ the endpoint behaviour approaches $r^{-1}$
 and it errs by $4\times10^{-2}$ even at 40 digits, manufacturing convincing but
 entirely spurious convergence plateaus. Every reference used in the tests is
 closed-form.
+
+Nor is $x_0$-invariance an error bar, though it is a fine detector. The identity
+holds for every $x_0$, so disagreement across $x_0$ is real --- it is what exposed
+the shortfall of Section~\ref{sec:criterion} in the first place --- but it does not
+measure the quadrature alone. It also carries the \emph{eigenvalue's} error, since
+$\lambda$ enters through $1/(2\lambda)$ and through the Cauchy data, so an inexact
+$\lambda$ makes $u$ not quite an eigenfunction and the $x_0$-dependence reappears.
+On \verb|L_shape| the spread reads $3.3\times10^{-12}$ where the quadrature is
+$1.4\times10^{-13}$; on \verb|H_shape| it reads $4.1\times10^{-11}$ where the
+quadrature is $1.0\times10^{-8}$, understating it by three orders. Refining the
+node set and differencing the integral (\verb|eigfun_integrals.verify_gram|)
+measures the quadrature and nothing else, and is the instrument to reach for.
+
+It is also worth recording what the spread is \emph{not}: it is not dominated by
+the eigenfunction's boundary residual. Holding the node set fixed and sweeping the
+basis size $60\to480$ moves $\sup|u|$ on the boundary by six orders
+($9.3\times10^{-10}\to1.0\times10^{-15}$) and leaves the spread at
+$1.68\times10^{-6}$, identical to three significant figures.
 
 \end{document}

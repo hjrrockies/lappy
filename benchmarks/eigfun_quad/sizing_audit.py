@@ -56,6 +56,8 @@ from lappy.utils import complex_dot
 def refine_panel(panel, depth=3, smooth_order=48):
     """Replacement tiling of `panel`'s interval, finer but covering it exactly.
 
+    The same rule `eigfun_integrals.refine_quadrature` applies to a whole node set --
+    this is the single-panel version, which is what per-panel attribution needs.
     A legendre panel is split into `2**depth` equal pieces at `smooth_order`. A
     corner panel keeps its anchor on a piece `2**depth` times shorter (same rule,
     same order -- the singular end is refined by SHRINKING, not by raising an
