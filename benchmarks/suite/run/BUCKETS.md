@@ -240,3 +240,91 @@ Relative to the previous session, from pipeline changes alone
 
 None of these needed a per-domain fix. That is the strongest evidence that most
 of what looked like domain difficulty was pipeline defect.
+
+
+---
+
+# Re-run with boundary-integral certification (tag `orth`)
+
+All 44 domains re-run after `||u||_L2` moved from interior cubature to the
+Rellich boundary integral over `MPSEigensolver`'s corner-adapted quadrature
+(`certify.boundary_l2`). Each domain at **its own best recorded `n_basis`** --
+the one this table already used -- so the comparison is like for like.
+
+**Verdict: 32 / 10 / 2. No domain changed bucket. No eigenvalue lost a digit.**
+
+`eps` is scale-invariant, so this was the predicted outcome: normalizing `u`
+cannot change a ratio in which its scale cancels. What changed is that the
+denominator no longer needs a triangulation (`spiral_t25` has none that builds
+inside 90s), no longer over-integrates on `cut_square_r025` (mesh 0.9509685 vs
+area 0.9509126 -- the wrong side of a bound that needs an under-estimate), and
+is much cheaper where the mesh was large (disk 128s->58s, mushroom 235s->110s).
+
+The `sector_*` "gains" below are baseline artifacts: those `buckets.jsonl`
+records predate the `_bessel_zero` -> `mpmath.besseljzero` fix, and the corrected
+values in the analytic table above (14.6, 15.2) are what the re-run reproduces.
+
+`norm` is which estimate the bound used: `boundary` alone, or `mixed` where the
+`x0`-spread exceeded 1e-8 and cubature was computed as well (the larger of the
+two lower bounds wins). `x0-spread` is the worst over the ten eigenvalues.
+Seconds are solve+certify, old/new.
+
+| domain | tier | n_basis | bucket | digits old -> new | norm | x0-spread | s old/new |
+|---|---|---|---|---|---|---|---|
+| `square` | analytic | 120 | 1 → 1 | 15.65 → 15.65 | boundary | 2e-15 | 27/28 |
+| `rect_near_deg_1e3` | analytic | 120 | 1 → 1 | 15.54 → 15.54 | boundary | 2e-15 | 17/18 |
+| `rect_near_deg_1e5` | analytic | 120 | 1 → 1 | 15.44 → 15.44 | boundary | 2e-15 | 21/21 |
+| `rect_thin` | analytic | 240 | 1 → 1 | 15.24 → 15.24 | boundary | 2e-15 | 69/70 |
+| `eq_tri` | analytic | 120 | 1 → 1 | 15.57 → 15.57 | boundary | 4e-15 | 27/27 |
+| `iso_right_tri` | analytic | 120 | 1 → 1 | 14.62 → 14.62 | boundary | 1e-14 | 17/17 |
+| `disk` | analytic | 120 | 1 → 1 | 15.23 → 15.23 | boundary | 8e-15 | 128/58 |
+| `sector_reflex` | analytic | 240 | 1 → 1 | 12.86 → 14.66 | boundary | 5e-14 | 47/38 |
+| `sector_sharp_p65` | analytic | 240 | 1 → 1 | 15.07 → 15.52 | boundary | 2e-14 | 13/12 |
+| `sector_sharp_p133` | analytic | 320 | 1 → 1 | 15.17 → 15.17 | boundary | 2e-14 | 17/16 |
+| `sector_slit` | analytic | 320 | 1 → 1 | 13.10 → 15.44 | mixed | 7e-01 | 385/380 |
+| `L_shape` | corner | 240 | 1 → 1 | 13.39 → 13.39 | boundary | 2e-14 | 34/35 |
+| `H_shape` | corner | 480 | 1 → 1 | 9.76 → 9.76 | boundary | 2e-12 | 301/301 |
+| `GWW1` | corner | 320 | 1 → 1 | 8.92 → 8.92 | mixed | 4e-05 | 125/126 |
+| `GWW2` | corner | 480 | 1 → 1 | 9.99 → 9.99 | mixed | 5e-05 | 245/252 |
+| `reg_ngon_5` | corner | 240 | 1 → 1 | 12.76 → 12.76 | mixed | 2e-06 | 99/98 |
+| `reg_ngon_6` | corner | 320 | 1 → 1 | 12.10 → 12.10 | boundary | 6e-15 | 157/157 |
+| `reg_ngon_7` | corner | 240 | 1 → 1 | 10.74 → 10.74 | mixed | 2e-05 | 114/114 |
+| `reg_ngon_8` | corner | 320 | 1 → 1 | 10.39 → 10.39 | boundary | 1e-14 | 175/173 |
+| `chevron_1_15` | corner | 480 | 2 → 2 | 6.31 → 6.31 | mixed | 1e-08 | 259/264 |
+| `chevron_1_2` | corner | 480 | 1 → 1 | 8.83 → 8.83 | boundary | 3e-11 | 228/232 |
+| `chevron_2_3` | corner | 160 | 2 → 2 | 3.65 → 3.65 | mixed | 8e-06 | 45/48 |
+| `chevron_2_4` | corner | 160 | 2 → 2 | 3.30 → 3.30 | mixed | 2e-05 | 66/69 |
+| `chevron_1_125` | corner | 480 | 2 → 2 | 5.03 → 5.03 | mixed | 2e-06 | 300/309 |
+| `iso_tri_h05` | corner | 240 | 1 → 1 | 12.50 → 12.50 | mixed | 3e-06 | 46/47 |
+| `iso_tri_h1` | corner | 240 | 1 → 1 | 14.67 → 14.67 | boundary | 2e-14 | 30/31 |
+| `iso_tri_h4` | corner | 240 | 1 → 1 | 11.34 → 11.34 | boundary | 4e-09 | 59/59 |
+| `iso_tri_h16` | corner | 240 | 1 → 1 | 11.41 → 11.41 | mixed | 5e-08 | 76/78 |
+| `parallelogram_60` | corner | 240 | 1 → 1 | 12.21 → 12.21 | boundary | 5e-15 | 46/47 |
+| `parallelogram_p65` | corner | 320 | 2 → 2 | 7.50 → 7.50 | boundary | 4e-11 | 104/106 |
+| `parallelogram_p127` | corner | 320 | 2 → 2 | 4.12 → 4.12 | mixed | 2e-07 | 147/151 |
+| `right_trapezoid` | corner | 240 | 1 → 1 | 11.37 → 11.37 | mixed | 4e-05 | 19/20 |
+| `spiral` | corner | 320 | 3 → 3 | 1.58 → 1.58 | mixed | 5e-03 | 176/188 |
+| `spiral_t25` | corner | 320 | 3 → 3 | — | — | — | —/— |
+| `ellipse_a2` | curved | 240 | 1 → 1 | 13.60 → 13.54 | mixed | 1e-05 | 88/92 |
+| `ellipse_a3` | curved | 320 | 1 → 1 | 12.48 → 12.52 | mixed | 5e-04 | 161/162 |
+| `ellipse_a4` | curved | 320 | 1 → 1 | 13.07 → 13.07 | mixed | 7e-04 | 189/187 |
+| `stadium` | curved | 320 | 2 → 2 | 2.83 → 2.83 | mixed | 3e-06 | 222/211 |
+| `stadium_L2` | curved | 320 | 2 → 2 | 2.77 → 2.77 | mixed | 6e-06 | 193/193 |
+| `mushroom` | curved | 320 | 1 → 1 | 11.53 → 11.53 | boundary | 3e-12 | 235/110 |
+| `mushroom_thin` | curved | 320 | 2 → 2 | 7.40 → 7.40 | boundary | 4e-09 | 207/120 |
+| `mushroom_neck01` | curved | 320 | 2 → 2 | 5.01 → 5.01 | mixed | 3e-06 | 195/154 |
+| `cut_square_r025` | curved | 640 | 1 → 1 | 12.22 → 12.22 | boundary | 3e-10 | 342/317 |
+| `cut_square_r05` | curved | 640 | 1 → 1 | 11.70 → 11.70 | mixed | 9e-08 | 351/338 |
+
+
+### The `x0`-spread flags 22 domains, and costs nothing
+
+Re-certifying at four node densities with the fallback disabled gives identical
+digits to three decimals (`ellipse_a2` 13.541 at 46 and at 250 nodes; `GWW1`
+8.920 at 204 and at 572). The deflation and the fallback never move a reported
+digit -- they are insurance, not a correction.
+
+`BoundaryQuad.precision` should not be read as an error estimate: it advertised
+1e-13 on 40 domains while the measured spread exceeded 1e-8 on 22 of them, and
+on `sector_slit` (whose nu=0.504 corner is demoted to a smooth rule) it claimed
+1e-13 against a measured 6.9e-01. See NOTEBOOK.md for the partial diagnosis.

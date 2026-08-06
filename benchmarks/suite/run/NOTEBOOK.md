@@ -2470,3 +2470,107 @@ exact `p`, so nothing downstream inherits the guess's error.
 order 24). `_ANCHOR_ORDER` is not, and 8 was too low: the total length still moved
 8e-11 between tol=1e-3 and tol=1e-6, leaving exactly the tol-dependence the solve
 exists to remove. At 12 that is 5e-15, for no measurable cost.
+
+---
+
+## Certification moved to the boundary; all 44 domains re-run; buckets unchanged
+
+`eps = sqrt(area) ||u||_inf,dOmega / ||u||_L2` had one boundary quantity and one
+interior one. With `MPSEigensolver`'s corner-adapted boundary quadrature both are
+now boundary integrals: `certify.boundary_l2` reads the norms off the Rellich Gram
+of the (already L2-orthonormal) eigenfunction cluster. `build_solver(orthonorm=True,
+lam_max=...)` attaches the node set; `bucket.py` and `runner.py` pass it by default;
+`--no-orthonorm` / `l2_source='cubature'` reproduce the old path exactly.
+
+**Result of the full re-run (44 domains, each at ITS best recorded `n_basis`,
+tag `orth`): 32 / 10 / 2, identical to the previous run. No domain changed
+bucket. No eigenvalue lost a digit.**
+
+    worse:   ellipse_a2   -0.06 digits    (the only movement in either direction
+                                           attributable to the change)
+    better:  ellipse_a3   +0.05 digits
+    "better": sector_reflex +1.8, sector_slit +2.3, sector_sharp_p65 +0.45
+              -- NOT ours. Those jsonl records predate the `_bessel_zero` ->
+              `mpmath.besseljzero` reference fix; BUCKETS.md's corrected table
+              already lists 14.6 / 15.2, which is what the re-run reproduces.
+
+### Why the numbers did not move, and why that is the expected result
+
+`eps` is **scale-invariant**: it is a ratio in which `u`'s normalization cancels.
+Orthonormalizing `u` does not change `eps` at all -- it changes what the
+denominator *costs* and what it can be trusted to be. So "no change" was the
+prediction, and getting it is the check that the new path is wired correctly.
+
+Confirmed directly: re-certifying the same eigenvalues at four node densities
+(`l2_source='boundary'`, no fallback) gives **identical digits to three decimals**
+across a 4-6x refinement.
+
+    ellipse_a2        46 nodes 13.541    250 nodes 13.541
+    GWW1             204 nodes  8.920    572 nodes  8.920
+    right_trapezoid   84 nodes 11.374    346 nodes 11.374
+    reg_ngon_7        98 nodes 10.737    336 nodes 10.737
+
+### What was actually bought
+
+Not digits -- soundness and cost:
+
+* **`spiral_t25`'s cubature mesh does not build** (>90s, killed). The interior
+  norm was a hard dependency of certification on a mesh that some domains do not
+  have.
+* **The mesh was on the wrong side of the bound for `cut_square_r025`**:
+  `sum(w) = 0.9509685` against `area = 0.9509126`. The bound needs an
+  UNDER-estimate of `||u||_L2`; that mesh over-integrates. (Elsewhere it
+  under-resolves and errs safe: disk loses 1.6% of its area, stadium 0.2%.)
+* **Speed, where the mesh was large**: disk 128s -> 58s, mushroom 235s -> 110s,
+  mushroom_thin 207s -> 120s. Its mesh is 101,700 points against a 166-node
+  boundary rule. Suite total 5801s -> 5473s despite the boundary path *adding* a
+  cubature cross-check on 22 domains.
+* **Cluster orthogonality is now an output.** Degenerate pairs come back with
+  off-diagonal Gram entries <= 2.4e-16, which the old path never measured.
+
+### The x0-spread is a real signal, and `BoundaryQuad.precision` is not
+
+The identity holds for every reference point `x0`, so disagreement across `x0` is
+pure quadrature error and costs three extra Gram evaluations. It flagged **22 of
+43** domains above 1e-8 -- while `bq.precision` advertised 1e-13 on 40 of them.
+`precision` is a statement about the rule's model integrand, not about what is
+actually integrated, and it should not be used as an error estimate. Worst case:
+
+    sector_slit    x0-spread 6.9e-01     bq.precision claims 1e-13
+
+`sector_slit` is the sharp case: its nu=0.504 corner is INADMISSIBLE and gets
+demoted to a smooth rule (`boundary_quadrature` does warn), but `bq.precision`
+does not record the demotion. The fallback caught it, used cubature for those
+columns, and the domain still certified 13.4 / true 15.4, bucket 1.
+
+### Where the spread comes from -- partly diagnosed, one part open
+
+Tested and **ruled out**: the basis. `fs_frac=0.5` vs `0.0` on GWW1 changes the
+basis from 316 to 332 columns and moves the spread by <1%. So it is a property of
+the node set against the integrand, not of the approximant. (My first hypothesis
+was that FundamentalBasis poles just outside the boundary create near-singular
+features the geometry-only node set cannot know about. Wrong.)
+
+**Smooth boundary: plain under-resolution, and it converges spectrally.**
+
+    ellipse_a2    46 nodes 1.1e-05    78 nodes 1.6e-08
+                 136 nodes 2.4e-13   250 nodes 2.3e-14
+
+So the smooth-panel Nyquist sizing is thin by roughly a factor of 3 in node count
+for this integrand -- unsurprising in hindsight, since the rule is sized for an
+eigenfunction and the Rellich integrand is a PRODUCT of derivative data.
+
+**Polygons: only algebraic, and not explained.** GWW1 goes 3.7e-05 -> 7.0e-07
+over a 2.8x refinement; right_trapezoid 4.3e-05 -> 4.9e-07. Neither the trace
+term (no correlation with `eps` across domains: GWW1 eps=1.2e-9 and
+right_trapezoid eps=4.2e-12 have the same spread) nor node count explains it.
+
+One structural asymmetry is worth recording as the leading suspect for whoever
+picks this up: `default_x0` deliberately sits AT a singular corner, where `r.N`
+vanishes on both edges and removes that corner's singularity outright. Every
+probe `x0` is generic, so the probes re-activate a singularity that the
+production configuration cancels exactly. If that is the mechanism, the spread is
+a **stress test rather than the error of the value actually used**, i.e.
+conservative in the right direction -- which is consistent with the digits not
+moving at any node density. Not tested; the test is probe `x0` placed at other
+singular corners of a multi-corner domain.
