@@ -486,3 +486,23 @@ screened `lam7` at 640, so this is not a contradiction, but it is a caution abou
 **a screen is a screen.** It is right about direction and cheap enough to run dozens of, but
 the end-to-end number is the result, and on two domains now (this and the mushrooms) the
 screen was materially more pessimistic than the certified answer.
+
+### Seed variance: `chevron_2_3`'s conversion is not robust
+
+The discipline this study opened with -- fix the seed *and* report the spread -- caught a real
+problem. `chevron_2_3` at `n_basis=480`, `d=0.4`, three seeds:
+
+    seed 0    10.3        seed 1    10.3        seed 2     5.1
+
+A 5.2-digit spread, and one seed in three lands back in bucket 2. So the honest statement is
+that this configuration reaches bucket 1 on most draws and is not reliable on all of them.
+Compare `parallelogram_p65` under the same treatment: 11.6, 11.6, 11.7.
+
+Interior collocation points come from the global RNG, so a "draw" here is which interior points
+were sampled. A configuration whose accuracy swings five digits on that is under-determined in
+the interior block, which is the same signal FINDINGS section 1 identified and section 8 saw as
+a seed spread of 0.8 on the default `parallelogram_p65` basis (dropping to 0.3 when the sources
+were distributed).
+
+**Every single-seed conversion in this study is therefore provisional until re-run.** The
+remaining ones are queued.
