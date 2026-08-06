@@ -224,3 +224,74 @@ are far apart relative to the wavelength.
    as `n_basis x n_points`.
 5. **Corner separation vs wavelength.** §2 predicts two sharp corners *close
    together* behave much better than two far apart at the same `p`. Untested.
+
+---
+
+## 9. Bucket-2 basis study, domain by domain
+
+Method: screen with `basis_lab.probe` (tension at a *known* eigenvalue, no search --
+seconds per configuration instead of minutes), three seeds, then confirm the winner
+end-to-end through `bucket.py`. `bucket.py` grew `--fs-placement/--fs-d/--fs-frac` and
+`common.build_solver` grew `basis=`, so a trial lands in `buckets.jsonl` like any other run.
+
+### `parallelogram_p65`: 7.50 -> 11.6 certified. Bucket 2 -> 1.
+
+Section 8 had this domain at 8.9 with `by_boundary` sources at `d=1.0`. **The offset is the
+lever, and 1.0 is far from optimal.** Tension at the first, fifth and tenth eigenvalues,
+median over three seeds, `n_basis=320`:
+
+    configuration              cols  n_reg      lam1      lam5     lam10
+    make_default_basis          322    134   1.4e-09   8.3e-10   2.1e-09
+    fs_by_boundary d=1.0        320    128   8.9e-11   6.9e-11   3.5e-10
+    fs_by_boundary d=0.3        320    217   1.9e-12   1.3e-12   1.8e-12
+    fs_by_boundary d=2.0        320    117   3.9e-09   1.8e-09   4.4e-09
+
+Three orders better than the default, and `n_reg/n` rises 42% -> 68%: accuracy and
+conditioning improve together, which is what section 1 predicts if the near-null space is the
+cause. The optimum is a plateau over `d = 0.2-0.4`; `d = 0.05-0.1` is worse again (sources too
+close), so this is a genuine interior optimum and not "smaller is better".
+
+`fs_frac` 0.5 and 0.75 are indistinguishable and 0.25 is worse, confirming section 8's finding
+that the fraction is not the lever. `n_basis=240` already saturates, so the win costs *fewer*
+basis functions than the default it beats.
+
+End to end, `n_basis=320`, `d=0.3`, three seeds: **11.6, 11.6, 11.7** certified digits, seed
+spread 0.1 against the default's 0.8.
+
+### `parallelogram_p127`: 4.12 -> 7.5 certified. Still bucket 2, 0.5 digits short.
+
+Same lever, same direction, and it stops short. Median tension over three seeds:
+
+    configuration                  lam1      lam7     lam10
+    make_default_basis          1.7e-06   7.9e-06   7.6e-06
+    fs_by_boundary d=0.4        1.6e-09   3.1e-07   6.5e-09
+
+`lam1` improves by three orders and `lam7` by only 1.4, so **one mode binds**, and it is
+immovable: 3.0-3.3e-07 across `fs_frac` 0.5-0.9, `bdry_mult` 2-6, `d` 0.1-0.8, and
+`n_basis` 320-640. The spectrum has no near-degeneracy there (relative gaps 1.5-6%), so it is
+not a splitting problem. End to end at `d=0.4`: **7.5 certified digits**, up 3.4 from the
+default but held exactly where the screen said it would be -- the binding mode sets the
+domain's number, and it is half a digit under the bar.
+
+Where the basis fails is localised and stark. Share of the boundary residual's L2 by segment:
+
+    parallelogram_p127  lam7    2.8%  46.9%   1.7%  48.6%     <- the two LONG edges
+    parallelogram_p65   lam7   27.1%  24.5%  20.5%  28.0%     <- spread evenly
+
+96% of the residual sits on the two long edges, peaking mid-edge (0.27-0.37 of the edge length
+from the nearest corner), not at the corners. `p65`, which now solves to 11.6 digits, spreads
+its residual evenly. The distinguishing geometry is thinness: `p127` has area 1 across a
+4.08-long edge, so a width of ~0.245.
+
+**A hypothesis that failed, recorded so it is not retried.** If the width is what matters, the
+source offset should scale with it, and `d/width ~ 0.5` should be the sweet spot. Measured, it
+is not: `d = 0.03-0.15` (`d/width` 0.12-0.61) is uniformly *worse* at every mode, and `lam7`
+is flat from `d = 0.1` upward. Whatever binds that mode is not the source stand-off distance.
+
+### Reading so far
+
+The two parallelograms differ only in sharpness (nu 6.5 vs 12.7) and aspect, and they respond
+completely differently: one is fixed outright by source placement, the other has a single
+mode that ignores every knob in the family. That is evidence the remaining bucket-2 failures
+are not one phenomenon, and it argues for continuing domain by domain rather than hunting a
+universal default -- which is also what section 8 concluded from the GWW1/GWW2 split.

@@ -20,7 +20,7 @@ from lappy.eigfun_integrals import boundary_quadrature
 
 def build_solver(domain, n_basis, rtol=None, ttol=1e-3, bdry_mult=2, int_npts=None,
                   lam_max=None, orthonorm=False, orthonorm_precision=1e-13,
-                  **basis_kwargs):
+                  basis=None, **basis_kwargs):
     """Manually assemble an MPSEigensolver for `domain` at basis size `n_basis`.
 
     No bdry_normals -- Dirichlet eigenvalues only.
@@ -37,10 +37,18 @@ def build_solver(domain, n_basis, rtol=None, ttol=1e-3, bdry_mult=2, int_npts=No
     reference pipeline is assembled explicitly rather than through
     `from_domain`, and the values already banked were produced without it.
     Callers opt in.
+
+    `basis` overrides `make_default_basis` entirely, for basis experiments
+    (benchmarks/basis_lab). `n_basis` is then only used for defaulting
+    `int_npts`, and `basis_kwargs` must be empty.
     """
     if rtol is None:
         rtol = mps.rtol_default      # inherit, do not pin
-    basis = bases.make_default_basis(domain, n_basis, **basis_kwargs)
+    if basis is None:
+        basis = bases.make_default_basis(domain, n_basis, **basis_kwargs)
+    elif basis_kwargs:
+        raise TypeError(f'basis= overrides make_default_basis, so {sorted(basis_kwargs)} '
+                        'cannot be applied; build the basis you want and pass it')
 
     n_per_seg = mps.pts_per_seg(domain, basis, mult=bdry_mult)
     bdry_pts = domain.bdry_pts(n_per_seg)

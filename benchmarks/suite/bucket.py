@@ -53,9 +53,25 @@ def compare_to_truth(eigs, mults, ref, rtol=1e-6):
     return float(-np.log10(max(rel.max(), 1e-300))), missing, []
 
 
+def make_basis(dom, n_basis, fs_placement='default', fs_d=1.0, fs_frac=0.5):
+    """Basis for a trial. `default` is `make_default_basis`; `boundary` replaces its
+    corner-clustered fundamental block with sources on an offset boundary.
+
+    The offset `fs_d` is the lever, not the fraction: on parallelogram_p65 the tension at
+    lam_1 goes 1.4e-09 (default) -> 8.9e-11 (d=1.0) -> 1.8e-12 (d=0.2-0.4), while fs_frac
+    0.5 vs 0.75 is indistinguishable. FINDINGS.md section 8 tested only d=1.0."""
+    from lappy import bases
+    if fs_placement == 'default':
+        return bases.make_default_basis(dom, n_basis)
+    n_fs = int(round(fs_frac*n_basis))
+    fb = bases.FourierBesselBasis.from_domain(dom, bases.fb_corner_orders(dom, n_basis - n_fs))
+    per_seg = bases.fs_bdry_sps(dom, n_fs, order=1)
+    return fb + bases.FundamentalBasis.by_boundary(dom, per_seg, d=fs_d, order=1)
+
+
 def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
         preflight_pts=300, n_eigs=None, preflight_only=False, tag='',
-        orthonorm=True):
+        orthonorm=True, fs_placement='default', fs_d=1.0, fs_frac=0.5):
     from benchmarks.suite.domains import SUITE
     from benchmarks.suite import preflight as pf
     from common import build_solver, lambda_window
@@ -81,7 +97,8 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
         # to be sized for.
         solver = build_solver(dom, n_basis, rtol=rtol, bdry_mult=bdry_mult,
                               int_npts=int_npts or max(2 * n_basis, 500),
-                              lam_max=b, orthonorm=orthonorm)
+                              lam_max=b, orthonorm=orthonorm,
+                              basis=make_basis(dom, n_basis, fs_placement, fs_d, fs_frac))
     except Exception as ex:
         rec = dict(key=key, n_basis=n_basis, bucket=3, tag=tag,
                    error=f'construction: {type(ex).__name__}: {ex}')
@@ -110,7 +127,8 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
     # --- solve -------------------------------------------------------------
     rec = dict(key=key, n_basis=n_basis, rtol=solver.rtol, int_npts=int_npts,
                preflight=m, noisy=bool(noisy), plot=plot, tag=tag,
-               orthonorm=bool(orthonorm),
+               orthonorm=bool(orthonorm), fs_placement=fs_placement,
+               fs_d=float(fs_d), fs_frac=float(fs_frac),
                bq_nodes=(len(solver.bdry_quad.pts) if solver.bdry_quad else None),
                bq_precision=(float(solver.bdry_quad.precision)
                              if solver.bdry_quad else None))
@@ -200,6 +218,9 @@ def main(argv=None):
     ap.add_argument('--preflight-pts', type=int, default=300)
     ap.add_argument('--n-eigs', type=int, default=None)
     ap.add_argument('--preflight-only', action='store_true')
+    ap.add_argument('--fs-placement', default='default', choices=('default','boundary'))
+    ap.add_argument('--fs-d', type=float, default=1.0)
+    ap.add_argument('--fs-frac', type=float, default=0.5)
     ap.add_argument('--no-orthonorm', dest='orthonorm', action='store_false',
                     default=True,
                     help='certify from interior cubature instead of the '
@@ -217,7 +238,8 @@ def main(argv=None):
     np.random.seed(args.seed)
     run(args.key, args.n_basis, args.rtol, args.int_npts, args.bdry_mult,
         args.preflight_pts, args.n_eigs, args.preflight_only, args.tag,
-        orthonorm=args.orthonorm)
+        orthonorm=args.orthonorm, fs_placement=args.fs_placement,
+        fs_d=args.fs_d, fs_frac=args.fs_frac)
     return 0
 
 
