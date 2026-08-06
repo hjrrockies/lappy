@@ -442,3 +442,33 @@ certified bound, which takes `sup|u|` over the whole boundary and so inherits th
 junk. A bound that weighted the boundary by the eigenfunction's own scale would report this
 domain far more favourably -- but that is a different bound, not a tighter evaluation of this
 one, so it is noted rather than done.
+
+### Control: is it placement, or would more columns have done it?
+
+Having found that the mushrooms wanted size rather than composition, the same question has to
+be put to the domains where placement appeared to win. Default basis, escalated:
+
+    parallelogram_p65        cols  n_reg      lam1      lam5     lam10
+    default nb=320            322    134   1.4e-09   8.2e-10   2.1e-09
+    default nb=800            802    293   1.8e-10   1.0e-10   2.2e-10
+    nb=320, d=0.3             320    217   1.9e-12   1.3e-12   1.8e-12   <- winner
+
+    chevron_1_15
+    default nb=320            322    207   4.6e-08   2.0e-08   8.4e-09
+    default nb=800            798    441   8.6e-09   8.6e-09   2.2e-09
+    nb=480, d=0.2             479    366   6.0e-10   1.8e-11   7.7e-11   <- winner
+
+Placement wins decisively and cheaply: two orders better than the default at 2.5x FEWER
+columns on `p65`, and ~500x better on `chevron_1_15` at 40% fewer. Escalating the default
+basis improves things slowly and steadily -- roughly a factor of 8 over a 2.5x column increase
+-- which is the signature of a basis that is spending new columns on directions it already
+half-covers.
+
+So the two bucket-2 groups really are different, and each needed the knob the other did not:
+
+    sharp-corner group (5 domains)   placement is the lever; size barely matters
+    thin-appendage group (2 domains) size is the lever; placement actively hurts
+
+Which is a warning about generalising from either. A single "better default basis" tuned on
+one group would have made the other worse -- and the local-thickness rule, which was designed
+from the stadium/ellipse evidence, did exactly that to the mushrooms.
