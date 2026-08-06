@@ -138,3 +138,65 @@ And two modelling traps, both of which made a *correct* rule look broken:
 A useful sanity check on any such model: at ν=2/3, `kν − 1 + 2q = 0` has no
 solution in non-negative integers, so a genuine `∂u/∂n` at a 270° corner has **no
 constant term**.
+
+## What `precision` promises, and where it cannot be kept
+
+`precision` is honoured for the *integrand class* the rule is built for, on a boundary whose
+parametrization the rule can resolve. Three things break that, and all three are now measured
+rather than assumed. Two are fixed; the third is reported.
+
+**1. Corners the smooth rule cannot integrate (fixed, `nonintegral=True`).** The criterion for
+"needs the corner-adapted rule" was `nu < 1`, i.e. reentrant only, justified as "a smooth rule
+is already exact" otherwise. It is not. The Rellich integrand carries `r^(2ν−2)`, so what
+matters is whether that exponent is an *integer*: a 135° corner (`ν = 4/3`) puts `r^(2/3)` on
+its edges, which Gauss–Legendre integrates algebraically while the analytic sizing model cannot
+see it at all. `quad.smooth_power_error` now asks the question directly instead of guessing —
+which also avoids the opposite error, since `ν = 6.78` gives `r^11.55` and is already smooth
+enough that forcing a corner rule on it makes things *worse*.
+
+    domain            nodes        before        after
+    right_trapezoid    84/212     1.8e-06      2.9e-16
+    GWW1              204/440     3.2e-05      5.0e-13
+    iso_tri_h05        96/224     1.2e-11      4.8e-16
+
+**2. The parametrization (fixed for mild cases, `resolve_geometry=True`).** See the module
+docstring's table: an ellipse fails `∮(r·N)ds = 2|Ω|` — geometry alone, no eigenfunction — at
+the node count the oscillation model asks for. Sizing on that closed form as well takes
+`ellipse_a2` from 1.0e-06 to 3.9e-16 and `ellipse_a4` from 9.2e-06 to 7.1e-16, and costs
+exactly nothing on any exactly-parametrized boundary.
+
+**3. The eigenfunction's own bandwidth (not fixed; use `verify_gram`).** `stadium` is
+unaffected by both of the above: its geometry is exact and its corners are integral, yet its
+integrals sit at 1.5e-04 because the boundary data has far more harmonics than
+`2 sqrt(lam) * arclength` predicts. The model is unreliable in both directions here — a
+circle's Cauchy data needs 4 harmonics where the model assumes 64, an ellipse's needs 80 where
+it assumes 8 — and no geometry-only rule can know this, because it is a property of the
+solution. `smooth_safety` is the blunt lever (stadium 1.5e-04 → 1.0e-08 at 3×); `verify_gram`
+is the honest answer, measuring what a node set achieved on the integrand actually in hand.
+
+### Some problems are simply hard, and lappy says so instead of pretending
+
+Near-slit reentrant corners, eccentric ellipses and coiled spirals are not defects to be
+engineered away — they are outside what any fixed-order rule delivers, and the design goal is
+that they are *visible*:
+
+* `BoundaryQuad.precision` is no longer a claim contradicted by measurement. A singular corner
+  demoted to a smooth rule (`sector_slit`, ν = 0.504, measured 6.9e-01 against a reported
+  1e-13) sets it to `inf`.
+* `BoundaryQuad.shortfalls` names each corner or segment that fell short and why.
+* An eccentric ellipse warns that the *parametrization* is the limit, so the reader does not
+  go looking for a bug in the eigenfunction.
+
+### Choosing an instrument, revisited
+
+`docs`' earlier advice that x0-invariance "cannot see quadrature error below the
+eigenfunction's own residual" was too pessimistic in one direction and too optimistic in the
+other. Holding the node set fixed and sweeping `n_basis` 60→480 moves `sup|u|` by six orders
+(9.3e-10 → 1.0e-15) and leaves the spread at 1.68e-06, three significant figures identical — so
+it is not residual-dominated. But it *is* contaminated by the **eigenvalue's** error, since λ
+enters through `1/(2λ)` and the Cauchy data: on `L_shape` the spread reads 3.3e-12 where the
+quadrature is 1.4e-13, and on `H_shape` it reads 4.1e-11 where the quadrature is 1.0e-08.
+
+Prefer `verify_gram` (refine the rule, difference the integral). It measures the quadrature and
+nothing else. Keep the x0-spread as a free cross-check — it is what caught this in the first
+place — but do not read it as a quadrature error bar.

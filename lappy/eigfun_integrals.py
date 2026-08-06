@@ -54,17 +54,32 @@ does, and covers the straight family too. Measured: on the curved family
 sub = nu never reaches 1e-13 at any order up to 64, while sub = 1/q is exact by
 order 6-14.
 
-One caveat is real and is measured rather than assumed. The scheme assumes a node
-at parameter `tau` really sits at arclength `tau*seg.len`, which holds exactly for
-LineSegments and, for ParametricSegments, only as well as the adaptive arclength
-table's PCHIP inverse does. A circular arc is machine-exact at any `tol` (its
-arclength map is linear); a curve of varying speed is not, and the resulting
-boundary integrals stall around 1e-5 to 1e-6 *regardless of quadrature order*,
-because a piecewise-cubic inverse makes the integrand only C^1 and Gauss-Legendre
-needs analyticity. `_parametrization_quality` reports the round-trip error behind
-this. docs/eigfun_integrals.md describes the fix (a Newton-solved inverse, which
-restores spectral convergence and makes the constant-speed property exact) and,
-for spline boundaries, the additional requirement that panels break at knots.
+A varying-speed curve costs nodes, and that cost is a property of the
+parametrization rather than of the eigenfunction. Normalized arclength is analytic
+but its strip of analyticity narrows with eccentricity, and Gauss-Legendre's rate
+narrows with it. Measured on `int (r.N) ds = 2|Omega|` -- a closed form with no
+eigenfunction, no lam and no basis in it:
+
+    order          16      32      64     128     192     256
+    disk         3e-16   3e-16   3e-16   3e-16   3e-16   3e-16
+    ellipse a=2  5e-03   2e-04   4e-07   3e-12   5e-15   2e-15
+    ellipse a=4  4e-02   1e-02   2e-03   8e-05   3e-06   1e-07
+    ellipse a=6  6e-02   3e-02   1e-02   2e-03   5e-04   1e-04
+
+`boundary_quadrature(resolve_geometry=True)` sizes for this as well as for the
+oscillation, which costs an a=2 ellipse 46 -> 168 nodes and takes its eigenfunction
+integrals from 1.0e-06 to 3.9e-16. A disk, a stadium, a mushroom and every polygon
+pay nothing: their arclength maps are exact, so the geometry order never exceeds
+the oscillation order. Past about a=4 no usable order suffices, and the shortfall
+is reported (`BoundaryQuad.shortfalls`, and `precision` stops claiming otherwise)
+rather than chased.
+
+An earlier version of this note blamed the adaptive arclength table's tolerance.
+That is measured to be wrong: the error is identical to three digits at `tol` =
+1e-4, 1e-6 and 1e-8, while the build cost goes 0.0s, 0.9s, 65s. Refining the table
+is pure expense. What moves the error is quadrature order.
+`_parametrization_quality` still reports the round-trip error, and spline
+boundaries still need panels broken at knots.
 
 Boundary conditions
 -------------------
@@ -549,7 +564,7 @@ def lowdin_transform(G, ttol=1e-3):
 
 def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
                         clearance_frac=_CLEARANCE_FRAC, warn=True, nonintegral=False,
-                        smooth_safety=1.0):
+                        smooth_safety=1.0, resolve_geometry=False):
     """The entry point: a boundary node set for `domain`, accurate to `precision` for
     eigenfunctions up to spectral parameter `lam_max`.
 
@@ -602,8 +617,22 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
     # smooth stretches: Nyquist in the segment's own arclength. Computed FIRST because the
     # singular-corner test below asks what those orders can actually deliver on tau^(2nu-2).
     smooth_orders, smooth_ach = {}, {}
+    geom_short, order_max_geom = {}, 512
+    x0_probe = x0 if x0 is not None else default_x0(domain)
+    scale = 2.0*abs(domain.area)
     for i, seg in enumerate(segs):
         o, ach = smooth_order_for_precision(k*seg.len*smooth_safety, precision)
+        if resolve_geometry:
+            # The oscillation model assumes the parametrization is free. On a varying-speed
+            # curve it is not, and the geometry alone can cost more nodes than the
+            # eigenfunction does (see geometry_order_for_precision).
+            go, gach = geometry_order_for_precision(seg, x0_probe, scale, precision,
+                                                    order_max=order_max_geom)
+            if go > o:
+                o = go
+            if gach > precision:
+                geom_short[i] = gach
+            ach = max(ach, min(gach, 1.0) if np.isfinite(gach) else 1.0)
         smooth_orders[i], smooth_ach[i] = o, ach
 
     singular_test = None
@@ -646,7 +675,9 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
     demoted = [s for s in specs if s.singular and not s.admissible]
     shortfalls = tuple(
         [(c, a, 'model bound above target') for c, a in achieved.items() if a > precision]
-        + [(s.idx, None, f'demoted to a smooth rule: {s.reason}') for s in demoted])
+        + [(s.idx, None, f'demoted to a smooth rule: {s.reason}') for s in demoted]
+        + [(None, a, f'segment {i}: parametrization unresolved at order_max')
+           for i, a in geom_short.items()])
     achieved_precision = max([precision] + list(achieved.values()) + list(smooth_ach.values()))
     if demoted:
         achieved_precision = float('inf')
@@ -665,7 +696,69 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
         if fallback:
             warnings.warn("singular corners on a smooth rule: "
                           + "; ".join(f"corner {s.idx} ({s.reason})" for s in fallback))
+        if geom_short:
+            warnings.warn(
+                "boundary parametrization is the limit, not the eigenfunction: "
+                + "; ".join(f"segment {i} converges only to {a:.1e} at order {order_max_geom}"
+                            for i, a in geom_short.items())
+                + ". A varying-speed curve's arclength map has a narrow strip of analyticity "
+                  "and an eccentric one cannot be resolved at any usable order.")
     return bq
+
+
+def geometry_order_for_precision(seg, x0, scale, precision=1e-13, order_min=8, order_max=512):
+    """Smallest Gauss order at which this segment's own `(r.N)` integral has converged.
+
+    The oscillation model (`quad.smooth_order_for_precision`) sizes for the eigenfunction's
+    wavenumber and silently assumes the *parametrization* is free. On a curved segment of
+    varying speed it is not: normalized arclength is analytic but its strip of analyticity
+    narrows with eccentricity, and Gauss-Legendre's rate narrows with it. Measured on
+    `int (r.N) ds`, whose exact total over a closed boundary is `2|Omega|` -- geometry only, no
+    eigenfunction, no lam:
+
+        order          16      32      64     128     192     256
+        disk         3e-16   3e-16   3e-16   3e-16   3e-16   3e-16
+        ellipse a=2  5e-03   2e-04   4e-07   3e-12   5e-15   2e-15
+        ellipse a=3  2e-02   5e-03   2e-04   8e-07   3e-09   4e-11
+        ellipse a=4  4e-02   1e-02   2e-03   8e-05   3e-06   1e-07
+        ellipse a=6  6e-02   3e-02   1e-02   2e-03   5e-04   1e-04
+
+    A circle costs nothing (its arclength map is linear, so it is exact at any order) and a
+    straight edge likewise. An eccentric ellipse is expensive and, past about a=4, cannot be
+    bought at any sane order -- `order_max` binds and the caller records a shortfall rather
+    than pretending otherwise.
+
+    Self-convergence rather than the closed form, because the exact value is known only for
+    the whole boundary, not per segment. `scale` normalizes the increment; pass `2|Omega|`.
+
+    Two passes: double until the increment settles, which brackets the requirement, then scan
+    up from `order_min` against the bracketing value as a reference and return the SMALLEST
+    order that meets it. Doubling alone overshoots by up to 3x (an a=2 ellipse needs ~192 and
+    doubling lands on 512) and, worse, never returns less than `2*order_min`, which would
+    raise straight segments that are already exact.
+    """
+    def integral(order):
+        u, w = cached_leggauss(order)
+        return seg.len*np.sum(w*complex_dot(seg.p(u) - x0, seg.N(u)))
+
+    prev, order, ref, increment = None, order_min, None, float('inf')
+    while order <= order_max:
+        I = integral(order)
+        if prev is not None:
+            increment = abs(I - prev)/scale       # kept: `prev` is overwritten below
+            if increment <= precision:
+                ref = I
+                break
+        prev, order = I, 2*order
+    if ref is None:                       # order_max bound; report what it achieved
+        return order_max, float(increment)
+
+    step = max(8, order//16)
+    for o in range(order_min, order + 1, step):
+        err = abs(integral(o) - ref)/scale
+        if err <= precision:
+            return o, float(err)
+    return order, 0.0
 
 
 def refine_quadrature(domain, bq, depth=2, smooth_order=48):

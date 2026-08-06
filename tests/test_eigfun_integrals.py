@@ -795,3 +795,57 @@ def test_verify_gram_reports_zero_on_an_exactly_integrated_case():
     G_ref = ei.gram(ed_for(ref_bq), lam, ref_bq)[0, 0]
     assert abs(G - 1.0) < 1e-13
     assert abs(G - G_ref) < 1e-13
+
+
+# ── The parametrization, not the eigenfunction ───────────────────────────────
+#
+# `int (r.N) ds = 2|Omega|` by the divergence theorem: a closed form involving no
+# eigenfunction, no lam and no basis. It isolates what the *geometry* costs. An ellipse fails
+# it (1.3e-05 at the 46 nodes the oscillation model asks for) while a disk, a stadium and a
+# mushroom are machine-exact -- the difference is a varying-speed arclength map, whose strip of
+# analyticity narrows with eccentricity and takes Gauss-Legendre's rate with it.
+#
+# Not the arclength table's tolerance: measured identical to three digits at tol = 1e-4, 1e-6
+# and 1e-8 (build cost 0.0s, 0.9s, 65s), so refining the table is not the fix.
+
+def _area_identity_error(dom, **kw):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        bq = ei.boundary_quadrature(dom, 30.0, precision=1e-13, **kw)
+    rN = complex_dot(bq.pts - bq.x0, bq.normals)
+    return abs(np.sum(bq.wts*rN) - 2*dom.area)/(2*dom.area), bq
+
+
+def test_exactly_parametrized_boundaries_already_satisfy_the_area_identity():
+    """A disk, a stadium and a polygon are exact at the model's own node count, so
+    resolve_geometry must cost them nothing."""
+    from lappy.geometry import disk
+    for dom in (disk(1.0), rect(1.0, 1.0), L_shape()):
+        off, bq_off = _area_identity_error(dom)
+        on, bq_on = _area_identity_error(dom, resolve_geometry=True)
+        assert off < 1e-14, off
+        assert on < 1e-14, on
+        assert len(bq_on.pts) == len(bq_off.pts), 'no nodes should be spent here'
+
+
+def test_resolve_geometry_fixes_a_mildly_eccentric_ellipse():
+    from lappy.geometry import ellipse
+    off, bq_off = _area_identity_error(ellipse(2, 1))
+    on, bq_on = _area_identity_error(ellipse(2, 1), resolve_geometry=True)
+    assert off > 1e-7, f'the oscillation model is supposed to be short here, got {off:.1e}'
+    assert on < 1e-14, on
+    assert len(bq_on.pts) > len(bq_off.pts)
+    assert bq_on.shortfalls == ()
+
+
+def test_an_eccentric_ellipse_is_reported_not_pretended():
+    """Some geometry is simply out of reach: a=6 cannot be resolved at any usable order. The
+    contract is that this is visible in `precision` and `shortfalls`, not that it is fixed."""
+    from lappy.geometry import ellipse
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        bq = ei.boundary_quadrature(ellipse(6, 1), 30.0, precision=1e-13,
+                                    resolve_geometry=True)
+    assert bq.precision > 1e-13, 'must not claim a precision it did not reach'
+    assert len(bq.shortfalls) == 1
+    assert any('parametrization' in str(w.message) for w in caught)
