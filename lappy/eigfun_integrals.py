@@ -54,12 +54,17 @@ does, and covers the straight family too. Measured: on the curved family
 sub = nu never reaches 1e-13 at any order up to 64, while sub = 1/q is exact by
 order 6-14.
 
-One caveat is real and is measured rather than assumed: the whole scheme assumes
-|dp/dtau| == seg.len identically, which holds algebraically for LineSegments and
-via an adaptive arclength table for ParametricSegments. A circular arc is
-machine-exact (2e-16 at any `tol`, since its arclength map is linear), but a
-curve whose speed varies is limited by that table -- see
-`_parametrization_quality`, which reports the floor it imposes.
+One caveat is real and is measured rather than assumed. The scheme assumes a node
+at parameter `tau` really sits at arclength `tau*seg.len`, which holds exactly for
+LineSegments and, for ParametricSegments, only as well as the adaptive arclength
+table's PCHIP inverse does. A circular arc is machine-exact at any `tol` (its
+arclength map is linear); a curve of varying speed is not, and the resulting
+boundary integrals stall around 1e-5 to 1e-6 *regardless of quadrature order*,
+because a piecewise-cubic inverse makes the integrand only C^1 and Gauss-Legendre
+needs analyticity. `_parametrization_quality` reports the round-trip error behind
+this. docs/eigfun_integrals.md describes the fix (a Newton-solved inverse, which
+restores spectral convergence and makes the constant-speed property exact) and,
+for spline boundaries, the additional requirement that panels break at knots.
 
 Boundary conditions
 -------------------
@@ -139,18 +144,34 @@ def _is_straight(seg):
 
 
 def _parametrization_quality(seg, n=257):
-    """How exactly is this segment parametrized by normalized arclength? Returns the max
-    relative deviation of |dp/dtau| from seg.len.
+    """How exactly does this segment's `p(tau)` sit at arclength `tau*seg.len`? Returns the max
+    relative round-trip error `|s(t(s)) - s| / seg.len`.
 
-    The whole quadrature assumes |dp/dtau| == seg.len identically (that is why weights are
-    seg.len*|h|*w with no per-node Jacobian). LineSegments satisfy it algebraically.
-    ParametricSegments satisfy it through an adaptive arclength table, so the deviation is a
-    property of the curve and its `tol`, NOT a fixed budget: a circular arc is machine-exact
-    (2e-16) at any tol because its arclength map is linear, while a curve whose speed varies
-    is limited by the table's interpolation. Any error here is a floor under everything the
-    corner rule can achieve on that segment, so it is measured rather than assumed."""
-    tau = np.linspace(0.0, 1.0, n)
-    return float(np.abs(np.abs(seg.dp(tau)) - seg.len).max()/seg.len)
+    This is the property the quadrature actually depends on. `assemble_panels` uses
+    `seg.p/N/T(tau)` and `seg.len` and never calls `seg.dp`, so what matters is that the node
+    really is at the arclength its weight assumes -- not that `|dp/dtau|` equals `seg.len`.
+
+    An earlier version of this function measured `|dp/dtau| - seg.len` and reported a floor of
+    ~1e-3 on varying-speed curves. That was the error of `ParametricSegment._dp_of_s`, which
+    differentiates the PCHIP inverse interpolant -- a quantity nothing here uses, and three to
+    five orders larger than the round-trip error at the same `tol`.
+
+    LineSegments satisfy this exactly. A circular arc is machine-exact at any `tol` because its
+    arclength map is linear. A curve of varying speed is limited by the PCHIP inverse: ~5e-6 at
+    tol=1e-4, ~2e-8 at tol=1e-7. Note that the resulting boundary integrals are worse than that
+    round-trip figure suggests (~1e-5 to 1e-6, and NOT improving with quadrature order),
+    because a piecewise-cubic inverse makes `f(p(tau))` only C^1 and Gauss-Legendre needs
+    analyticity. See docs/eigfun_integrals.md for the fix that removes both."""
+    if type(seg).__name__ == 'LineSegment':
+        return 0.0
+    s_of_t, t_of_s = getattr(seg, '_s_of_t', None), getattr(seg, '_t_of_s', None)
+    if s_of_t is None or t_of_s is None:
+        seg.len                                     # force the lazy reparametrization
+        s_of_t, t_of_s = getattr(seg, '_s_of_t', None), getattr(seg, '_t_of_s', None)
+        if s_of_t is None or t_of_s is None:
+            return 0.0
+    s = np.linspace(0.0, seg.len, n)
+    return float(np.abs(s_of_t(t_of_s(s)) - s).max()/seg.len)
 
 
 def corner_clearance(domain, corner_pt, seg_out, seg_in):

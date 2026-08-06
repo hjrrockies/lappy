@@ -2290,3 +2290,85 @@ CLAUDE.md principle 4 -- the quadrature is built **once per solve in 11 ms**
 evaluation, not the node set. Stale docstring references to `lappy.cauchy` in
 `bases.py` and two test files were retargeted; `corner_terms` survives with
 `symmetry.py` as its remaining consumer.
+
+---
+
+## Arclength reparametrization: diagnosed, prototyped, not yet implemented
+
+Prompted by wanting spline boundaries to work. Three error sources, separated on
+an ellipse (`benchmarks/arclength/diagnose.py`):
+
+    tol     nodes   (a) s(t)   (b) t(s) roundtrip   (c) t'(s) vs 1/|p'|   |dp/dtau|-L
+    1e-4     49     5.2e-05         5.2e-06              8.6e-03           8.6e-03
+    1e-7    273     5.5e-07         1.8e-08              8.7e-04           8.7e-04
+
+(c) tracks `|dp/dtau|-L` to every digit. The whole constant-speed defect is the
+DIFFERENTIATED PCHIP inverse -- and it is gratuitous, since `t'(s) = 1/|p'(t)|`
+analytically.
+
+### Correction: my "~1e-3 floor on curved segments" was measuring the wrong thing
+
+`_parametrization_quality` measured `|dp/dtau| - seg.len`. **The quadrature never
+calls `seg.dp`** -- `assemble_panels` uses `seg.p/N/T(tau)` and `seg.len`. The
+property it needs is that a node sits at the arclength its weight assumes, i.e.
+the round-trip error (b), which is 3-5 orders smaller. The diagnostic now measures
+(b), and the module docstring is corrected.
+
+But the real number is worse than (b), and for a third reason:
+
+    tol      f=x^2    f=exp(x/2)cos(3y)     (boundary integrals, ellipse)
+    1e-4    3.5e-05        4.7e-05
+    1e-6    2.9e-06        7.8e-07
+
+and these do **not** improve with quadrature order -- 32 nodes and 256 nodes give
+the same answer. A piecewise-cubic inverse makes `f(p(tau))` only C^1, and
+Gauss-Legendre on a C^1 integrand converges algebraically. No order fixes it.
+
+### The fix, prototyped and measured (`benchmarks/arclength/`)
+
+Keep the adaptive table as a bracket and initial guess; then
+  1. rebuild `s_nodes` at the table's own nodes with a high-order Gauss rule;
+  2. solve `t(s)` by **Newton** on the exact `s(t)`, with `ds/dt = |p'(t)|`;
+  3. take `t'(s) = 1/|p'(t)|` analytically, never the differentiated interpolant.
+
+Ellipse, same integrals, Gauss-Legendre of increasing order:
+
+    order      pchip      newton
+      32      3.9e-05    3.9e-05
+      64      7.2e-07    3.7e-08
+     128      2.2e-09    9.6e-14
+     256      7.3e-07    4.7e-15
+
+Spectral convergence restored; `|dp/dtau| - L` goes 8.6e-03 -> 3.7e-16 by
+construction. **And the Newton results are identical for tol=1e-4 and tol=1e-6**,
+because the table is only a bracket now -- which also removes the reason tight
+`tol` was ever wanted, i.e. the >30 s construction that wedged four background
+jobs earlier in this run.
+
+### Splines need one more thing: panels must break at knots
+
+A degree-k B-spline is only C^(k-1) at its knots, so even a perfect `t(s)` leaves
+`f(p(tau))` non-analytic there. On a wobbly cubic spline (5 interior knots):
+
+    |dp/dtau|-L    pchip 2.1e-02   newton 3.8e-16
+    s(t(s))-s      pchip 3.6e-05   newton 1.3e-16
+
+    integral, one global panel:      order 128  pchip 1.9e-05   newton 1.3e-06
+                                     order 512  pchip 3.5e-06   newton 2.6e-09
+    integral, knot-aligned panels:   96 nodes (6 x 16)          8.3e-11
+
+Five orders better with fewer nodes. (The knot-aligned figures are near the
+reference's own accuracy, so read them as a floor, not a measurement.) The
+arclength panels must respect knots too, or a Gauss panel integrates `|p'|` across
+a derivative break.
+
+### Cost, and why it is affordable
+
+The prototype is 657x slower per call, but that is a Python loop over points in
+`s_of_t`; vectorized it is ~4 Newton iterations x one Gauss rule, order 100x a
+PCHIP call. It is paid ONCE per solve -- the node set is built once and reused for
+every lambda -- against a current whole-quadrature build of 11 ms. Better still,
+`t(s)` can be evaluated once at the quadrature nodes and cached.
+
+Not implemented: this changes `ParametricSegment`, which everything else in lappy
+builds on.
