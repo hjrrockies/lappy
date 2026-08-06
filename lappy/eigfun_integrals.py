@@ -563,8 +563,8 @@ def lowdin_transform(G, ttol=1e-3):
 
 
 def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
-                        clearance_frac=_CLEARANCE_FRAC, warn=True, nonintegral=False,
-                        smooth_safety=1.0, resolve_geometry=False):
+                        clearance_frac=_CLEARANCE_FRAC, warn=True, nonintegral=True,
+                        smooth_safety=1.0, resolve_geometry=True):
     """The entry point: a boundary node set for `domain`, accurate to `precision` for
     eigenfunctions up to spectral parameter `lam_max`.
 
@@ -584,6 +584,9 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
     270-degree corner typically lands at ~1.9e-14, so a 1e-14 default would warn on the
     commonest domain in the suite while delivering essentially the same answer. Asking for 1e-14
     explicitly is legitimate and will warn if it falls short, which is the point.
+
+    `nonintegral` and `resolve_geometry` are ON by default; both were validated opt-in first
+    (commits bae147d, f4c57d5) and pass `False` to recover the earlier behaviour exactly.
 
     `nonintegral=True` gives the corner-adapted rule to every corner a smooth rule cannot
     actually integrate -- `quad.smooth_power_error` asks the question directly, rather than

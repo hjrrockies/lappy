@@ -688,7 +688,8 @@ def test_nonintegral_gives_a_convex_noninteger_corner_the_corner_rule():
     assert all(p.rule == 'legendre' for p in bq.panels), 'integer nu needs no corner rule'
 
     oct8 = np.exp(2j*np.pi*np.arange(8)/8)                # regular octagon: nu = 4/3
-    bq_off = ei.boundary_quadrature(Polygon(oct8), 50.0, precision=1e-13, warn=False)
+    bq_off = ei.boundary_quadrature(Polygon(oct8), 50.0, precision=1e-13,
+                                    nonintegral=False, warn=False)
     bq_on = ei.boundary_quadrature(Polygon(oct8), 50.0, precision=1e-13,
                                    nonintegral=True, warn=False)
     assert all(p.rule == 'legendre' for p in bq_off.panels)
@@ -808,10 +809,13 @@ def test_verify_gram_reports_zero_on_an_exactly_integrated_case():
 # Not the arclength table's tolerance: measured identical to three digits at tol = 1e-4, 1e-6
 # and 1e-8 (build cost 0.0s, 0.9s, 65s), so refining the table is not the fix.
 
-def _area_identity_error(dom, **kw):
+def _area_identity_error(dom, resolve_geometry=False, **kw):
+    # Explicit rather than defaulted: both flags are ON by default now, and these tests exist
+    # to compare the two behaviours, so they must name the one they mean.
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        bq = ei.boundary_quadrature(dom, 30.0, precision=1e-13, **kw)
+        bq = ei.boundary_quadrature(dom, 30.0, precision=1e-13,
+                                    resolve_geometry=resolve_geometry, **kw)
     rN = complex_dot(bq.pts - bq.x0, bq.normals)
     return abs(np.sum(bq.wts*rN) - 2*dom.area)/(2*dom.area), bq
 
