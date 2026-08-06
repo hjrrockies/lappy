@@ -78,7 +78,8 @@ def make_basis(dom, n_basis, fs_placement='default', fs_d=1.0, fs_frac=0.5):
 
 def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
         preflight_pts=300, n_eigs=None, preflight_only=False, tag='',
-        orthonorm=True, fs_placement='default', fs_d=1.0, fs_frac=0.5):
+        orthonorm=True, fs_placement='default', fs_d=1.0, fs_frac=0.5,
+        pts_per_eig=11):
     from benchmarks.suite.domains import SUITE
     from benchmarks.suite import preflight as pf
     from common import build_solver, lambda_window
@@ -134,15 +135,21 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
     # --- solve -------------------------------------------------------------
     rec = dict(key=key, n_basis=n_basis, rtol=solver.rtol, int_npts=int_npts,
                preflight=m, noisy=bool(noisy), plot=plot, tag=tag,
-               orthonorm=bool(orthonorm), fs_placement=fs_placement,
+               orthonorm=bool(orthonorm), pts_per_eig=int(pts_per_eig),
+               fs_placement=fs_placement,
                fs_d=float(fs_d), fs_frac=float(fs_frac),
                bq_nodes=(len(solver.bdry_quad.pts) if solver.bdry_quad else None),
                bq_precision=(float(solver.bdry_quad.precision)
                              if solver.bdry_quad else None))
     t0 = time.time()
     try:
+        # Grid density for the initial bracket scan. A BETTER basis makes this MORE
+        # important, not less: its minima are deeper and narrower, so a grid that found
+        # them with a poor basis can step straight over them. chevron_2_3 at n_basis=480
+        # with distributed sources skipped a true eigenvalue at 226.6204 that the
+        # n_basis=160 default basis found, and certification cannot see the gap.
         e, mults, _ = solver.solve_interval(
-            a, b, max(11 * n_eigs, 50), ltol=1e-14,
+            a, b, max(pts_per_eig * n_eigs, 50), ltol=1e-14,
             bracket_kwargs={'max_minima': pf.max_minima_for(m)})
         eigs = np.asarray(e)[:n_eigs]
         mults = np.asarray(mults)[:n_eigs]
@@ -225,6 +232,8 @@ def main(argv=None):
     ap.add_argument('--preflight-pts', type=int, default=300)
     ap.add_argument('--n-eigs', type=int, default=None)
     ap.add_argument('--preflight-only', action='store_true')
+    ap.add_argument('--pts-per-eig', type=int, default=11,
+                    help='grid points per eigenvalue for the bracket scan')
     ap.add_argument('--fs-placement', default='default', choices=('default','boundary'))
     ap.add_argument('--fs-d', type=float, default=1.0)
     ap.add_argument('--fs-frac', type=float, default=0.5)
@@ -246,7 +255,7 @@ def main(argv=None):
     run(args.key, args.n_basis, args.rtol, args.int_npts, args.bdry_mult,
         args.preflight_pts, args.n_eigs, args.preflight_only, args.tag,
         orthonorm=args.orthonorm, fs_placement=args.fs_placement,
-        fs_d=args.fs_d, fs_frac=args.fs_frac)
+        fs_d=args.fs_d, fs_frac=args.fs_frac, pts_per_eig=args.pts_per_eig)
     return 0
 
 

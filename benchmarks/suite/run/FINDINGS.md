@@ -506,3 +506,44 @@ were distributed).
 
 **Every single-seed conversion in this study is therefore provisional until re-run.** The
 remaining ones are queued.
+
+### The seed "spread" on `chevron_2_3` was a missing eigenvalue, and a spurious one
+
+Chasing the 10.3 / 10.3 / 5.1 spread to its cause turned up something worse than variance.
+
+First, the eigenvalues themselves are stable: all three seeds agree to 1e-9 relative
+(64.70898869 / ...73 / ...67), and the tension at a fixed true eigenvalue barely moves across
+five seeds at any interior-point count. The interior draw is not what varies.
+
+What varies is *which minima the search returns*:
+
+    seed 0/1:  ... 194.13, 214.34, 253.73, 263.03, 294.71
+    seed 2:    ... 194.13, 203.44, 214.34, 253.73, 263.03
+
+Seed 2 picked up a spurious minimum at 203.4449 -- `sigma` there is 1.9e-07 with the good
+basis, against 1e-12 to 1e-14 at genuine eigenvalues -- and it passed the `ttol=1e-3` filter,
+displacing a real eigenvalue from the list of ten and dragging the certified number to 5.06.
+
+Worse, seeds 0 and 1 **missed a true eigenvalue at 226.6204**. It is genuine beyond doubt:
+`sigma(226.6204) = 2.7e-12` with the placed n_basis=480 basis (2.2e-14 at the known-true
+214.3403 for scale), a fine scan of [226.0, 227.3] bottoms out there, and the n_basis=160
+default basis found it in every recorded run. So the "10.31 certified digits" was computed on
+an incomplete list, with every entry after the gap mis-indexed -- exactly the failure
+BUCKETS.md warns certification cannot see.
+
+**`chevron_2_3` is therefore NOT a valid conversion** pending a corrected run.
+
+An audit of every other conversion in this study against its baseline list found no other
+missing eigenvalue (`parallelogram_p127` flags at a 1e-6 threshold on 177.6949 vs 177.6947,
+which is the same eigenvalue).
+
+### The lesson: a better basis makes the search harder
+
+The eigenvalue that was missed is found by the *worse* basis and missed by the *better* one.
+That is not a coincidence. A better-conditioned basis has deeper and narrower tension minima,
+and the bracket scan runs on a fixed grid of `11 * n_eigs` points -- so improving the basis
+can step the search straight over a well of the very kind it was improved to produce.
+
+Any basis study that reports digits without checking completeness is therefore reporting a
+number that can silently be about the wrong spectrum. `bucket.py` grew `--pts-per-eig` for
+this, and the corrected `chevron_2_3` runs use a 3x denser grid.
