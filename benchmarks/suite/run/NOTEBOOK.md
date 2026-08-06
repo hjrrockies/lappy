@@ -2372,3 +2372,38 @@ every lambda -- against a current whole-quadrature build of 11 ms. Better still,
 
 Not implemented: this changes `ParametricSegment`, which everything else in lappy
 builds on.
+
+### Vectorized: the cost is ~1 ms per solve, and the knobs are cheaper than expected
+
+The prototype's 657x slowdown was entirely a Python loop over points inside
+`s_of_t`. Vectorized -- one `speed` call per Newton iteration over an
+(n_points x gauss_order) block -- the picture is
+`benchmarks/arclength/vectorized.py`:
+
+    knob calibration (round-trip error)
+                    G=6       G=8      G=12      G=24
+    iters=1      4.0e-09   4.0e-09   4.0e-09   4.0e-09      (ellipse)
+    iters=2      1.8e-16   1.8e-16   1.8e-16   1.8e-16
+    iters=3      1.8e-16   1.8e-16   1.8e-16   1.8e-16
+
+**`gauss_order` does not matter at all** -- G=6 is indistinguishable from G=24,
+because the remainder span is a fraction of one adaptive-table panel. And Newton's
+quadratic convergence is plainly visible: 4e-9 at one step, machine precision at
+two. The spline needs three (1.3e-16); a circular arc is exact at one, since its
+PCHIP guess is already the answer.
+
+So the tuned configuration is `gauss_order=6, anchor_order=8, iters=3`, and it is
+*identical in accuracy* to the expensive one -- boundary integrals at 1.4e-13
+(order 128) against PCHIP's 6.9e-05, which no order improves.
+
+    cost
+      construction    0.11 ms per segment      (once per solve)
+      evaluation      265-530 ns per point,
+                      i.e. +0.13 ms (ellipse) / +0.22 ms (spline) for 250 nodes
+
+Against a whole-quadrature build of ~11 ms that is **under 5%**, and it is paid
+once per solve rather than per lambda. Per-call it is 30-120x a PCHIP evaluation,
+which is the number that looks alarming and is the wrong one to look at: the
+absolute cost is a fraction of a millisecond.
+
+Trading eight orders of accuracy on curved boundaries for ~1 ms per solve.
