@@ -400,3 +400,45 @@ measurement varies with the geometry before drawing on it.
 The two mushrooms have now resisted a uniform offset at every distance tried, a
 thickness-scaled offset, plane waves, and larger bases. They are the remaining open case, and
 nothing measured so far explains what their basis is missing.
+
+### The mushrooms were under-resolved, not mis-composed
+
+I spent a long time on the mushrooms' basis *composition* -- uniform offsets, thickness-scaled
+offsets, plane waves -- and the answer was basis *size*. With the DEFAULT basis, unchanged:
+
+    mushroom_neck01     nb=320    nb=480    nb=640      mushroom_thin    nb=320    nb=480
+    lam1               3.2e-07   5.1e-10   1.5e-10                      1.2e-09   6.3e-12
+    lam10              1.3e-06   1.1e-09   9.2e-10                      5.8e-09   1.5e-11
+
+Three orders for `neck01` and two to three for `thin`, saturating by 480-640. The recorded
+bucket runs used `n_basis=320` because that is `entry.n_basis`, and escalation was never tried
+on these two -- partly because BUCKETS.md's note that "n_basis has a domain-specific optimum,
+and it is not monotone" (drawn from chevron_2_3, where the DEFAULT basis degenerates at 480)
+made escalation look unpromising. It was exactly right here.
+
+Lesson for the study, not just for these domains: **vary the cheap knob before redesigning the
+basis.** Composition experiments at a fixed, too-small `n_basis` measure the wrong thing.
+
+### Why the mushrooms look worse than they are: an evanescent stem
+
+The mushroom is a half-disk cap of radius 1.5 with a stem 0.1 wide and 1 deep. For `lam1=6.5`
+the stem's transverse cutoff is `lam ~ 987`, so the true eigenfunction there is evanescent, and
+measured it is: `|u|` runs 6.3e-02 in the cap and 6.4e-06 -> 2.9e-09 -> 6.4e-10 down the
+stem's centre line. Meanwhile the residual ON the stem walls is ~8e-09 -- the same size as the
+true field beside it.
+
+The residual's share by segment is 22% / 28% / 0.3% / 28% / 22% / **0.2%** -- almost none of it
+on the cap arc, essentially all of it on the stem walls. So `sigma` is set by a region where
+the eigenfunction contributes nothing, and 8e-09 against the cap's 6.3e-02 is 1.3e-07, which is
+the measured tension.
+
+That predicts the eigenvalue is better than the tension claims, and it is: located
+independently at `n_basis` 240, 320 and 480, `lam1` agrees to **1.3e-08 relative** while the
+tensions across those runs span 1.1e-06 to 5.0e-10. About 25x better than the worst tension
+would suggest.
+
+This is a general hazard for MPS on domains with thin appendages, and it also affects the
+certified bound, which takes `sup|u|` over the whole boundary and so inherits the stem's
+junk. A bound that weighted the boundary by the eigenfunction's own scale would report this
+domain far more favourably -- but that is a different bound, not a tighter evaluation of this
+one, so it is noted rather than done.
