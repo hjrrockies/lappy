@@ -2659,3 +2659,95 @@ regression test; `verify_gram` is where the result is.
    where reg_ngon_5/7/8's 7-9x node counts come from. Tightening it is cheap accuracy.
 3. **`H_shape` has a floor near 3e-10** that neither more smooth nodes nor deeper refinement
    moves. Not diagnosed.
+
+---
+
+## H_shape's floor, and the ngons' node bill: two diagnoses
+
+Both were left open by the `verified` re-run. Neither is a defect in the corner rule; both
+are the *sizing* being wrong in opposite directions.
+
+### H_shape: nothing exotic, just smooth panels ~8 nodes short
+
+Killed first, cheaply, so nobody repeats them:
+
+* **catastrophic cancellation** in the boundary sum. Measured `sum|w f| / |sum w f|`: H_shape
+  1.59, GWW1 1.14, L_shape and square 1.00. Under a digit lost anywhere. Dead.
+* **the integrand being out of class.** Fitting `log|du/dn|` against `log r` on the edge
+  leaving each singular corner recovers the exponent `nu-1` the rule assumes: H_shape's four
+  reentrant corners give -0.3340, -0.3329, -0.3340, -0.3329 against -0.3333. Dead.
+
+That second measurement threw off a bonus. **L_shape fits +0.3334, not -0.3333** -- for that
+mode the leading singular coefficient vanishes and the next term `r^(2nu-1) = r^(1/3)` takes
+over. L_shape is partly clean *by luck of the mode*, which is worth knowing before treating it
+as the easy control it looks like.
+
+Per-panel attribution then localised H_shape immediately: every corner-adapted panel BEATS its
+model (ratios 0.01-0.12); the error sits in four `legendre` panels of order 14, each ~600x
+worse than the smooth model claims. Their self-convergence (everything else held fixed) is
+spectral and fast:
+
+    order        14        20        28        40
+    panel  9   2e-13     2e-15     1e-17     3e-18
+    panel 16   2e-13     2e-15     2e-17     2e-17
+
+So order 14 is simply too low by about 8 nodes. No floor, no barrier -- the same
+under-prediction as the ellipse, milder.
+
+**But the amount it is short by is a property of the BASIS, not the domain.** Varying only the
+fundamental-solution placement, at comparable eigenfunction quality, moves the order-14 error
+across four orders:
+
+    fs_C  fs_sigma   sigma(lam)   err at order 14
+    10.0       1.0      5.9e-11           2.8e-11
+     3.0       1.0      5.2e-11           1.6e-13
+    10.0       0.3      4.2e-10           3.9e-15
+    10.0       3.0      1.2e-10           5.8e-15
+
+A geometry-only node set cannot know where a basis put its poles. So H_shape belongs with
+`stadium` in one class, not two: **the approximant's own singularity structure sets the
+smooth-panel requirement, and only an a posteriori check can see it.** `verify_gram` is the
+instrument; `smooth_safety` is the blunt lever (H_shape 1.0e-08 -> 4.6e-10 at 2x, +9% nodes).
+
+An interim measurement that misled me for one step, recorded because the mistake is easy:
+comparing `|G(panel i at order o) - G_ref|` looks like a per-panel convergence study and is
+not -- it includes every OTHER panel's error, so it plateaus at their sum and reports a floor
+that is not there. Hold everything else fixed and self-converge the one panel.
+
+### reg_ngon_5/7/8: the corner model is a worst case, and it is being used as a predictor
+
+These pay 7-9x nodes (reg_ngon_7: 98 -> 868) because `corner_order_for_precision` drives the
+order to its cap of 64. Measured against the truth, the order is 2x more than needed:
+
+    reg_ngon_7   order    12        24        32        48        64
+                 model   2.6e-04   5.9e-03   1.6e-03   6.8e-05   3.9e-06     <- non-monotone!
+                 true    1.6e-08   8.8e-12   3.6e-13   1.6e-13   5.1e-14
+
+The model never reaches 1e-13, so the scan returns its argmin, which is the cap. The true
+error is monotone and clears 1e-13 by order 32-48.
+
+Not ill-conditioning: the interpolatory weights are clean (`sum|w|/|sum w|` = 1.00-1.23 at
+every order and every nu tested), and the exponent collisions that `nu = p/q` creates
+(nu=7/5 collides at j=5, nu=4/3 at j=3) are evidently handled.
+
+It is the model integrand's **amplitudes**. `corner_model_error` builds a radial series to
+depth `n_j=6` with coefficients `(k/2)^(2q)/q!^2`, which at k~4-8 peak around q~4 and put
+large weight on exponents a real eigenfunction barely populates. Calibrated against EXACT
+sector eigenfunctions at convex non-integer nu (the case that matters here), with a generic
+x0 so nothing cancels:
+
+    nu=1.4     order      8        12        16        24        32        48
+    TRUE              2.5e-04   3.1e-06   2.1e-07   6.0e-10   1.5e-11   2.8e-14
+    n_j=2             1.0e-03   1.0e-04   3.2e-05   1.9e-06   7.9e-08   2.7e-10
+    n_j=6 (default)   1.6e-03   3.6e-04   4.4e-04   2.1e-04   3.1e-05   7.1e-07
+
+`n_j=2` bounds the truth at every order and every nu measured (1.4, 4/3, 5/3 x six orders)
+while being 4-5 orders tighter than the default, and it decays at roughly the right rate
+instead of stalling. That is the shape a predictor should have.
+
+**Not changed yet, deliberately.** Retuning `n_j` moves the order chosen on every singular
+corner in the suite, including the reentrant ones this calibration did not cover, so it needs
+its own validation against the sector bars and a re-run before it becomes a default. Recorded
+here with the data so that work starts from a measurement rather than a guess. Note also that
+the current setting errs conservative -- it buys nodes nobody needed, which is the safe
+direction.
