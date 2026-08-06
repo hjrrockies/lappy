@@ -86,7 +86,7 @@ import scipy.linalg as la
 from .quad import (cached_leggauss, cached_cornerjacgauss, cached_cornerinterpgauss,
                    cornerjac_order_cap, corner_rule_spec, corner_substitution,
                    corner_order_for_precision, smooth_order_for_precision,
-                   _CORNER_NU_MIN, _CORNER_MAX_Q)
+                   smooth_power_error, _CORNER_NU_MIN, _CORNER_MAX_Q)
 from .geometry import PointSet
 from .utils import complex_dot
 
@@ -114,7 +114,13 @@ CornerPanel = namedtuple('CornerPanel',
 # makes per-corner diagnostics (and the edge/arc split that corner tests must report) possible.
 BoundaryQuad = namedtuple('BoundaryQuad',
                           ['pts', 'normals', 'tangents', 'wts', 'dir_mask', 'neu_mask',
-                           'panels', 'panel_id', 'precision', 'x0'])
+                           'panels', 'panel_id', 'precision', 'x0', 'shortfalls'],
+                          defaults=((),))
+# `shortfalls` names every corner whose rule cannot honour the requested precision, so that
+# `precision` is never a claim contradicted elsewhere in the same object. It is a tuple of
+# (corner_idx, achieved_or_None, reason). A corner that was DEMOTED to a smooth rule (an
+# inadmissible near-slit nu) has no bound at all -- `sector_slit` measured 6.9e-01 against a
+# reported 1e-13 -- so it sets `precision` to inf rather than to a number that is not one.
 
 # A small cluster of eigenfunctions' Cauchy data at a BoundaryQuad's nodes. U/U_N/U_T are
 # (n_nodes, mult) -- already-evaluated function values, never a basis matrix.
@@ -125,6 +131,28 @@ EigfunData = namedtuple('EigfunData', ['pts', 'normals', 'tangents', 'wts', 'U',
 # admitting corners arbitrarily close to a slit buys nothing.
 _NU_MARGIN = 0.02
 _ANGLE_TOL = 1e-10
+
+# Which corners need the corner-adapted rule.
+#
+# The original criterion was `nu < 1` -- reentrant corners only -- on the reasoning that a
+# convex corner's eigenfunction is bounded and "a smooth rule is already exact". It is not.
+# The Rellich integrand is (du/dn)^2 ~ r^(2nu-2), so what matters is whether that exponent is
+# an EVEN INTEGER, i.e. whether nu is an integer -- not whether it is bigger than one. At a
+# 135-degree corner (nu = 4/3) the integrand carries r^(2/3): bounded, but with an infinite
+# derivative at the corner, and Gauss-Legendre converges on it algebraically.
+#
+# Measured (per-panel attribution, benchmarks/eigfun_quad/sizing_audit.py):
+#
+#     right_trapezoid  nu=4/3   84 nodes   5.6e-09 -> 8.7e-19   at 212 nodes
+#     GWW1             nu=4/3  204 nodes   6.9e-07 -> 1.1e-14   at 440 nodes
+#
+# and in both cases the offending panels were `legendre` ones whose sizing model claimed
+# ~4e-15 while delivering 3e-09 -- the model assumes an analytic integrand, so it cannot see
+# a fractional power at all. Every corner-adapted panel already met its model.
+#
+# True by tolerance rather than exactly: a nu that misses an integer by 1e-12 is an integer
+# for this purpose, and the rules degrade gracefully anyway.
+_NONINTEGRAL_TOL = 1e-9
 
 # Default cap on a corner panel's arclength, as a multiple of the corner's clearance (the radius
 # of the largest disk about it inside the domain). Calibrated in corner_panels' docstring: 1.0
@@ -191,11 +219,17 @@ def corner_clearance(domain, corner_pt, seg_out, seg_in):
     return np.abs(corner_pt - (b0[keep] + t*d)).min()
 
 
-def corner_specs(domain):
+def corner_specs(domain, singular_test=None):
     """CornerSpec per genuine corner, corner-indexed like `domain.corners`.
 
     Uses `domain.corner_int_angles` (corner-indexed) rather than `int_angles` (segment-indexed)
-    -- see geometry.Domain.corner_int_angles on why that distinction is load-bearing."""
+    -- see geometry.Domain.corner_int_angles on why that distinction is load-bearing.
+
+    `singular_test(nu, seg_out, seg_in) -> bool` decides which corners get the corner-adapted
+    rule. `None` keeps the historical criterion, `nu < 1` (reentrant only);
+    `boundary_quadrature(nonintegral=True)` supplies one that asks whether a smooth rule can
+    actually integrate `tau^(2nu-2)` to the requested precision (`quad.smooth_power_error`).
+    """
     segs = domain.bdry.segments
     n_segs = len(segs)
     corners = np.asarray(domain.corners)
@@ -208,11 +242,17 @@ def corner_specs(domain):
         seg_in = (seg_out - 1) % n_segs
         alpha = float(alphas[c])
         nu = np.pi/alpha
-        singular = nu < 1.0 - _ANGLE_TOL
+        if singular_test is None:
+            singular = nu < 1.0 - _ANGLE_TOL
+        else:
+            singular = bool(singular_test(nu, seg_out, seg_in))
 
         reason = ''
         if not singular:
-            reason = 'not singular (nu >= 1): a smooth rule is already exact'
+            reason = ('not singular: a smooth rule integrates this corner\'s r^(2nu-2) to the '
+                      'requested precision' if singular_test is not None else
+                      'not singular (nu >= 1) under the reentrant-only criterion; pass '
+                      'nonintegral=True to test whether a smooth rule really suffices')
         elif nu <= _CORNER_NU_MIN + _NU_MARGIN:
             reason = (f'nu={nu:.4f} too close to the slit limit 1/2: the Rellich integrand '
                       'is barely integrable and no rule recovers it; place x0 on this corner')
@@ -385,7 +425,7 @@ def _panel_rule(panel):
     raise ValueError(f"unknown panel rule {panel.rule!r}")
 
 
-def assemble_panels(domain, panels, precision=None, x0=None):
+def assemble_panels(domain, panels, precision=None, x0=None, shortfalls=()):
     """BoundaryQuad from a panel plan, via each segment's own p/N/T at normalized arclength.
 
     Segments are parametrized by normalized arclength, so |dp/dtau| == seg.len identically and
@@ -408,7 +448,8 @@ def assemble_panels(domain, panels, precision=None, x0=None):
         x0 = default_x0(domain)
     return BoundaryQuad(np.concatenate(P), np.concatenate(N), np.concatenate(T),
                         np.concatenate(W), np.concatenate(D), np.concatenate(U),
-                        tuple(panels), np.concatenate(PID), precision, x0)
+                        tuple(panels), np.concatenate(PID), precision, x0,
+                        tuple(shortfalls))
 
 
 def eigfun_cauchy_data(basis, lam, coef, bq):
@@ -448,7 +489,7 @@ def weighted_integral(ed, kernel, weight):
     raise ValueError(f"'kernel' must be one of 'uv', 'NN', 'TT', 'cr' (got {kernel!r})")
 
 
-def default_x0(domain):
+def default_x0(domain, singular_test=None):
     """Reference point x0 for the Rellich weight r.N.
 
     Placed at a singular corner when there is one, because r.N vanishes identically on both
@@ -457,7 +498,7 @@ def default_x0(domain):
     rule this is no longer *necessary* -- that is the whole point of the rule, and multi-corner
     domains cannot zero every corner anyway -- but it is free, and it makes the one corner it
     covers exact independent of quadrature. Falls back to the bounding-box centre."""
-    specs = [s for s in corner_specs(domain) if s.singular]
+    specs = [s for s in corner_specs(domain, singular_test) if s.singular]
     if specs:
         return min(specs, key=lambda s: s.nu).point
     tau = np.linspace(0, 1, 50)[:-1]
@@ -507,7 +548,8 @@ def lowdin_transform(G, ttol=1e-3):
 
 
 def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
-                        clearance_frac=_CLEARANCE_FRAC, warn=True):
+                        clearance_frac=_CLEARANCE_FRAC, warn=True, nonintegral=False,
+                        smooth_safety=1.0):
     """The entry point: a boundary node set for `domain`, accurate to `precision` for
     eigenfunctions up to spectral parameter `lam_max`.
 
@@ -527,10 +569,53 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
     270-degree corner typically lands at ~1.9e-14, so a 1e-14 default would warn on the
     commonest domain in the suite while delivering essentially the same answer. Asking for 1e-14
     explicitly is legitimate and will warn if it falls short, which is the point.
+
+    `nonintegral=True` gives the corner-adapted rule to every corner a smooth rule cannot
+    actually integrate -- `quad.smooth_power_error` asks the question directly, rather than
+    assuming `nu >= 1` is safe. **The reentrant-only default does not honour `precision` on a
+    domain with a convex non-integer corner**, measured 5.6e-09 against a claimed 1e-13 on
+    `right_trapezoid`, because the smooth model integrand is analytic and cannot see the
+    fractional power `r^(2nu-2)` that such a corner puts on its edges. Opt in until the
+    default flips.
+
+    `smooth_safety` multiplies the wavenumber the smooth panels are sized for. It exists
+    because the model integrand `exp(i k tau)`, with `k = 2 sqrt(lam_max) * arclength`, is not
+    a reliable proxy for the real one's bandwidth in either direction: measured against the
+    Cauchy data's own Fourier spectrum, a circle needs 4 harmonics where the model assumes 64,
+    while an ellipse needs 80 where the model assumes 8. Verified error at `lam_2`
+    (`verify_gram`, so the actual integrand, not a model):
+
+        safety             1x        2x        3x        4x        6x
+        ellipse_a2    1.0e-06   1.6e-09   4.6e-12   2.4e-14   2.1e-15
+        ellipse_a4    9.2e-06   7.4e-07   8.0e-08   9.7e-09   1.9e-10
+        stadium       1.5e-04   1.2e-06   1.0e-08   3.4e-08   5.4e-09
+        disk          3.2e-15   4.5e-15   7.3e-15   4.1e-15   3.5e-15
+        square        4.1e-16   2.1e-15   4.1e-15   4.3e-15   4.1e-16
+
+    Polygons are already converged and pay only nodes. Curved boundaries improve sharply but
+    `ellipse_a4` and `stadium` plateau above 1e-13, so a safety factor is a mitigation there
+    and not yet a fix -- use `verify_gram` to find out what a given node set achieved.
     """
-    specs = corner_specs(domain)
     segs = domain.bdry.segments
     k = 2.0*np.sqrt(max(lam_max, 0.0))     # a PRODUCT of eigenfunctions oscillates at 2*sqrt(lam)
+
+    # smooth stretches: Nyquist in the segment's own arclength. Computed FIRST because the
+    # singular-corner test below asks what those orders can actually deliver on tau^(2nu-2).
+    smooth_orders, smooth_ach = {}, {}
+    for i, seg in enumerate(segs):
+        o, ach = smooth_order_for_precision(k*seg.len*smooth_safety, precision)
+        smooth_orders[i], smooth_ach[i] = o, ach
+
+    singular_test = None
+    if nonintegral:
+        def singular_test(nu, seg_out, seg_in):
+            if nu < 1.0 - _ANGLE_TOL:
+                return True
+            order = max(smooth_orders[seg_out], smooth_orders[seg_in])
+            return smooth_power_error(2.0*nu - 2.0, order) > precision
+    specs = corner_specs(domain, singular_test)
+    if x0 is None:
+        x0 = default_x0(domain, singular_test)
 
     # per-corner order, from the corner's own exponent set
     orders, achieved = {}, {}
@@ -545,12 +630,6 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
                                             k=np.sqrt(max(lam_max, 0.0))*seg_len*frac)
         orders[sp.idx], achieved[sp.idx] = o, ach
 
-    # smooth stretches: Nyquist in the segment's own arclength
-    smooth_orders, smooth_ach = {}, {}
-    for i, seg in enumerate(segs):
-        o, ach = smooth_order_for_precision(k*seg.len, precision)
-        smooth_orders[i], smooth_ach[i] = o, ach
-
     panels = []
     for p in corner_panels(domain, specs, order_corner=1, order_smooth=1,
                            panel_frac=panel_frac, clearance_frac=clearance_frac,
@@ -559,10 +638,20 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
             panels.append(p._replace(order=smooth_orders[p.seg_idx]))
         else:
             panels.append(p._replace(order=orders.get(p.corner, 16)))
-    bq = assemble_panels(domain, panels,
-                         precision=max([precision] + list(achieved.values())
-                                       + list(smooth_ach.values())),
-                         x0=x0)
+    # Honest precision. A corner short of the target contributes its model bound; a SINGULAR
+    # corner demoted to a smooth rule contributes no bound at all, because the smooth model
+    # cannot see the singularity it is being asked to integrate -- `sector_slit`'s nu=0.504
+    # corner measured 6.9e-01 while this function reported 1e-13. inf is the honest value, and
+    # `shortfalls` says which corner and why.
+    demoted = [s for s in specs if s.singular and not s.admissible]
+    shortfalls = tuple(
+        [(c, a, 'model bound above target') for c, a in achieved.items() if a > precision]
+        + [(s.idx, None, f'demoted to a smooth rule: {s.reason}') for s in demoted])
+    achieved_precision = max([precision] + list(achieved.values()) + list(smooth_ach.values()))
+    if demoted:
+        achieved_precision = float('inf')
+    bq = assemble_panels(domain, panels, precision=achieved_precision, x0=x0,
+                         shortfalls=shortfalls)
 
     if warn:
         short = {c: a for c, a in achieved.items() if a > precision}
@@ -572,11 +661,64 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
                             for c, a in short.items())
             warnings.warn(f"boundary_quadrature could not reach precision={precision:.1e}: "
                           f"{msg}. Achieved {bq.precision:.2e} overall.")
-        fallback = [s for s in specs if s.singular and not s.admissible]
+        fallback = demoted
         if fallback:
             warnings.warn("singular corners on a smooth rule: "
                           + "; ".join(f"corner {s.idx} ({s.reason})" for s in fallback))
     return bq
+
+
+def refine_quadrature(domain, bq, depth=2, smooth_order=48):
+    """A finer node set covering the same boundary, for a posteriori verification.
+
+    Refinement respects what each rule is for. A legendre panel is split into `2**depth`
+    equal pieces at `smooth_order`. A CORNER panel keeps its anchored end -- that end carries
+    the singularity the corner rule exists for and must never be cut off, the same rule
+    `_split_at_breaks` follows -- on a piece `2**depth` times shorter, and the vacated part
+    becomes legendre panels. The singular end is refined by SHRINKING rather than by raising
+    an order, because accuracy is not monotone in a corner rule's order past a nu-dependent
+    threshold and `cornerjac_order_cap` binds besides.
+
+    This is the honest half of `precision`: the model integrands that size the rule are
+    members of the right class but carry model amplitudes, and on a convex non-integer corner
+    they are pessimistic by several orders (measured 1.2e-10 predicted against 8.7e-19
+    delivered on `right_trapezoid`). Comparing an integral across a refinement measures what
+    was actually achieved on the actual integrand.
+    """
+    refined = []
+    for p in bq.panels:
+        lo, hi = p.tau0, p.tau1                  # signed: hi < lo means anchored at hi
+        if p.rule == 'legendre':
+            edges = np.linspace(lo, hi, 2**depth + 1)
+            refined += [p._replace(tau0=a, tau1=b, order=max(p.order, smooth_order))
+                        for a, b in zip(edges[:-1], edges[1:])]
+            continue
+        fracs = 0.5**np.arange(depth, -1, -1)
+        taus = lo + (hi - lo)*fracs
+        refined.append(p._replace(tau1=taus[0]))
+        for a, b in zip(taus[:-1], taus[1:]):
+            refined.append(CornerPanel(p.seg_idx, a, b, 'legendre', smooth_order,
+                                       np.nan, None, np.nan, False, -1))
+    return assemble_panels(domain, refined, precision=bq.precision, x0=bq.x0,
+                           shortfalls=bq.shortfalls)
+
+
+def verify_gram(basis, lam, coef, bq, domain, x0=None, depth=2, smooth_order=48):
+    """Measure what the Gram on `bq` actually achieved, by recomputing it on a refined rule.
+
+    Returns `(G, G_ref, err)` with `err` the largest entrywise change, relative to the
+    diagonal. Unlike `bq.precision` this is a statement about the integrand in hand rather
+    than about a model of its class, and unlike the x0-spread it does not depend on where the
+    reference point sits.
+
+    Costs one extra evaluation of the basis at the refined nodes -- paid once per lam, against
+    a node set that is otherwise built once per solve.
+    """
+    bq_ref = refine_quadrature(domain, bq, depth=depth, smooth_order=smooth_order)
+    G = gram(eigfun_cauchy_data(basis, lam, coef, bq), lam, bq, x0=x0)
+    G_ref = gram(eigfun_cauchy_data(basis, lam, coef, bq_ref), lam, bq_ref, x0=x0)
+    scale = max(np.abs(np.diag(G_ref)).max(), np.finfo(float).tiny)
+    return G, G_ref, float(np.abs(G - G_ref).max()/scale)
 
 
 def _both_ends_singular(specs, spec):

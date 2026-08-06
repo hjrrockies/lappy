@@ -643,3 +643,155 @@ def test_corner_clearance_matches_hand_computed_geometry():
         if s.singular and s.admissible:
             clear = ei.corner_clearance(dom, s.point, s.seg_out, s.seg_in)
             assert clear == pytest.approx(1.0, abs=1e-12), clear
+
+
+# ── Which corners need the corner-adapted rule ───────────────────────────────
+#
+# The criterion was `nu < 1` -- reentrant only -- justified as "a smooth rule is already exact"
+# for nu >= 1. It is not: the Rellich integrand carries r^(2nu-2), so what matters is whether
+# that exponent is an integer. A 135-degree corner (nu = 4/3) puts r^(2/3) on its edges, which
+# Gauss-Legendre integrates algebraically. Measured on the suite before the fix:
+#
+#     right_trapezoid   84 nodes  5.6e-09      GWW1  204 nodes  6.9e-07
+#
+# both against a reported precision of 1e-13, and in both cases the offending panels were
+# `legendre` ones whose sizing model claimed ~4e-15.
+
+def test_smooth_power_error_is_exact_on_integer_powers():
+    """tau^gamma with integer gamma is a polynomial: Gauss is exact, so such a corner needs no
+    special rule however small nu is."""
+    from lappy.quad import smooth_power_error
+    for gamma in (1, 2, 3, 4, 6, 10):
+        assert smooth_power_error(float(gamma), 16) < 1e-14, gamma
+
+
+def test_smooth_power_error_flags_the_corners_that_actually_defeat_gauss():
+    """Small fractional powers stay bad at any usable order; large ones are already smooth
+    enough. This is the whole content of the criterion."""
+    from lappy.quad import smooth_power_error
+    assert smooth_power_error(2/3, 64) > 1e-8        # nu = 4/3, the case that was missed
+    assert smooth_power_error(1/3, 64) > 1e-7        # nu = 7/6
+    assert smooth_power_error(11.55, 16) < 1e-14     # nu = 6.78, fine on a smooth rule
+
+
+def test_nonintegral_gives_a_convex_noninteger_corner_the_corner_rule():
+    """A 135-degree corner (nu=4/3) is convex, so the reentrant-only criterion leaves it on a
+    smooth rule; `nonintegral=True` must not."""
+    dom = rect(1.0, 1.0)                      # all nu = 2: nothing should change
+    for ni in (False, True):
+        bq = ei.boundary_quadrature(dom, 50.0, precision=1e-13, nonintegral=ni, warn=False)
+        assert all(p.rule == 'legendre' for p in bq.panels)
+
+    from lappy.geometry import Polygon
+    tri = Polygon(np.array([0.0, 1.0, 1.0 + 1.0j]))       # 45/45/90: nu = 4, 4, 2
+    bq = ei.boundary_quadrature(tri, 50.0, precision=1e-13, nonintegral=True, warn=False)
+    assert all(p.rule == 'legendre' for p in bq.panels), 'integer nu needs no corner rule'
+
+    oct8 = np.exp(2j*np.pi*np.arange(8)/8)                # regular octagon: nu = 4/3
+    bq_off = ei.boundary_quadrature(Polygon(oct8), 50.0, precision=1e-13, warn=False)
+    bq_on = ei.boundary_quadrature(Polygon(oct8), 50.0, precision=1e-13,
+                                   nonintegral=True, warn=False)
+    assert all(p.rule == 'legendre' for p in bq_off.panels)
+    assert any(p.rule != 'legendre' for p in bq_on.panels)
+    assert len(bq_on.pts) > len(bq_off.pts)
+
+
+def test_nonintegral_fixes_a_convex_corner_against_exact_truth():
+    """alpha = 3pi/4 gives nu = 4/3: a CONVEX corner, so the reentrant-only criterion leaves it
+    on a smooth rule, but its eigenfunction still carries r^(4/3) and so puts r^(2/3) into the
+    Rellich integrand. Exact sector eigenfunction, generic x0 (the apex would cancel the very
+    contribution being measured).
+
+    Not tested with a synthetic integrand: a plane wave is analytic at the corner, and the
+    corner rule is not even exact on constants (see "Three things that will look like bugs"),
+    so it makes a correct rule look broken. The integrand has to be a genuine member of the
+    corner's class, which means a real eigenfunction.
+    """
+    alpha = 0.75*np.pi
+    dom = disk_sector(1.0, alpha)
+    apex = [s for s in ei.corner_specs(dom) if abs(s.nu - 4/3) < 1e-9]
+    assert apex, 'expected a nu=4/3 corner'
+    assert not apex[0].singular, 'reentrant-only criterion should call this corner smooth'
+
+    lam = ref.sector_eig(1, 1, 1.0, alpha)
+    u, norm2 = ref.sector_eigfun(1, 1, 1.0, alpha)
+    g = ref.sector_eigfun_grad(1, 1, 1.0, alpha)
+    sc = 1.0/np.sqrt(norm2)
+    x0 = 0.37 + 0.181j
+
+    def err(nonintegral):
+        bq = ei.boundary_quadrature(dom, lam, precision=1e-13,
+                                    nonintegral=nonintegral, warn=False)
+        G = sc*g(bq.pts)
+        ed = ei.EigfunData(bq.pts, bq.normals, bq.tangents, bq.wts,
+                           (sc*u(bq.pts))[:, None],
+                           complex_dot(G, bq.normals)[:, None],
+                           complex_dot(G, bq.tangents)[:, None])
+        return abs(ei.gram(ed, lam, bq, x0)[0, 0] - 1.0), len(bq.pts)
+
+    off, n_off = err(False)
+    on, n_on = err(True)
+    assert off > 1e-9, f'expected the smooth rule to be short here, got {off:.2e}'
+    assert on < 1e-12, f'corner-adapted rule should recover it, got {on:.2e}'
+    assert n_on > n_off
+
+
+# ── Honest precision reporting ───────────────────────────────────────────────
+
+def test_demoted_singular_corner_makes_precision_infinite_and_is_named():
+    """sector_slit's nu=0.504 corner is inadmissible and falls back to a smooth rule, which
+    cannot integrate the singularity at all -- measured 6.9e-01 against a reported 1e-13. The
+    reported precision must not be a number in that case."""
+    dom = disk_sector(1.0, 1.984*np.pi)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        bq = ei.boundary_quadrature(dom, 30.0, precision=1e-13)
+    demoted = [s for s in ei.corner_specs(dom) if s.singular and not s.admissible]
+    assert demoted, 'this geometry is supposed to have an inadmissible corner'
+    assert not np.isfinite(bq.precision)
+    assert bq.shortfalls and any('demoted' in str(r) for _, _, r in bq.shortfalls)
+
+
+def test_precision_stays_finite_and_shortfalls_empty_on_an_easy_domain():
+    bq = ei.boundary_quadrature(rect(1.0, 1.0), 50.0, precision=1e-13, warn=False)
+    assert np.isfinite(bq.precision) and bq.precision <= 1e-13
+    assert bq.shortfalls == ()
+
+
+# ── A posteriori verification ────────────────────────────────────────────────
+
+def test_refine_quadrature_covers_the_same_boundary_and_keeps_the_anchors():
+    dom = L_shape()
+    bq = ei.boundary_quadrature(dom, 60.0, precision=1e-13, warn=False)
+    ref_bq = ei.refine_quadrature(dom, bq, depth=2)
+    assert len(ref_bq.pts) > len(bq.pts)
+    assert ref_bq.wts.sum() == pytest.approx(bq.wts.sum(), rel=1e-12)
+    anchors = {(p.seg_idx, p.tau0) for p in bq.panels if p.rule != 'legendre'}
+    ref_anchors = {(p.seg_idx, p.tau0) for p in ref_bq.panels if p.rule != 'legendre'}
+    assert anchors == ref_anchors, 'a corner panel must keep its anchored end'
+
+
+def test_verify_gram_reports_zero_on_an_exactly_integrated_case():
+    """A rectangle's eigenfunction on a rule sized well past its needs: refinement must move
+    nothing, so the instrument reports the truth rather than its own noise."""
+    L = H = 1.0
+    lam = ref.rect_eig(1, 2, L, H)
+    u, norm2 = ref.rect_eigfun(1, 2, L, H)
+    s = 1.0/np.sqrt(norm2)
+    a, b = np.pi/L, 2*np.pi/H
+    dom = rect(L, H)
+    bq = ei.boundary_quadrature(dom, 4*lam, precision=1e-14, warn=False)
+
+    def ed_for(q):
+        x, y = np.real(q.pts), np.imag(q.pts)
+        G = s*(a*np.cos(a*x)*np.sin(b*y) + 1j*b*np.sin(a*x)*np.cos(b*y))
+        return ei.EigfunData(q.pts, q.normals, q.tangents, q.wts,
+                             (s*u(q.pts))[:, None],
+                             complex_dot(G, q.normals)[:, None],
+                             complex_dot(G, q.tangents)[:, None])
+
+    ref_bq = ei.refine_quadrature(dom, bq, depth=2)
+    G = ei.gram(ed_for(bq), lam, bq)[0, 0]
+    G_ref = ei.gram(ed_for(ref_bq), lam, ref_bq)[0, 0]
+    assert abs(G - 1.0) < 1e-13
+    assert abs(G - G_ref) < 1e-13

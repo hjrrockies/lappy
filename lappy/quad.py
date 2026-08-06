@@ -425,6 +425,33 @@ def corner_order_for_precision(kind, nu, gamma=None, sub=None, curved=True, prec
 
 
 @cache
+def smooth_power_error(gamma, order):
+    """Relative error of an `order`-point Gauss-Legendre rule on `int_0^1 tau^gamma dtau`.
+
+    This is the question "does a corner actually need the corner-adapted rule?", asked
+    directly. The Rellich integrand near a corner of exponent `nu` carries `tau^(2nu-2)`, and
+    whether Gauss-Legendre can integrate that has nothing to do with `nu < 1`:
+
+        gamma = 2nu-2     nu       order 16     order 64
+             0.333      1.167       8.0e-05      2.1e-06     needs the corner rule
+             0.667      1.333       1.2e-05      1.2e-07     needs the corner rule
+             1.000      1.500       0.0e+00      0.0e+00     exact: gamma is an integer
+             2.500      2.250       1.7e-09      1.2e-13     borderline
+            11.550      6.775       8.7e-16      3.5e-16     smooth enough already
+
+    An integer `gamma` is a polynomial and integrates exactly; a large fractional one has so
+    many continuous derivatives that the algebraic rate is indistinguishable from spectral at
+    any usable order. Only small fractional powers -- corners near 135 degrees -- genuinely
+    defeat a smooth rule, and they are exactly the ones the reentrant-only criterion missed.
+    """
+    if gamma <= 0:
+        return float('inf') if gamma < 0 else 0.0
+    tau, w = cached_leggauss(order)
+    exact = 1.0/(gamma + 1.0)
+    return float(abs(np.sum(w*tau**gamma) - exact)/exact)
+
+
+@cache
 def smooth_order_for_precision(k, precision=1e-14, order_min=4, order_max=512, step=2):
     """Smallest Gauss-Legendre order integrating exp(i k tau) on [0,1] to `precision`.
 
