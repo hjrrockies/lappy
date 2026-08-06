@@ -15,13 +15,28 @@ import numpy as np
 from lappy.cache import clear_instance_caches
 from lappy import geometry, bases, mps, opt, bounds, asymp
 from lappy import MPSEigensolver, Eigenproblem
+from lappy.eigfun_integrals import boundary_quadrature
 
 
 def build_solver(domain, n_basis, rtol=None, ttol=1e-3, bdry_mult=2, int_npts=None,
+                  lam_max=None, orthonorm=False, orthonorm_precision=1e-13,
                   **basis_kwargs):
     """Manually assemble an MPSEigensolver for `domain` at basis size `n_basis`.
 
-    No bdry_normals, no cauchy_data -- Dirichlet eigenvalues only.
+    No bdry_normals -- Dirichlet eigenvalues only.
+
+    `orthonorm` attaches the corner-adapted boundary quadrature
+    (`lappy.eigfun_integrals.boundary_quadrature`), which is what makes
+    `eigenfunction_coef` return L^2-orthonormal coefficients and lets
+    `certify.certify_solver` take its `||u||_L2` from the boundary instead of
+    interior cubature. It needs `lam_max` -- the top of the search window, from
+    `lambda_window` -- because the node set is sized for eigenfunctions up to
+    that spectral parameter.
+
+    It stays OFF by default: this function exists precisely because the
+    reference pipeline is assembled explicitly rather than through
+    `from_domain`, and the values already banked were produced without it.
+    Callers opt in.
     """
     if rtol is None:
         rtol = mps.rtol_default      # inherit, do not pin
@@ -36,8 +51,17 @@ def build_solver(domain, n_basis, rtol=None, ttol=1e-3, bdry_mult=2, int_npts=No
     # Polygon) works generically for any Domain, curved boundaries included.
     int_pts = domain.int_pts(method='random', npts_rand=int_npts)
 
+    bdry_quad = None
+    if orthonorm:
+        if lam_max is None:
+            raise ValueError('build_solver(orthonorm=True) needs lam_max '
+                             '(use lambda_window(domain, n_eigs)[1])')
+        bdry_quad = boundary_quadrature(domain, lam_max,
+                                        precision=orthonorm_precision)
+
     basis = basis.to_normalized((bdry_pts, int_pts))
-    solver = MPSEigensolver(basis, bdry_pts, int_pts, rtol=rtol, ttol=ttol)
+    solver = MPSEigensolver(basis, bdry_pts, int_pts, rtol=rtol, ttol=ttol,
+                            bdry_quad=bdry_quad)
     return solver
 
 

@@ -51,6 +51,42 @@ Caveats, stated plainly:
   between samples. ``boundary_sup`` therefore samples on a graded mesh that
   clusters at corners, and reports the sampling-refinement drift so a
   under-resolved sup is visible rather than silent.
+
+Both norms in ``eps`` are now boundary integrals
+--------------------------------------------------
+
+``||u||_{L2(Omega)}`` used to come from interior cubature, which is the
+expensive and fragile half of this file: the mesh rule needs a triangulation
+(minutes on a spiral, unavailable on some curved boundaries) and its Monte
+Carlo fallback is deflated by three standard errors, which throws away digits
+by construction. With ``MPSEigensolver``'s corner-adapted boundary quadrature
+(``lappy.eigfun_integrals``) the same norm is a *boundary* integral via the
+Rellich identity, sharing the node set the solver already built.
+
+``eps`` is scale-invariant, so this does not change the certified number where
+cubature was accurate -- it changes what it costs, and it removes the cases
+where cubature was the limiting factor. The norm is still used as a
+**conservative under-estimate**, in two ways:
+
+* the identity holds for *every* reference point ``x0``, so the norm is
+  computed at several and the smallest is taken;
+* the spread across those ``x0`` is pure quadrature error, and is subtracted
+  from the (squared) norm before it enters the denominator.
+
+If that spread is large -- a near-slit corner where the rule cannot reach its
+target precision -- ``certify_solver`` falls back to cubature and keeps
+whichever of the two lower bounds is larger, so a weak boundary rule can never
+make the reported bound *worse* than the old path's.
+
+One caveat the ``x0`` spread does **not** cover: the Rellich identity is exact
+for a *true* Dirichlet eigenfunction, and an MPS approximant solves Helmholtz
+exactly but has a small nonzero trace ``g`` on the boundary, so the identity
+drops a term involving ``g``. That term is second order in ``g`` -- measured on
+``stadium``, the worst case in the suite, ``sup|u| = 4e-4 .. 1e-3`` against
+``|G-1| = 9e-9 .. 4e-6`` -- and it enters ``eps = sqrt(area) sup|u| / ||u||``
+only through the denominator, i.e. it perturbs the certified bound by a
+*relative* amount of order ``eps`` itself. It cannot move a digit count that
+the numerator has already fixed.
 """
 import numpy as np
 
@@ -58,6 +94,7 @@ from lappy.cache import clear_instance_caches
 
 from lappy.geometry import PointSet
 from lappy import cubature
+from lappy.eigfun_integrals import eigfun_cauchy_data, gram
 
 
 # ---------------------------------------------------------------------------
@@ -146,19 +183,88 @@ def interior_l2(domain, u, deg=10, mesh_kwargs=None, fallback_npts=200000,
     return float(np.sqrt(domain.area * conservative)), 'monte-carlo(-3sigma)'
 
 
+def x0_probes(bq, n=3):
+    """Alternative Rellich reference points, from the node set's bounding box.
+
+    The identity ``<u,v> = (1/2lam) int (r.N) dNu dNv`` holds for every ``x0``,
+    so evaluating the Gram at several is a free, method-internal error estimate:
+    any variation is quadrature error. Deterministic, and deliberately spread
+    across the box -- probes clustered near ``bq.x0`` would understate it.
+    """
+    P = np.asarray(bq.pts)
+    cx = 0.5 * (P.real.min() + P.real.max())
+    cy = 0.5 * (P.imag.min() + P.imag.max())
+    w = max(P.real.max() - P.real.min(), 1e-300)
+    h = max(P.imag.max() - P.imag.min(), 1e-300)
+    cand = [cx + 1j * cy,
+            (cx + 0.31 * w) + 1j * (cy + 0.17 * h),
+            (cx - 0.40 * w) + 1j * (cy + 0.23 * h),
+            (cx + 0.44 * w) - 1j * (cy + 0.37 * h)]
+    return cand[:n]
+
+
+def boundary_l2(solver, lam, mult=1, n_probes=3):
+    """``||u_j||_{L2(Omega)}`` for each column of the cluster at ``lam``, as a
+    conservative under-estimate, from the solver's own boundary quadrature.
+
+    Requires ``solver.bdry_quad`` (``MPSEigensolver.from_domain(orthonorm=True)``
+    or an explicit ``bdry_quad=``). The coefficients are taken *as the solver
+    returns them* -- normally already L2-orthonormalized, so the diagonal of the
+    Gram should be 1 -- but nothing here assumes that: the norms are read off the
+    Gram, so the routine is equally correct if orthonormalization was skipped or
+    fell back (a deficient cluster Gram), and the deviation from 1 is itself
+    reported.
+
+    Returns ``(norms, info)`` with ``info`` carrying the ``x0`` spread (the
+    quadrature's own error estimate), the off-diagonal residual (how orthogonal
+    the cluster actually is), and the node set's size and achieved precision.
+    """
+    bq = solver.bdry_quad
+    if bq is None:
+        raise ValueError('solver has no bdry_quad; cannot certify from the boundary')
+    coef = solver.eigenfunction_coef(lam, mult=int(mult))
+    ed = eigfun_cauchy_data(solver.basis, lam, coef, bq)
+
+    G = gram(ed, lam, bq)
+    diags = [np.diag(G)] + [np.diag(gram(ed, lam, bq, x0=x0))
+                            for x0 in x0_probes(bq, n_probes)]
+    D = np.array(diags)
+    lo, hi = D.min(axis=0), D.max(axis=0)
+    spread = hi - lo
+
+    # Conservative: smallest of the x0 estimates, minus the spread between them.
+    # Both quantities are squared norms, so the subtraction happens there.
+    norms = np.sqrt(np.clip(lo - spread, 0.0, None))
+    off = float(np.abs(G - np.diag(np.diag(G))).max()) if mult > 1 else 0.0
+    info = dict(l2_method='rellich-boundary',
+                l2_spread=[float(x) for x in spread],
+                gram_diag=[float(x) for x in np.diag(G)],
+                gram_offdiag=off,
+                bq_nodes=int(len(bq.pts)),
+                bq_precision=float(bq.precision))
+    return norms, info
+
+
 # ---------------------------------------------------------------------------
 # the bound
 # ---------------------------------------------------------------------------
 
-def moler_payne(domain, u, lam, n_per_seg=400, deg=10, verbose=False):
+def moler_payne(domain, u, lam, n_per_seg=400, deg=10, verbose=False,
+                l2=None, l2_method=None, l2_info=None):
     """Certified error bar for ``lam`` given approximate eigenfunction ``u``.
 
     Returns a dict with ``eps`` (certified *relative* error), ``abs_bound``
     (certified absolute error ``lam*eps/(1-eps)``), ``digits``
     (``-log10(eps)``), and the ingredients.
+
+    ``l2`` supplies a precomputed ``||u||_{L2}`` (see ``boundary_l2``); without
+    it the norm comes from interior cubature as before.
     """
     sup, drift = boundary_sup(domain, u, n_per_seg=n_per_seg)
-    l2, method = interior_l2(domain, u, deg=deg)
+    if l2 is None:
+        l2, method = interior_l2(domain, u, deg=deg)
+    else:
+        l2, method = float(l2), (l2_method or 'supplied')
     area = domain.area
 
     # Inflate the sampled sup by the observed refinement drift: the true sup
@@ -173,6 +279,9 @@ def moler_payne(domain, u, lam, n_per_seg=400, deg=10, verbose=False):
                digits=-np.log10(eps) if eps > 0 else np.inf,
                bdry_sup=sup, bdry_sup_drift=drift, int_l2=l2,
                l2_method=method, area=area)
+    if l2_info:
+        out.update(l2_info)
+        out['l2_method'] = method
     if verbose:
         print(f'  lam={lam:.15f}  eps={eps:.3e}  |dlam| <= {abs_bound:.3e}  '
               f'({out["digits"]:.1f} certified digits)')
@@ -181,27 +290,75 @@ def moler_payne(domain, u, lam, n_per_seg=400, deg=10, verbose=False):
     return out
 
 
+SPREAD_TOL = 1e-8
+"""Relative ``x0``-spread above which the boundary norm is cross-checked against
+cubature. The boundary rule reaches ~1e-13 on almost every suite domain; the
+exceptions are near-slit corners (``chevron_2_3``, ``chevron_2_4``) and the
+spirals, where ``boundary_quadrature`` warns that it fell short. There the
+cross-check costs a mesh build and can only help: both numbers are lower bounds
+on ``||u||``, so the larger one is used."""
+
+
 def certify_solver(solver, domain, eigs, mult=None, n_per_seg=400, deg=10,
-                   verbose=True):
+                   verbose=True, l2_source='auto', spread_tol=SPREAD_TOL):
     """Run ``moler_payne`` for each eigenvalue of one solver.
 
     ``mult[i]`` (default 1) is how many eigenfunctions to extract at
     ``eigs[i]``; each column is certified separately and the *worst* is
     reported, since the bound must hold for the whole cluster.
+
+    ``l2_source`` selects the ``||u||_{L2}`` used in the denominator:
+
+    ``'auto'``      boundary (Rellich) when the solver carries a ``bdry_quad``,
+                    cubature otherwise -- and cubature *as well*, keeping the
+                    larger lower bound, when the boundary rule's own ``x0``
+                    spread exceeds ``spread_tol``;
+    ``'boundary'``  boundary only (raises without a ``bdry_quad``);
+    ``'cubature'``  interior cubature only -- the pre-orthonormalization path,
+                    kept so old results stay reproducible.
     """
     if mult is None:
         mult = np.ones(len(eigs), dtype=int)
+    have_bq = getattr(solver, 'bdry_quad', None) is not None
+    if l2_source == 'boundary' and not have_bq:
+        raise ValueError("l2_source='boundary' but the solver has no bdry_quad")
+    use_bdry = l2_source == 'boundary' or (l2_source == 'auto' and have_bq)
+
     out = []
     for lam, m in zip(eigs, mult):
-        ufun = solver.eigenfunction(lam, mult=int(m), orthonorm=False)
+        m = int(m)
+        # orthonorm=True is what makes the eigenfunction's scale meaningful.
+        # `eps` is scale-invariant, so this does not by itself move the bound --
+        # it is what lets `boundary_l2` read the norms off a Gram that should be
+        # the identity, and makes any departure from it a diagnostic.
+        ufun = solver.eigenfunction(lam, mult=m, orthonorm=use_bdry)
+        norms, info = (boundary_l2(solver, lam, m) if use_bdry else (None, None))
         best = None
-        for j in range(int(m)):
+        for j in range(m):
             def uj(pts, j=j):
                 return ufun(pts)[..., j]
-            rec = moler_payne(domain, uj, lam, n_per_seg=n_per_seg, deg=deg)
+            l2 = None if norms is None else norms[j]
+            l2_info = None
+            if info is not None:
+                l2_info = dict(info, l2_spread=info['l2_spread'][j],
+                               gram_diag=info['gram_diag'][j])
+                rel_spread = info['l2_spread'][j] / max(info['gram_diag'][j], 1e-300)
+                if l2_source == 'auto' and rel_spread > spread_tol:
+                    # The boundary rule is not converged here; both estimates are
+                    # lower bounds on ||u||, so take the larger.
+                    l2_cub, meth = interior_l2(domain, uj, deg=deg)
+                    l2_info['l2_cubature'] = float(l2_cub)
+                    if l2_cub > l2:
+                        l2, l2_info['l2_method'] = l2_cub, f'{meth} (boundary spread ' \
+                                                           f'{rel_spread:.1e})'
+                    else:
+                        l2_info['l2_method'] = f'rellich-boundary (> {meth})'
+            rec = moler_payne(domain, uj, lam, n_per_seg=n_per_seg, deg=deg,
+                              l2=l2, l2_method=(l2_info or {}).get('l2_method'),
+                              l2_info=l2_info)
             if best is None or rec['eps'] > best['eps']:
                 best = rec
-        best['mult'] = int(m)
+        best['mult'] = m
         out.append(best)
         if verbose:
             print(f'  lam={lam:.15f}  mult={int(m)}  eps={best["eps"]:.3e}  '
@@ -227,6 +384,22 @@ def certify_sym(solvers, domain, eigs, sectors, **kwargs):
         rec['sector'] = tuple(sec)
         out.append(rec)
     return out
+
+
+def summarize_l2(records):
+    """Compact, JSON-safe summary of how ``||u||_L2`` was obtained, for the
+    result files: which method(s), the worst ``x0`` spread and off-diagonal
+    Gram residual (both None when the boundary path was not used), and the node
+    set's size and achieved precision."""
+    spreads = [float(r['l2_spread']) for r in records if 'l2_spread' in r]
+    offs = [float(r['gram_offdiag']) for r in records if 'gram_offdiag' in r]
+    bq = next((r for r in records if 'bq_nodes' in r), None)
+    return dict(
+        l2_methods=sorted({str(r.get('l2_method')) for r in records}),
+        l2_spread_max=max(spreads) if spreads else None,
+        gram_offdiag_max=max(offs) if offs else None,
+        bq_nodes=(bq['bq_nodes'] if bq else None),
+        bq_precision=(bq['bq_precision'] if bq else None))
 
 
 def report_certified(name, eigs, records, sectors=None, ref=None):

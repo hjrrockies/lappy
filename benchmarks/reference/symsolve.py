@@ -11,6 +11,7 @@ import numpy as np
 
 from lappy import geometry, bases, mps, bounds, asymp
 from lappy import MPSEigensolver
+from lappy.eigfun_integrals import boundary_quadrature
 from lappy.geometry import PointSet
 from lappy.symmetry import (SymmetrizedBasis, prune_columns, fundamental_bdry_pts,
                             fundamental_int_pts, domain_symmetry)
@@ -20,7 +21,8 @@ from common import manual_solve, polish_eigs, lambda_window
 
 def build_sym_solver(domain, group, sector, n_basis, rtol=None, ttol=1e-3,
                      bdry_mult=2, int_npts=None, prune=True, lam_ref=None,
-                     prune_kill_tol=1e-8, prune_dup_tol=1e-14, **basis_kwargs):
+                     prune_kill_tol=1e-8, prune_dup_tol=1e-14, lam_max=None,
+                     orthonorm=False, orthonorm_precision=1e-13, **basis_kwargs):
     """One MPS solver for a single symmetry sector.
 
     The basis is the ordinary full-domain default basis, projected onto the
@@ -28,6 +30,13 @@ def build_sym_solver(domain, group, sector, n_basis, rtol=None, ttol=1e-3,
     fundamental domain. ``prune`` drops the structurally dependent columns
     (the projection is ``|G|``-to-one on basis columns) to recover the cubic
     GSVD saving.
+
+    ``orthonorm`` attaches a boundary quadrature over the **whole** boundary,
+    not the fundamental domain's share of it. That is deliberate and is the
+    same reasoning ``certify.certify_sym`` runs on: a sector eigenfunction is a
+    genuine Helmholtz solution on all of ``Omega`` satisfying the Dirichlet
+    condition on all of ``dOmega``, so its ``L2(Omega)`` norm is the whole-domain
+    Rellich integral. Collocation is reduced by symmetry; the norm is not.
     """
     if rtol is None:
         rtol = mps.rtol_default
@@ -51,8 +60,17 @@ def build_sym_solver(domain, group, sector, n_basis, rtol=None, ttol=1e-3,
         sym = prune_columns(sym, lam_ref, allpts, kill_tol=prune_kill_tol,
                              dup_tol=prune_dup_tol)
 
+    bdry_quad = None
+    if orthonorm:
+        if lam_max is None:
+            raise ValueError('build_sym_solver(orthonorm=True) needs lam_max '
+                             '(use lambda_window(domain, n_eigs)[1])')
+        bdry_quad = boundary_quadrature(domain, lam_max,
+                                        precision=orthonorm_precision)
+
     sym = sym.to_normalized((bdry_pts, int_pts))
-    solver = MPSEigensolver(sym, bdry_pts, int_pts, rtol=rtol, ttol=ttol)
+    solver = MPSEigensolver(sym, bdry_pts, int_pts, rtol=rtol, ttol=ttol,
+                            bdry_quad=bdry_quad)
     return solver
 
 
@@ -80,6 +98,9 @@ def solve_sym(domain, group, n_basis, n_eigs, a=None, b=None, bracket_xtol=1e-5,
     if a is None or b is None:
         a, b = lambda_window(domain, n_eigs)
     n_pts = max(n_pts_per_eig * n_eigs, 50)
+    # The boundary quadrature (when the caller asked for orthonorm) is sized for
+    # eigenfunctions up to the top of the search window.
+    kwargs.setdefault('lam_max', b)
 
     all_eigs, all_sectors, all_tens, solvers = [], [], [], {}
     for sector in group.sectors():

@@ -88,12 +88,14 @@ def weyl_count(domain, lam):
 def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
                       max_recurse=None, n_pts_per_eig=11, int_npts=None,
                       bdry_mult=2, basis_kwargs=None, fs_placement='default',
-                      fs_frac=0.5, fs_d=1.0, preflight_pts=300):
+                      fs_frac=0.5, fs_d=1.0, preflight_pts=300,
+                      orthonorm=True):
     """Returns a result dict. Raises on failure; the caller records that."""
     from lappy import bases, mps, MPSEigensolver
     from lappy.symmetry import domain_symmetry
     from common import build_solver, lambda_window   # manual_solve/polish_eigs retired
     from symsolve import solve_sym
+    import certify
     from certify import certify_sym, certify_solver
 
     dom = entry.domain()
@@ -131,14 +133,19 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
             dom, grp, n_basis, n_eigs, return_solvers=True, verbose=0,
             **({} if max_recurse is None else {'max_recurse': max_recurse}),
             n_pts_per_eig=n_pts_per_eig,
-            int_npts=int_npts, bdry_mult=bdry_mult, **bkw)
+            int_npts=int_npts, bdry_mult=bdry_mult, orthonorm=orthonorm, **bkw)
         recs = certify_sym(solvers, dom, eigs, sectors, verbose=False)
         method = f'symmetry({grp.name}, |G|={grp.order})'
         mults = None
     else:
+        a, b = lambda_window(dom, n_eigs)
+        # The boundary quadrature backing L^2-orthonormal eigenfunctions (and,
+        # through them, certification without interior cubature) is sized for
+        # eigenfunctions up to the top of the search window.
         if fs_placement == 'default':
             solver = build_solver(dom, n_basis, bdry_mult=bdry_mult,
                                   int_npts=int_npts or max(2 * n_basis, 500),
+                                  lam_max=b, orthonorm=orthonorm,
                                   **bkw)
         else:
             basis = _build_basis(dom, n_basis)
@@ -147,8 +154,12 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
             ip = dom.int_pts(method='random',
                              npts_rand=int_npts or max(2 * n_basis, 500))
             basis = basis.to_normalized((bp, ip))
-            solver = MPSEigensolver(basis, bp, ip, rtol=1e-14, ttol=1e-3)
-        a, b = lambda_window(dom, n_eigs)
+            bq = None
+            if orthonorm:
+                from lappy.eigfun_integrals import boundary_quadrature
+                bq = boundary_quadrature(dom, b, precision=1e-13)
+            solver = MPSEigensolver(basis, bp, ip, rtol=1e-14, ttol=1e-3,
+                                    bdry_quad=bq)
 
         # Pre-flight: characterize the tension curve BEFORE searching. An
         # ill-posed instance breaks the minimizer no matter how it is tuned, so
@@ -206,6 +217,7 @@ def solve_and_certify(entry, n_basis, n_eigs, use_sym=False, n_workers=1,
         sectors=[list(map(int, s)) for s in sectors] if sectors else None,
         mult=[int(m) for m in mults] if mults is not None else None,
         weyl_count_at_last=weyl_count(dom, float(eigs[-1])) if len(eigs) else None,
+        **certify.summarize_l2(recs),
         preflight=(pre if not use_sym else None),
         preflight_noisy=(bool(noisy) if not use_sym else None),
     )
@@ -255,6 +267,10 @@ def main(argv=None):
                          'default is ~1 per basis column')
     ap.add_argument('--bdry-mult', type=int, default=2)
     ap.add_argument('--preflight-pts', type=int, default=300)
+    ap.add_argument('--no-orthonorm', dest='orthonorm', action='store_false',
+                    default=True,
+                    help='certify from interior cubature instead of the '
+                         'boundary (the pre-orthonormalization path)')
     ap.add_argument('--fs-placement', default='default',
                     choices=('default', 'boundary'),
                     help="'boundary' distributes fundamental sources along "
@@ -305,7 +321,8 @@ def main(argv=None):
                                 fs_frac=(args.fs_frac
                                          if args.fs_frac is not None else 0.5),
                                 fs_d=args.fs_d,
-                                preflight_pts=args.preflight_pts)
+                                preflight_pts=args.preflight_pts,
+                                orthonorm=args.orthonorm)
         out['ok'] = True
     except Exception as exc:
         out = dict(key=args.key, n_basis=n_basis, n_eigs=n_eigs, ok=False,
@@ -319,6 +336,7 @@ def main(argv=None):
     out['fs_placement'] = args.fs_placement
     out['seconds'] = time.time() - t0
     out['use_sym'] = args.use_sym
+    out['orthonorm'] = args.orthonorm
     with open(path, 'w') as fh:
         json.dump(out, fh, indent=1)
 

@@ -96,10 +96,15 @@ Each entry: `status`, `attempts`, `best_digits`, `best_result`, `notes`.
 `common.build_solver` deliberately bypasses `MPSEigensolver.from_domain`, so
 these are all currently OFF in the reference pipeline:
 
-1. **Rellich L2-orthonormalization** (`lappy/rellich.py`,
-   `from_domain(rellich=True)`) — never used in reference production.
-2. **Cauchy data / singularity subtraction** (`lappy/cauchy.py`) —
-   `build_solver` passes `cauchy_data=None`.
+1. ~~**Rellich L2-orthonormalization**~~ — **taken.** `lappy/rellich.py` and
+   `lappy/cauchy.py` were replaced by `lappy/eigfun_integrals.py`, and
+   `build_solver(orthonorm=True, lam_max=...)` now attaches the corner-adapted
+   boundary quadrature. `bucket.py` and `runner.py` pass it by default, so
+   eigenfunctions are L2-orthonormal and `certify.certify_solver` takes
+   `||u||_L2` from the boundary instead of interior cubature. See the
+   "certification moved to the boundary" entry in `NOTEBOOK.md`.
+2. ~~**Cauchy data / singularity subtraction**~~ — retired with `lappy/cauchy.py`
+   (see the amendment above).
 3. **Per-column normalization.** `TUNING_LOG.md` records `n_reg/n ~ 60-70%`
    *intrinsically*, insensitive to collocation density. Hypothesis: at a sharp
    corner the FB exponents reach ~334 (chevron), so columns differ by hundreds

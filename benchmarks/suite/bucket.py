@@ -54,11 +54,12 @@ def compare_to_truth(eigs, mults, ref, rtol=1e-6):
 
 
 def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
-        preflight_pts=300, n_eigs=None, preflight_only=False, tag=''):
+        preflight_pts=300, n_eigs=None, preflight_only=False, tag='',
+        orthonorm=True):
     from benchmarks.suite.domains import SUITE
     from benchmarks.suite import preflight as pf
     from common import build_solver, lambda_window
-    from certify import certify_solver
+    from certify import certify_solver, summarize_l2
     from lappy.core import EigensolverFailure
 
     entry = SUITE[key]
@@ -72,9 +73,15 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
     # and leaving a hole in the table.
     try:
         dom = entry.domain()
-        solver = build_solver(dom, n_basis, rtol=rtol, bdry_mult=bdry_mult,
-                              int_npts=int_npts or max(2 * n_basis, 500))
         a, b = lambda_window(dom, n_eigs)
+        # `orthonorm` attaches the corner-adapted boundary quadrature, so the
+        # eigenfunctions come out L^2-orthonormal and certification takes its
+        # norm from the boundary rather than interior cubature. `b` is the top
+        # of the search window, which is exactly the `lam_max` the node set has
+        # to be sized for.
+        solver = build_solver(dom, n_basis, rtol=rtol, bdry_mult=bdry_mult,
+                              int_npts=int_npts or max(2 * n_basis, 500),
+                              lam_max=b, orthonorm=orthonorm)
     except Exception as ex:
         rec = dict(key=key, n_basis=n_basis, bucket=3, tag=tag,
                    error=f'construction: {type(ex).__name__}: {ex}')
@@ -102,7 +109,11 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
 
     # --- solve -------------------------------------------------------------
     rec = dict(key=key, n_basis=n_basis, rtol=solver.rtol, int_npts=int_npts,
-               preflight=m, noisy=bool(noisy), plot=plot, tag=tag)
+               preflight=m, noisy=bool(noisy), plot=plot, tag=tag,
+               orthonorm=bool(orthonorm),
+               bq_nodes=(len(solver.bdry_quad.pts) if solver.bdry_quad else None),
+               bq_precision=(float(solver.bdry_quad.precision)
+                             if solver.bdry_quad else None))
     t0 = time.time()
     try:
         e, mults, _ = solver.solve_interval(
@@ -137,7 +148,8 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
     total = int(np.sum(mults)) if mults is not None and len(mults) else len(eigs)
     rec.update(n_distinct=len(eigs), n_listed=total, certified=cert,
                mult=[int(x) for x in mults],
-               eigs=[float(x) for x in eigs], seconds=time.time() - t0)
+               eigs=[float(x) for x in eigs], seconds=time.time() - t0,
+               **summarize_l2(recs))
 
     true_dig, missing = None, []
     if entry.truth_fn is not None:
@@ -157,6 +169,13 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
     td = f'{true_dig:.1f}' if true_dig is not None else '--'
     print(f'SOLVE      distinct={len(eigs)} listed={total}/{n_eigs}  '
           f'certified={cert:.1f}  true={td}  ({rec["seconds"]:.0f}s)')
+    if rec.get('l2_spread_max') is not None:
+        print(f'NORM       {"/".join(rec["l2_methods"])}  '
+              f'x0-spread<={rec["l2_spread_max"]:.1e}  '
+              f'offdiag<={rec["gram_offdiag_max"]:.1e}  '
+              f'bq_nodes={rec["bq_nodes"]}  bq_prec={rec["bq_precision"]:.1e}')
+    else:
+        print(f'NORM       {"/".join(rec["l2_methods"])}')
     if missing:
         print(f'           MISSING {len(missing)}: '
               f'{[f"{x:.6f}" for x in missing[:4]]}')
@@ -181,6 +200,10 @@ def main(argv=None):
     ap.add_argument('--preflight-pts', type=int, default=300)
     ap.add_argument('--n-eigs', type=int, default=None)
     ap.add_argument('--preflight-only', action='store_true')
+    ap.add_argument('--no-orthonorm', dest='orthonorm', action='store_false',
+                    default=True,
+                    help='certify from interior cubature instead of the '
+                         'boundary (the pre-orthonormalization path)')
     ap.add_argument('--tag', default='')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--swap-mb', type=float, default=None,
@@ -193,7 +216,8 @@ def main(argv=None):
     guards.install(swap_mb=args.swap_mb, timeout_s=args.timeout, label=args.key)
     np.random.seed(args.seed)
     run(args.key, args.n_basis, args.rtol, args.int_npts, args.bdry_mult,
-        args.preflight_pts, args.n_eigs, args.preflight_only, args.tag)
+        args.preflight_pts, args.n_eigs, args.preflight_only, args.tag,
+        orthonorm=args.orthonorm)
     return 0
 
 
