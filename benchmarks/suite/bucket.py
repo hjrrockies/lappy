@@ -63,6 +63,13 @@ def make_basis(dom, n_basis, fs_placement='default', fs_d=1.0, fs_frac=0.5):
     from lappy import bases
     if fs_placement == 'default':
         return bases.make_default_basis(dom, n_basis)
+    # A corner-free domain has no Fourier-Bessel block to keep: make_default_basis gives it
+    # pure fundamental solutions, and the only question is the offset. That is exactly where
+    # the hard-coded fs_d=1.0 does most damage -- stadium keeps 78 of 324 columns at d=1.0 and
+    # 320 of 320 at d=0.1.
+    if len(dom.corners) == 0:
+        return bases.FundamentalBasis.by_boundary(
+            dom, bases.fs_bdry_sps(dom, n_basis, order=1), d=fs_d, order=1)
     n_fs = int(round(fs_frac*n_basis))
     fb = bases.FourierBesselBasis.from_domain(dom, bases.fb_corner_orders(dom, n_basis - n_fs))
     per_seg = bases.fs_bdry_sps(dom, n_fs, order=1)

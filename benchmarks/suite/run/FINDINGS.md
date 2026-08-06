@@ -295,3 +295,67 @@ completely differently: one is fixed outright by source placement, the other has
 mode that ignores every knob in the family. That is evidence the remaining bucket-2 failures
 are not one phenomenon, and it argues for continuing domain by domain rather than hunting a
 universal default -- which is also what section 8 concluded from the GWW1/GWW2 split.
+
+### The chevrons: all four respond, and section 8 tested the wrong offsets
+
+Section 8 concluded that distributing the sources "is a real fix for the two-sharp-corner,
+no-reentrant case and not a general one", because chevron did not respond at `d = 0.5/0.7`.
+That conclusion was an artefact of the offsets tried. Median tension over three seeds:
+
+    chevron_1_15  nb=480      lam1      lam5     lam10     n_reg
+    make_default_basis     2.6e-08   1.5e-08   5.1e-09    283/476
+    fs_by_boundary d=0.2   6.1e-10   1.8e-11   7.7e-11    366/479
+    fs_by_boundary d=0.8   1.6e-08   1.4e-08   4.0e-09    234/479   <- section 8's range
+
+The useful range ends right about where section 8 started looking. Re-allocating the FB block
+does nothing by comparison (`[8,178,8,45]` default vs `[80,120,80,45]` vs `[8,300,8,45]`: all
+within a factor of 1.6), so the Fourier--Bessel side is not the binding constraint on these
+domains -- which is worth knowing, because "sharp corners need more corner functions" is the
+intuitive guess and it is wrong.
+
+End to end, all four chevrons move from bucket 2 to bucket 1:
+
+    domain          default   ->  distributed sources        nb     d
+    chevron_1_15       6.31   ->  11.3                      480   0.2
+    chevron_1_125      5.03   ->  10.7                      480   0.15
+    chevron_2_3        3.65   ->  10.3                      480   0.4
+    chevron_2_4        3.30   ->  (queued)                  480   0.4
+
+`chevron_2_3` carries an extra lesson. Its recorded best was `n_basis=160`, because at 480 the
+DEFAULT basis is degenerate -- preflight contrast 1.6, guard-aborted, recorded in BUCKETS.md as
+"n_basis has a domain-specific optimum, and it is not monotone". With distributed sources at
+480 the contrast is 2.9e+03 and the tension is six orders better than the default's
+(1.8e-12 against 4.0e-06). The non-monotonicity was a property of the *basis*, not of the
+domain: fix the conditioning and bigger is better again.
+
+### The thin-neck group does not respond, and plane waves are inert
+
+`mushroom_thin` and `mushroom_neck01` are unmoved by source placement at every offset tried
+(`neck01`: 3.0e-07 at d=0.4 against the default's 3.2e-07). Their `n_reg/n` is 56%, so they are
+conditioning-limited, but not by the mechanism the parallelograms and chevrons share.
+
+Plane waves were tried as a genuinely different family (`benchmarks/basis_lab/planewave.py`:
+`cos(k d.x)`, `sin(k d.x)`, verified to solve Helmholtz and to have correct gradients). Adding
+80, 160 or 320 plane-wave columns to the default basis on `mushroom_neck01` or `stadium`
+changes the tension by under 5% **and leaves `n_reg` exactly where it was** -- the regularizer
+discards every one of them. Plane waves alone are far worse than either localized family
+(`stadium` 9.2e-04 against 1.6e-04). They are not the missing ingredient for these domains.
+
+### `stadium`: the default offset is catastrophically wrong, and it is still hard
+
+`stadium` is corner-free, so `make_default_basis` gives it pure fundamental solutions at the
+hard-coded `fs_d = 1.0` -- on a domain of half-width 0.5. The result is rank collapse:
+
+    stadium nb=320                 cols   n_reg      lam1      lam5     lam10
+    make_default_basis (d=1.0)      324      78   1.6e-04   4.9e-04   4.3e-04
+    pure FS by_boundary d=0.1       320     320   6.8e-06   2.3e-05   1.8e-05
+
+**76% of the default basis is discarded by the regularizer; at d=0.1 every column survives**
+and the tension improves 20x. But it then plateaus: nb 320 -> 640 buys only 6.8e-06 -> 2.6e-06,
+so the domain is not simply resolution-limited either. Stadium stays hard.
+
+The contrast with `ellipse_a2` settles what the offset should scale with. That domain is
+corner-free too, and its default `d = 1.0` is right: 1.1e-15, where `d = 0.05` gives 9.4e-05,
+ten orders worse. The stadium is thin (width 1) and the ellipse is fat (width ~2.6), so the
+offset wants to scale with the domain's thickness, not be a constant. **`fs_d = 1.0` as a
+hard-coded default is the single most damaging line in basis construction found so far.**
