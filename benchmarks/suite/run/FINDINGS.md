@@ -359,3 +359,44 @@ corner-free too, and its default `d = 1.0` is right: 1.1e-15, where `d = 0.05` g
 ten orders worse. The stadium is thin (width 1) and the ellipse is fat (width ~2.6), so the
 offset wants to scale with the domain's thickness, not be a constant. **`fs_d = 1.0` as a
 hard-coded default is the single most damaging line in basis construction found so far.**
+
+### Scaling the offset by LOCAL thickness: right idea, wrong domains
+
+The stadium/ellipse contrast says the offset should track thickness, and a mushroom's
+thickness varies enormously -- measured with an inward-cone ray cast
+(`benchmarks/basis_lab/placement.py`), `mushroom_neck01` runs from 0.003 at the neck to 1.497
+in the cap, a factor of 500. No single `d` can serve that, which is a tidy explanation for why
+no uniform offset moves the mushrooms.
+
+The tidy explanation is wrong. Placing each source at `frac * local_thickness`:
+
+    mushroom_thin nb=320                cols  n_reg      lam1      lam5     lam10
+    make_default_basis                   322    181   1.2e-09   1.9e-11   5.8e-09
+    FB + FS local-thickness frac=0.5     320    273   5.8e-09   7.1e-11   1.1e-08
+
+**`n_reg` rises from 181 to 273 and the accuracy gets worse.** Same on `mushroom_neck01`
+(3.2e-07 -> 1.7e-06). That is the opposite of the pattern on the parallelograms and chevrons,
+where conditioning and accuracy moved together, and it is worth stating plainly:
+
+**`n_reg/n` is a diagnostic, not an objective.** A basis can be better conditioned and less
+accurate at the same time -- more columns surviving the regularizer does not mean more of the
+solution is being represented. Optimising `n_reg` directly would have picked the worse basis
+here.
+
+A measurement error on the way, since it would be easy to repeat: the first version of
+`local_thickness` excluded boundary within a fixed arclength of the query point instead of
+using an inward cone. The nearest admissible point is then just outside that window on the
+same wall, so every domain returns a thickness equal to the exclusion radius -- stadium (true
+width 1) and ellipse_a2 (true width ~2.6) both came back at ~0.1-0.2. Check that a geometric
+measurement varies with the geometry before drawing on it.
+
+### Where bucket 2 stands after this pass
+
+    solved (-> bucket 1)   parallelogram_p65, chevron_1_15, chevron_1_125,
+                           chevron_2_3, chevron_2_4                      5 domains
+    improved, still short  parallelogram_p127 (4.12 -> 7.5)
+    unsolved               mushroom_thin, mushroom_neck01
+
+The two mushrooms have now resisted a uniform offset at every distance tried, a
+thickness-scaled offset, plane waves, and larger bases. They are the remaining open case, and
+nothing measured so far explains what their basis is missing.
