@@ -472,3 +472,17 @@ So the two bucket-2 groups really are different, and each needed the knob the ot
 Which is a warning about generalising from either. A single "better default basis" tuned on
 one group would have made the other worse -- and the local-thickness rule, which was designed
 from the stadium/ellipse evidence, did exactly that to the mushrooms.
+
+### `parallelogram_p127` needed both knobs
+
+Placement alone at `n_basis=320` gave 7.5, half a digit short, with one mode (`lam7`) pinned at
+3.1e-07 against every knob in the family. Escalating the default basis alone does little on
+this domain either. Both together clear it: `n_basis=640` with `d=0.4` certifies **9.7**, up
+from 4.12.
+
+The tension screen at `n_basis=320` was a poor predictor of that -- it said `lam7` could not be
+moved, and the binding mode's tension is what usually sets the certified digits. I never
+screened `lam7` at 640, so this is not a contradiction, but it is a caution about the method:
+**a screen is a screen.** It is right about direction and cheap enough to run dozens of, but
+the end-to-end number is the result, and on two domains now (this and the mushrooms) the
+screen was materially more pessimistic than the certified answer.
