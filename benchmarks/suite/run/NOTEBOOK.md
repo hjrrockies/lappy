@@ -2407,3 +2407,66 @@ which is the number that looks alarming and is the wrong one to look at: the
 absolute cost is a fraction of a millisecond.
 
 Trading eight orders of accuracy on curved boundaries for ~1 ms per solve.
+
+---
+
+## Arclength reparametrization: implemented, default-on, plus segment-declared panel breaks
+
+`ParametricSegment` now SOLVES the arc-length inverse instead of interpolating it. The
+adaptive table supplies bracketing nodes and an initial guess; `_t_of_s` runs a
+safeguarded Newton on the exact `s(t)`, and `t'(s) = 1/|p'(t)|` is analytic.
+Segments declare `break_ts` (native parameter) / `break_taus` (arc length) where a
+panel must break, `SplineSegment` reports its interior knots, and
+`eigfun_integrals._split_at_breaks` honours them -- splitting only a corner panel's
+OUTER part, so the anchored singular end is never cut off.
+
+    segment          roundtrip   |dp/dtau|-L   build    t(s) per 1000 pts
+    circular arc      1.9e-16      3.8e-16     0.0 ms       0.13 ms
+    ellipse           6.1e-16      3.7e-16     0.0 ms       0.34 ms
+    cubic spline      9.5e-16      2.5e-16     0.8 ms       0.65 ms
+
+`boundary_quadrature` on a spline-boundary domain now returns **8.9e-16** at every
+requested precision, with `sum(w) - perimeter` exactly 0. Knot alignment does what
+it promised: at 120 nodes, knot-panelled 3.3e-12 against 6.7e-07 for one global
+panel.
+
+### Three of my own errors on the way, all worth recording
+
+**1. My test spline was degenerate, and it invented a phenomenon.**
+`make_interp_spline(..., bc_type='periodic')` fed COMPLEX points silently discards
+the imaginary part (ComplexWarning; `c.dtype` comes back float64). My "spline" was
+therefore a back-and-forth segment on the real axis -- which genuinely has cusps,
+`min|p'| = 0` at three parameters. I spent a while diagnosing "near-cusp behaviour
+in splines", built a safeguarded Newton for it, and measured a 130x slowdown, all of
+which were properties of a broken test object. Fitting the real (n,2) array
+`SplineSegment` expects gives `min|p'| ~ 4.4-5.2`: no cusps, and 0.65 ms per 1000
+points rather than 50.
+
+The safeguard stays -- a bracketed fallback is nearly free (the bracket comes from
+monotonicity of s, and well-conditioned points exit in 3 iterations) and near-cusps
+are perfectly possible in splines fitted to real data. But it is insurance, not a
+response to a demonstrated failure, and the notebook should say so.
+
+The 130x cliff is now a `RuntimeWarning`: `_complex_vectorize` falling back to its
+per-point Python loop was silent, and it is almost always a sign the segment was
+built wrong. That warning would have saved the whole detour.
+
+**2. An active-set bug that cost four orders.** Iterating only the unconverged
+points is necessary -- without it a couple of stragglers drag the whole vector
+through all 60 iterations (62 ms per 1000 points). But my first version evaluated
+`f` at the current `t`, then stepped EVERY active point, including ones already
+within tolerance, before dropping them -- moving converged points back off the root.
+Round-trip went 6e-16 -> 8e-3. Fixed by not stepping converged points.
+
+**3. `adaptive_polyline` must not use the exact map.** It makes very many small
+recursive `p` calls while choosing nodes, and the solve's per-call overhead turned
+segment construction into a timeout. It only selects WHERE nodes go, to `tol`, so it
+now runs on the cheap guess map; `polyline_pts` still evaluates them through the
+exact `p`, so nothing downstream inherits the guess's error.
+
+### Calibration note
+
+`_REMAINDER_ORDER = 6` is insensitive (a fraction of one table panel; order 6 equals
+order 24). `_ANCHOR_ORDER` is not, and 8 was too low: the total length still moved
+8e-11 between tol=1e-3 and tol=1e-6, leaving exactly the tol-dependence the solve
+exists to remove. At 12 that is 5e-15, for no measurable cost.

@@ -330,7 +330,48 @@ def corner_panels(domain, specs=None, order_corner=16, order_smooth=16, gamma=No
             if f0 + f1 < 1.0 - 1e-12:
                 panels.append(CornerPanel(i, f0, 1.0 - f1, 'legendre', order_smooth,
                                           np.nan, None, np.nan, False, -1))
-    return panels
+    return _split_at_breaks(domain, panels, order_smooth)
+
+
+def _split_at_breaks(domain, panels, order_smooth):
+    """Subdivide panels at each segment's `break_taus`.
+
+    A segment reports parameter values across which its integrand is not analytic -- spline
+    knots being the motivating case, since a degree-k B-spline is only C^(k-1) there. A Gauss
+    panel spanning one converges algebraically no matter how exact the parametrization is
+    (measured: 8.3e-11 at 96 nodes with knot-aligned panels against 1.3e-06 at 128 without).
+
+    A CORNER panel is subdivided only in its outer part: its anchored end carries the
+    singularity the corner rule exists for and must not be cut off, so the corner sub-panel
+    keeps the anchor and runs to the first break, and the remainder becomes smooth panels.
+    Panels are emitted in the same (seg_idx, anchored-end-first) convention as the input.
+    """
+    out = []
+    for p in panels:
+        breaks = np.asarray(domain.bdry.segments[p.seg_idx].break_taus, dtype=float)
+        lo, hi = min(p.tau0, p.tau1), max(p.tau0, p.tau1)
+        inner = np.sort(breaks[(breaks > lo + 1e-12) & (breaks < hi - 1e-12)])
+        if not len(inner):
+            out.append(p)
+            continue
+        if p.rule == 'legendre':
+            edges = np.concatenate([[lo], inner, [hi]])
+            for a, b in zip(edges[:-1], edges[1:]):
+                out.append(p._replace(tau0=a, tau1=b))
+        else:
+            # keep the anchor; cut only beyond the first break on the anchored side
+            if p.tau0 < p.tau1:                       # anchored at lo
+                edges = np.concatenate([[lo], inner, [hi]])
+                out.append(p._replace(tau0=edges[0], tau1=edges[1]))
+                rest = edges[1:]
+            else:                                     # anchored at hi
+                edges = np.concatenate([[lo], inner, [hi]])
+                out.append(p._replace(tau0=edges[-1], tau1=edges[-2]))
+                rest = edges[:-1]
+            for a, b in zip(rest[:-1], rest[1:]):
+                out.append(CornerPanel(p.seg_idx, a, b, 'legendre', order_smooth,
+                                       np.nan, None, np.nan, False, -1))
+    return out
 
 
 def _panel_rule(panel):

@@ -2,7 +2,7 @@
 import pytest
 import numpy as np
 from lappy import PointSet, Domain, Polygon, ParametricSegment, LineSegment, MultiSegment
-from lappy.geometry import SplineSegment
+from lappy.geometry import SplineSegment, ParametricSegment as _PS
 from lappy.geometry import (
     rect, disk, L_shape, GWW1, GWW2, H_shape, reg_ngon,
     disk_sector, iso_right_tri, iso_tri, mushroom, cut_square, chevron,
@@ -1522,3 +1522,109 @@ class TestCornerIndexingConsistency:
             sec = disk_sector(1, a_over_pi*np.pi)
             apex = np.argmin(np.abs(np.asarray(sec.corners)))
             assert sec.corner_int_angles[apex] == pytest.approx(a_over_pi*np.pi, rel=1e-14)
+
+
+class TestArcLengthReparametrization:
+    """The arc-length map is solved, not interpolated (ParametricSegment._reparameterize).
+
+    The property everything downstream rests on is that `p(tau)` sits at arclength
+    `tau*seg.len`. Interpolating the inverse with a monotone cubic gave ~5e-6 there and, worse,
+    made `f(p(tau))` only C^1 -- so boundary integrals stalled near 1e-5 regardless of
+    quadrature order. Newton on the exact s(t) removes both, and makes `|dp/dtau| == seg.len`
+    hold by construction rather than by approximation."""
+
+    @staticmethod
+    def _spline(n_ctrl=12, amp=0.25, phase=0.0, tol=1e-4):
+        """NOTE the real (n,2) fit. Fitting make_interp_spline to COMPLEX points with
+        bc_type='periodic' silently discards the imaginary part (ComplexWarning), leaving a
+        degenerate real-axis curve -- which is exactly the trap `_complex_vectorize` now warns
+        about."""
+        from scipy.interpolate import make_interp_spline
+        th = np.linspace(0, 2*np.pi, n_ctrl + 1)[:-1] + phase
+        r = 1.0 + amp*np.cos(3*th)
+        xy = np.column_stack([r*np.cos(th), r*np.sin(th)])
+        xy = np.vstack([xy, xy[:1]])
+        sp = make_interp_spline(np.linspace(0, 1, len(xy)), xy, k=3, bc_type='periodic')
+        return SplineSegment(sp, 0, 1, tol=tol)
+
+    def _segs(self):
+        return [('arc', disk_sector(1.0, 1.5*np.pi).bdry.segments[1]),
+                ('ellipse', ellipse(2.0, 1.0, tol=1e-4).bdry.segments[0]),
+                ('spline', self._spline())]
+
+    def test_roundtrip_is_machine_exact(self):
+        for name, seg in self._segs():
+            s = np.linspace(0.0, seg.len, 401)
+            err = np.abs(seg._s_of_t(seg._t_of_s(s)) - s).max()/seg.len
+            assert err < 1e-14, (name, err)
+
+    def test_constant_speed_holds_by_construction(self):
+        """|dp/dtau| == seg.len. Previously 8.6e-3 on an ellipse, because dp differentiated
+        the interpolant; now t'(s) = 1/|p'(t)| analytically."""
+        for name, seg in self._segs():
+            tau = np.linspace(0.0, 1.0, 401)
+            err = np.abs(np.abs(seg.dp(tau)) - seg.len).max()/seg.len
+            assert err < 1e-13, (name, err)
+
+    def test_accuracy_is_independent_of_tol(self):
+        """The adaptive table is only a bracket and initial guess now, so a loose `tol` costs
+        nothing in accuracy -- which is what makes tightening it unnecessary (it used to take
+        >30 s at 1e-8 for an error still only 6e-4)."""
+        errs, lens = [], []
+        for tol in (1e-3, 1e-4, 1e-6):
+            seg = ellipse(2.0, 1.0, tol=tol).bdry.segments[0]
+            s = np.linspace(0.0, seg.len, 201)
+            errs.append(np.abs(seg._s_of_t(seg._t_of_s(s)) - s).max()/seg.len)
+            lens.append(seg.len)
+        assert max(errs) < 1e-14, errs
+        assert max(lens) - min(lens) < 1e-12*max(lens), lens
+
+    def test_integration_recovers_spectral_convergence(self):
+        """The point of the change: with a C^1 map these errors stalled near 1e-5 and no
+        quadrature order helped. They must now fall with order."""
+        from numpy.polynomial.legendre import leggauss
+        seg = ellipse(2.0, 1.0, tol=1e-4).bdry.segments[0]
+        f = lambda z: np.exp(z.real/2)*np.cos(3*z.imag)
+        vals = []
+        for order in (64, 128, 256):
+            x, w = leggauss(order)
+            vals.append(float(np.sum(w/2*seg.len*f(seg.p((x + 1)/2)))))
+        assert abs(vals[1] - vals[2]) < 1e-12*abs(vals[2])
+        assert abs(vals[0] - vals[2]) > abs(vals[1] - vals[2])
+
+    def test_newton_is_safeguarded_against_a_vanishing_derivative(self):
+        """Plain Newton divides by |p'(t)|. A bracketed fallback keeps it correct where that
+        vanishes; the bracket is free, since s is monotone in t."""
+        seg = ellipse(2.0, 1.0, tol=1e-4).bdry.segments[0]
+        original = seg._speed
+        seg._speed = lambda t: np.zeros_like(np.atleast_1d(np.asarray(t, dtype=float)))
+        try:
+            t = seg._t_of_s(np.array([0.3*seg.len]))
+            assert np.all(np.isfinite(t))
+            assert seg._t_nodes[0] <= t[0] <= seg._t_nodes[-1]
+        finally:
+            seg._speed = original
+
+    def test_spline_exposes_its_knots_as_panel_breaks(self):
+        seg = self._spline()
+        assert len(seg.break_ts) > 0
+        assert len(seg.break_taus) == len(seg.break_ts)
+        assert np.all((seg.break_taus > 0) & (seg.break_taus < 1))
+        assert np.all(np.diff(seg.break_taus) > 0)
+        # every break must be a table node, or the anchors integrate |p'| across a kink
+        for t in seg.break_ts:
+            assert np.min(np.abs(seg._t_nodes - t)) < 1e-14, t
+
+    def test_non_spline_segments_report_no_breaks(self):
+        for dom in (L_shape(), disk_sector(1.0, 1.5*np.pi), ellipse(2.0, 1.0)):
+            for seg in dom.bdry.segments:
+                assert len(seg.break_taus) == 0
+
+    def test_python_loop_fallback_warns(self):
+        """A non-vectorized p/dp costs ~130x and almost always means the segment was built
+        wrong; it used to be silent."""
+        with pytest.warns(RuntimeWarning, match="per-point Python loop"):
+            seg = ParametricSegment(lambda t: complex(np.cos(float(t)), np.sin(float(t))),
+                                    lambda t: complex(-np.sin(float(t)), np.cos(float(t))),
+                                    0.0, 1.0, 'dir', 1e-3, val_simple=False)
+            seg.p(np.array([0.5]))

@@ -10,6 +10,7 @@ from .quad import (spline_mesh_with_curvature, polygon_triangular_mesh,
 from typing import Callable
 import copy
 import numpy as np
+import warnings
 from scipy.interpolate import make_interp_spline, BSpline, PchipInterpolator
 from scipy.optimize import minimize, minimize_scalar, linprog
 import matplotlib.pyplot as plt
@@ -144,6 +145,18 @@ def _lagrange4(xs, ys, xq):
                 term = term * (xq - xs[j]) / (xs[i] - xs[j])
         out = out + term
     return out
+
+
+# Arc-length reparametrization constants -- see ParametricSegment._reparameterize.
+# Calibrated in benchmarks/arclength/vectorized.py. Newton reaches 1.8e-16 in two steps.
+# _REMAINDER_ORDER spans a fraction of one table panel, so it is insensitive -- order 6 is
+# indistinguishable from 24. _ANCHOR_ORDER integrates a WHOLE table panel and is not: at 8 the
+# total length still moved by 8e-11 between tol=1e-3 and tol=1e-6, which would leave a residual
+# tol-dependence the solve is meant to remove; 12 brings that to 5e-15 for no measurable cost.
+_NEWTON_MAX_ITERS = 60   # safeguarded: exits at _NEWTON_STOL, typically after 2-3
+_NEWTON_STOL = 1e-15     # relative to the segment length
+_REMAINDER_ORDER = 6
+_ANCHOR_ORDER = 12
 
 
 def adaptive_arclength_table(speed, t0, t1, eps, eps_abs, max_depth=50):
@@ -506,6 +519,18 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
             result = np.array([_to_complex(f(ti)) for ti in t], dtype=complex)
             return result[0] if scalar_input else result
 
+        def wrapped_warned(t):
+            warnings.warn(
+                "ParametricSegment is falling back to a per-point Python loop: the supplied "
+                "p/dp did not return a complex array of matching shape when probed. This is "
+                "~130x slower than a vectorized callable and usually means the segment was "
+                "built wrong -- most commonly by fitting a spline to COMPLEX points with "
+                "scipy's make_interp_spline(..., bc_type='periodic'), which silently discards "
+                "the imaginary part (ComplexWarning) and leaves a real-valued, degenerate "
+                "curve. Fit to a real (n, 2) array instead; SplineSegment converts it.",
+                RuntimeWarning, stacklevel=2)
+            return wrapped(t)
+
         # Probe f to check if it's already vectorized and returns complex
         try:
             probe = np.linspace(t0, tf, 3)
@@ -517,33 +542,158 @@ class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
         except Exception:
             pass  # Fall through to wrapping
 
-        return wrapped
+        return wrapped_warned
     
     def _reparameterize(self):
-        # adaptive arc-length table: t <-> s maps accurate to tol * L
+        """Arc-length reparametrization: an adaptive table for bracketing, then an exact solve.
+
+        The table (`adaptive_arclength_table`) supplies bracketing nodes and a monotone cubic
+        initial guess ONLY. Its arclengths are recomputed here to machine precision, and
+        `_t_of_s` then *solves* s(t) = s by Newton rather than interpolating it.
+
+        Interpolating the inverse was the old approach and it cost eight orders on any curve
+        whose speed varies. Three separate defects, all removed together:
+
+        * `t(s)` as a piecewise cubic makes `p(tau)` only C^1 in tau, so `f(p(tau))` is C^1 and
+          Gauss-Legendre converges algebraically. Boundary integrals on an ellipse stalled at
+          ~7e-5 *regardless of quadrature order* -- 32 nodes and 256 nodes gave the same answer.
+          With the solve they reach 1.4e-13 at order 128, spectrally.
+        * `dp` differentiated that interpolant, losing another order: |dp/dtau| - len was
+          8.6e-3. Here `t'(s) = 1/|p'(t)|` analytically, so the constant-speed property the
+          whole quadrature rests on holds by construction (3.7e-16).
+        * accuracy depended on `tol`, and tightening it was ruinously slow (>30 s at 1e-8, for
+          an error still only 6e-4). Now the table is a bracket, so `tol` sets the quality of an
+          initial guess and nothing else.
+
+        Newton's quadratic convergence is visible: one step reaches 4e-9, two 1.8e-16.
+        `_NEWTON_ITERS = 3` is margin. `_REMAINDER_ORDER` integrates a span that is a fraction
+        of one table panel, so it is insensitive -- order 6 is indistinguishable from 24.
+        Measured cost is ~0.11 ms to build plus ~300 ns per point, i.e. under 5% of a typical
+        boundary-quadrature build, and paid once per solve.
+        See benchmarks/arclength/ and docs/eigfun_integrals.md.
+        """
         L0 = _estimate_length(self._p, self.t0, self.tf)
         eps_abs = self.tol * L0
-        t_nodes, s_nodes = adaptive_arclength_table(self._speed, self.t0, self.tf,
-                                                    self.tol, eps_abs)
-        self._len = s_nodes[-1]
-        self._s_of_t = PchipInterpolator(t_nodes, s_nodes)
-        self._t_of_s = PchipInterpolator(s_nodes, t_nodes)
+        t_nodes, _ = adaptive_arclength_table(self._speed, self.t0, self.tf,
+                                              self.tol, eps_abs)
+        # Force table nodes at the segment's own derivative breaks (spline knots). Without
+        # this, an anchor or remainder Gauss rule integrates |p'| ACROSS a break and the
+        # arc-length map itself is only ~1e-7 accurate, capping everything downstream.
+        brk = np.asarray(self.break_ts, dtype=float)
+        if len(brk):
+            t_nodes = np.unique(np.concatenate([np.asarray(t_nodes, dtype=float), brk]))
+        self._t_nodes = np.asarray(t_nodes, dtype=float)
 
-        # adaptive polyline nodes (in tau-space, on the constant-speed curve)
-        self._poly_tau = adaptive_polyline(self.p, 0.0, 1.0,
+        # machine-precision arclengths at the table's own nodes
+        x, w = cached_leggauss(_ANCHOR_ORDER)          # nodes on [0,1], weights summing to 1
+        lo, hi = self._t_nodes[:-1], self._t_nodes[1:]
+        span = hi - lo
+        vals = self._speed((lo[:, None] + span[:, None]*x[None, :]).ravel())
+        self._s_nodes = np.concatenate([[0.0], np.cumsum(span*(vals.reshape(-1, len(x)) @ w))])
+        self._len = float(self._s_nodes[-1])
+
+        # monotone cubic initial guess for the Newton solve (never used as the answer)
+        self._t_of_s_guess = PchipInterpolator(self._s_nodes, self._t_nodes)
+
+        # Adaptive polyline nodes (in tau-space, on the constant-speed curve). Deliberately
+        # driven by the CHEAP guess map, not the Newton solve: adaptive_polyline makes very
+        # many small scalar-ish calls while recursing, and the exact map's per-call overhead
+        # turns that into minutes. It only selects WHERE the nodes go, to a tolerance of
+        # `tol` -- `polyline_pts` then evaluates them through the exact `self.p`, so nothing
+        # downstream inherits the guess's error.
+        def _p_guess(tau):
+            return self._p(self._t_of_s_guess(self._len*np.asarray(tau)))
+
+        self._poly_tau = adaptive_polyline(_p_guess, 0.0, 1.0,
                                            eps_abs=self.tol * self._len, L=self._len)
+
+    @property
+    def break_taus(self):
+        """`break_ts` mapped into arc-length parameter. See BaseSegment.break_taus."""
+        brk = np.asarray(self.break_ts, dtype=float)
+        if not len(brk):
+            return np.empty(0)
+        self._ensure_reparam()
+        taus = np.asarray(self._s_of_t(brk))/self._len
+        return np.unique(taus[(taus > 1e-12) & (taus < 1 - 1e-12)])
+
+    def _s_of_t(self, t):
+        """Exact cumulative arc length from `t0`: anchor at the bracketing table node and
+        integrate the remainder with a fixed Gauss rule over that short span."""
+        self._ensure_reparam()
+        t = np.atleast_1d(np.asarray(t, dtype=float))
+        i = np.clip(np.searchsorted(self._t_nodes, t, side='right') - 1,
+                    0, len(self._t_nodes) - 2)
+        lo = self._t_nodes[i]
+        span = t - lo
+        x, w = cached_leggauss(_REMAINDER_ORDER)
+        vals = self._speed((lo[:, None] + span[:, None]*x[None, :]).ravel())
+        return self._s_nodes[i] + span*(vals.reshape(-1, len(x)) @ w)
+
+    def _t_of_s(self, s):
+        """Inverse arc length: safeguarded Newton on `_s_of_t(t) - s`, with ds/dt = |p'(t)|.
+
+        Plain Newton is enough almost everywhere and reaches 1.8e-16 in two steps. It is NOT
+        enough at a near-cusp, where |p'| -> 0: the step divides by a vanishing derivative and
+        overshoots, and a spline interpolated through points that align with a symmetry of the
+        curve produces exactly that (measured: round-trip 2.3e-9 there against 2.0e-16 once the
+        cusp is perturbed away). `adaptive_arclength_table` already anticipates the case -- its
+        docstring calls a zero-speed cusp "the extreme case" -- so the solve must too.
+
+        The bracket comes free: `s` is monotone in `t`, so the table interval containing `s`
+        brackets the root. Each iteration takes the Newton step when it lands inside the current
+        bracket and the derivative is usable, and bisects otherwise, tightening the bracket
+        either way. Well-conditioned points converge in 2-3 iterations and the loop exits; only
+        the pathological handful cost more.
+        """
+        self._ensure_reparam()
+        scalar = np.ndim(s) == 0
+        s = np.atleast_1d(np.asarray(s, dtype=float)).astype(float)
+        i = np.clip(np.searchsorted(self._s_nodes, s, side='right') - 1,
+                    0, len(self._s_nodes) - 2)
+        lo, hi = self._t_nodes[i].copy(), self._t_nodes[i + 1].copy()
+        t = np.clip(np.asarray(self._t_of_s_guess(s), dtype=float), lo, hi)
+
+        # Iterate on an ACTIVE SET. Without it a couple of stragglers near a cusp drag the
+        # whole vector through every iteration -- measured at 62 ms per 1000 points against
+        # 0.4 ms once converged points are dropped.
+        act = np.arange(len(s))
+        tol_abs = _NEWTON_STOL*max(self._len, 1.0)
+        for _ in range(_NEWTON_MAX_ITERS):
+            if not len(act):
+                break
+            ta, sa = t[act], s[act]
+            f = self._s_of_t(ta) - sa
+            lo_a = np.where(f <= 0, ta, lo[act])
+            hi_a = np.where(f > 0, ta, hi[act])
+            lo[act], hi[act] = lo_a, hi_a
+            d = self._speed(ta)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                cand = ta - f/d
+            ok = np.isfinite(cand) & (cand > lo_a) & (cand < hi_a)
+            step = np.where(ok, cand, 0.5*(lo_a + hi_a))
+            # `f` was evaluated at the CURRENT ta, so a point already within tolerance is done
+            # and must keep that ta -- stepping it once more (possibly to a bisection midpoint)
+            # before dropping it moves it back off the root. That bug cost four orders.
+            conv = np.abs(f) <= tol_abs
+            t[act] = np.where(conv, ta, step)
+            keep = (~conv) & ((hi_a - lo_a) > 4*np.spacing(np.abs(ta) + 1.0))
+            act = act[keep]
+        return t[0] if scalar else t
 
     def _p_of_s(self, s):
         return self._p(self._t_of_s(s))
 
     def p(self, tau):
-        return self._p_of_s(self.len*tau)
-    
+        return self._p_of_s(self.len*np.asarray(tau))
+
     def _dp_of_s(self, s):
-        return self._dp(self._t_of_s(s))*self._t_of_s(s, nu=1)
-    
+        """Unit tangent: t'(s) = 1/|p'(t)| analytically, never a differentiated interpolant."""
+        t = self._t_of_s(s)
+        return self._dp(t)/self._speed(t)
+
     def dp(self, tau):
-        return self._dp_of_s(self.len*tau)*self.len
+        return self._dp_of_s(self.len*np.asarray(tau))*self.len
     
     def _T(self, t):
         """Unit tangent vector in terms of t"""
@@ -838,6 +988,14 @@ class SplineSegment(ParametricSegment):
             tf_idx = len(self.spline.t)-spline.k-1
             tf = self.spline.t[tf_idx]
         super().__init__(p, dp, t0, tf, bc, tol, val_simple, val_closed)
+
+    @property
+    def break_ts(self):
+        """Interior knots. A degree-k B-spline is only C^(k-1) there, so `|p'|` and every
+        integrand built on it has a derivative break. See BaseSegment.break_ts."""
+        k = self.spline.k
+        knots = np.unique(self.spline.t[k:len(self.spline.t) - k])
+        return knots[(knots > self.t0 + 1e-14) & (knots < self.tf - 1e-14)]
 
     @classmethod
     def interp_from_pts(cls, pts, bc='dir', spline_bc_type='natural',
