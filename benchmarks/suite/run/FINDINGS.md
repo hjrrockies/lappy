@@ -591,3 +591,57 @@ that a better basis violates.
 Until that is fixed, **any certified digit count from a strong basis must be accompanied by a
 completeness check**, because the search can silently return a list that is missing entries and
 padded with background wiggles. See `benchmarks/suite/run/curves/tension_narrowing.png`.
+
+### THE ACTUAL BUG: fundamental-solution sources landing INSIDE the domain
+
+The question that cracked this open was whether a tension of ~3e-07 across the whole search
+window is *possible in exact arithmetic*. It is not, and saying so out loud is the fastest
+route to the answer: `sigma` that small everywhere would mean every `lambda` sits within ~1e-05
+of an eigenvalue, when Weyl gives about ten eigenvalues across [18, 336].
+
+Chasing that contradiction:
+
+* Two independent bases agree there is **no** eigenvalue near 203.4449 (`sigma` is flat at
+  1.94e-07 across +-0.006 with the placed basis, and flat at 4.2e-02 with the default one,
+  which does dip to 8.2e-06 at the true 226.6204).
+* Yet Moler--Payne, computed carefully there, gives `eps = 5.67e-06`, which *guarantees* an
+  eigenvalue within 1.15e-03.
+
+A theorem and a measurement cannot both be right, so a hypothesis was being violated. Moler
+--Payne requires `u` to solve Helmholtz **exactly in Omega**. It does -- unless a
+fundamental-solution source sits inside the domain.
+
+    domain              d      sources inside
+    chevron_2_3        0.40    24 of 240
+    chevron_2_4        0.40    20 of 240
+    chevron_1_15       0.20     0
+    chevron_1_125      0.15     0
+    parallelogram_p65  0.30     0
+    parallelogram_p127 0.40     0
+
+`chevron_2_3`'s reentrant corner has interior angle 305 degrees (nu = 0.59), leaving a
+55-degree exterior wedge. A perpendicular offset from one arm lands inside the other for **any**
+offset -- 24 sources at d=0.4, and still 8 at d=0.05. Normal-offset placement is structurally
+unsafe on a strongly reentrant domain.
+
+Such a column has a pole in `Omega`. It is not a particular solution there, the MPS premise
+fails, and the certified bound computed from it means nothing. Dropping just those columns
+restores everything at once:
+
+    chevron_2_3, 216/240 sources kept
+      background sigma   4.96e-02, 5.98e-02, 5.78e-02   (was ~3e-07 everywhere)
+      sigma at true 214.3403                 1.97e-09
+      contrast                               3.0e+07
+
+So the flat background, the inert `ttol`, the spurious minimum at 203.4449 and the missed
+eigenvalue at 226.6204 were all one bug, not four findings.
+
+**`chevron_2_3` (10.3) and `chevron_2_4` (11.4) are withdrawn** pending re-runs on a legitimate
+basis. The other four conversions are unaffected -- verified, zero sources inside.
+
+The general lesson is worth more than the two domains: **an MPS basis must be validated, not
+just constructed.** A source inside the domain is silent -- no exception, no warning, and the
+tension does not blow up. It gets *better*, which is what makes it dangerous: the basis can fit
+boundary data with an interior pole, so `sigma` falls everywhere and every downstream number,
+including a "rigorous" certificate, is quietly void. `lappy` should refuse to build a
+`FundamentalBasis` whose sources are not all exterior, or at minimum warn.

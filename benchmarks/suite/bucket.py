@@ -67,13 +67,35 @@ def make_basis(dom, n_basis, fs_placement='default', fs_d=1.0, fs_frac=0.5):
     # pure fundamental solutions, and the only question is the offset. That is exactly where
     # the hard-coded fs_d=1.0 does most damage -- stadium keeps 78 of 324 columns at d=1.0 and
     # 320 of 320 at d=0.1.
+    # A source that lands INSIDE Omega is not a legitimate particular solution: it has a pole
+    # in the domain, so it solves Helmholtz nowhere near it, the MPS premise fails, and
+    # Moler-Payne's hypothesis (u exact in Omega) is void with it. Normal-offset placement does
+    # this routinely on a strongly reentrant domain -- chevron_2_3's 305-degree corner leaves a
+    # 55-degree exterior wedge, and a perpendicular offset from one arm lands in the other for
+    # ANY d (24 of 240 sources at d=0.4, still 8 at d=0.05). Symptom: the tension background
+    # collapses to ~3e-07 across the whole window, ttol stops discriminating, the search accepts
+    # noise and misses real eigenvalues. Filtering restores a 3e+07 contrast.
     if len(dom.corners) == 0:
         return bases.FundamentalBasis.by_boundary(
             dom, bases.fs_bdry_sps(dom, n_basis, order=1), d=fs_d, order=1)
     n_fs = int(round(fs_frac*n_basis))
     fb = bases.FourierBesselBasis.from_domain(dom, bases.fb_corner_orders(dom, n_basis - n_fs))
     per_seg = bases.fs_bdry_sps(dom, n_fs, order=1)
-    return fb + bases.FundamentalBasis.by_boundary(dom, per_seg, d=fs_d, order=1)
+    return fb + _fs_outside(dom, per_seg, fs_d)
+
+
+def _fs_outside(dom, per_seg, d):
+    """`by_boundary` sources, with any that land inside the domain dropped (see above)."""
+    from matplotlib.path import Path
+    b = dom.bdry_pts(per_seg)
+    nrm = dom.bdry_normals(per_seg)
+    src = b.pts + d*nrm.pts
+    poly = np.concatenate([sg.p(np.linspace(0, 1, 600)) for sg in dom.bdry.segments])
+    inside = Path(np.column_stack([poly.real, poly.imag])).contains_points(
+        np.column_stack([src.real, src.imag]))
+    if inside.any():
+        print(f'BASIS      dropped {int(inside.sum())}/{len(src)} sources that landed inside')
+    return bases.FundamentalBasis(src[~inside], 1)
 
 
 def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
