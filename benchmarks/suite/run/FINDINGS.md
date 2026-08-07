@@ -547,3 +547,47 @@ can step the search straight over a well of the very kind it was improved to pro
 Any basis study that reports digits without checking completeness is therefore reporting a
 number that can silently be about the wrong spectrum. `bucket.py` grew `--pts-per-eig` for
 this, and the corrected `chevron_2_3` runs use a 3x denser grid.
+
+### CORRECTION, and the real mechanism: a good basis lowers the tension floor EVERYWHERE
+
+I wrote above that a better basis "makes the search harder" because its minima are "deeper and
+narrower". The narrowness claim is **not supported** by measurement. Widths at 100x the local
+floor, around the missed eigenvalue at 226.6204:
+
+    default n_basis=160  (finds it)     well width 0.98    floor 2.0e-05
+    placed  n_basis=480  (misses it)    well width 1.16    floor 3.4e-09
+    search grid spacing                            2.92
+
+The better basis's well is *wider*, and both are narrower than the grid spacing, which the two
+bases share identically. Narrowness does not separate them.
+
+What does, is the **background**. Over the 112-point search grid:
+
+    basis              median sigma   frac below ttol=1e-3   discrete local minima
+    default nb=160         2.9e-02             1%                     13
+    placed  nb=480         3.2e-07           100%                     11
+
+A better basis lowers `sigma` everywhere, not only at eigenvalues, and two things follow:
+
+1. **The acceptance test stops discriminating.** `solve_interval` keeps a bracket whose
+   minimiser has `sigma <= ttol` with `ttol = 1e-3` absolute. At a background of 3e-7 that is
+   *every point in the window*. The spurious 203.4449 has `sigma = 1.9e-07` -- indistinguishable
+   from background -- and sailed through.
+2. **Detection reduces to finding local minima in a nearly flat landscape.** At the grid points
+   bracketing 226.6204 the default basis dips (2.0e-2, 1.7e-2, **5.3e-3**, 6.5e-3, 1.8e-2 --
+   a clear discrete minimum) while the placed basis rises monotonically (2.3e-7, 3.2e-7,
+   3.8e-7, 4.2e-7, 4.2e-7 -- no minimum at all). The better basis registers FEWER minima on the
+   same grid, 11 against 13, despite resolving more eigenvalues when asked directly.
+
+So the failure is not "narrow wells" but **an absolute threshold and a local-minimum test
+applied to a landscape whose scale the basis changed by five orders of magnitude.**
+
+The actionable consequence is a pipeline change, not a basis change: `ttol` and the
+detection criterion should be *relative to the observed background* -- the preflight already
+measures `sigma_min` and `contrast`, so the ingredients exist. A genuine eigenvalue is a dip of
+several orders below the local background; a fixed 1e-3 encodes an assumption about the basis
+that a better basis violates.
+
+Until that is fixed, **any certified digit count from a strong basis must be accompanied by a
+completeness check**, because the search can silently return a list that is missing entries and
+padded with background wiggles. See `benchmarks/suite/run/curves/tension_narrowing.png`.
