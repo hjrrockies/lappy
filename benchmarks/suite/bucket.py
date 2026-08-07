@@ -149,7 +149,13 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
                          f'minima={m["n_minima"]} vs Weyl {m["n_expected"]:.1f}',
                          os.path.join(pf.CURVES, name))
     noisy = pf.is_noisy(m)
+    suspect = pf.background_suspect(m)
     print(f'PREFLIGHT  {pf.summary(m)}')
+    if suspect:
+        print('           WARNING: median tension is far below what Moler-Payne allows away '
+              'from eigenvalues.\n'
+              '           The basis or the collocation is broken; digits from this run are not '
+              'trustworthy.')
     print(f'           verdict={"NOISY" if noisy else "clean"}  plot={plot}  '
           f'({time.time()-t0:.0f}s)')
     if preflight_only:
@@ -157,7 +163,8 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
 
     # --- solve -------------------------------------------------------------
     rec = dict(key=key, n_basis=n_basis, rtol=solver.rtol, int_npts=int_npts,
-               preflight=m, noisy=bool(noisy), plot=plot, tag=tag,
+               preflight=m, noisy=bool(noisy), background_suspect=bool(suspect),
+               plot=plot, tag=tag,
                orthonorm=bool(orthonorm), pts_per_eig=int(pts_per_eig),
                fs_placement=fs_placement,
                fs_d=float(fs_d), fs_frac=float(fs_frac),

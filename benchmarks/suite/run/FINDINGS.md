@@ -661,3 +661,45 @@ number derived from it -- reads better than the truth.
 
 **Final: 32 / 10 / 2 -> 39 / 3 / 2.** Seven of the ten bucket-2 domains converted. The three
 that remain are `stadium`, `stadium_L2` and `mushroom_neck01`.
+
+### What it takes for the tension curve to track Moler--Payne
+
+The tension is only useful if it behaves like the quantity the certificate is built from.
+Moler--Payne gives a *lower* bound away from the spectrum -- `eps >= dist(lam, spec)/lam` -- so
+a globally small `sigma` is not a good basis, it is a broken measurement. Measured at
+`lam = 240` on `chevron_2_3`, where the nearest eigenvalue is ~13 away and MP therefore forces
+`eps >~ 5e-02`:
+
+    bdry_mult   n_bdry    sigma      eps (true MP)   eps/sigma
+       1.0        458    9.08e-04      3.65e+01        40000      <- collapses
+       1.5        686    5.19e-02      1.54e+00           30
+       2.0        912    5.98e-02      2.35e+00           39
+       5.0       2278    9.47e-02      4.44e-01            5
+
+**Two independent things have to hold, and each fails silently.**
+
+1. **Every column must be a particular solution in `Omega`.** A `FundamentalBasis` source that
+   landed inside makes Moler--Payne inapplicable, and the symptom is a background of ~3e-07
+   instead of ~5e-02.
+2. **The boundary must be oversampled.** At a collocation-to-column ratio of 1.0 the fit is
+   free to vanish AT the points and be huge between them: `sigma` reads 9.1e-04 while the true
+   `eps` is 36.5, a factor of 4e+04, on a perfectly legitimate basis. From ratio ~1.5 upward
+   `sigma` tracks `eps` to a factor of 5-40, which is the expected constant gap between a
+   discrete L2 over points and an L-infinity over the curve. `lappy`'s default `mult=2` sits
+   just above the cliff -- adequate, but with only a 2x margin, and nothing currently checks it.
+
+Both failures produce the same signature, and it is cheap to test for: the preflight scan
+already computes `sigma_med`. A healthy background is ~1e-2 or above; `preflight.background_suspect`
+flags anything below 1e-3.
+
+    configuration                              ratio   sigma_med    verdict
+    chevron_2_3, sources inside (the bug)       2.00    2.17e-06    FLAGGED
+    chevron_2_3, filtered (legitimate)          2.00    3.71e-02    ok
+    chevron_2_3, legitimate but ratio-1         1.01    9.16e-04    FLAGGED
+    parallelogram_p65, known-good conversion    2.01    4.84e-02    ok
+
+Both broken configurations are caught, both good ones pass, with about 1.5 orders of margin on
+either side. `bucket.py` now prints a warning and records `background_suspect` in the result.
+
+This is the check that would have caught the withdrawn `chevron_2_3` and `chevron_2_4` results
+before they were ever reported, and it costs nothing -- the scan is already being run.

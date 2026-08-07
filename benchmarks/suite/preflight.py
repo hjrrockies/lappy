@@ -72,6 +72,34 @@ def metrics(domain, lam, sigma, a=None, b=None):
     )
 
 
+# Moler--Payne forces eps >= dist(lam, spectrum)/lam, so AWAY from eigenvalues the tension
+# cannot be small: the low spectrum's relative gaps are 1-10%, which puts a healthy background
+# at ~1e-2 or above. A background orders below that is not a better basis, it is a broken one,
+# and the two ways to break it are both silent:
+#
+#   * a basis column that is not a particular solution in Omega -- a FundamentalBasis source
+#     that landed INSIDE the domain, which normal-offset placement does routinely on a strongly
+#     reentrant boundary. Measured on chevron_2_3 (24 of 240 sources inside): background sigma
+#     3.2e-07 across the whole window, against 5e-02 once those columns are dropped.
+#   * boundary collocation at ratio ~1 to the column count, where the fit can be zero AT the
+#     points and huge between them. Measured on the same domain with a LEGITIMATE basis at
+#     lam=240: sigma reads 9.1e-04 while the true Moler-Payne eps is 3.7e+01, a factor of 4e+04.
+#     At ratio 1.5 and above sigma tracks eps to a factor of 5-40. lappy's default mult=2 sits
+#     just above the cliff.
+#
+# Either way every downstream number is void, including the certificate, because ttol stops
+# discriminating: at a 3e-07 background, ttol=1e-3 accepts every point in the window.
+BACKGROUND_FLOOR = 1e-3
+
+
+def background_suspect(m, floor=BACKGROUND_FLOOR):
+    """True when the median tension is too small to be consistent with Moler--Payne.
+
+    Cheap and it needs no reference values: the preflight scan already computes `sigma_med`.
+    """
+    return bool(m.get('sigma_med', 1.0) < floor)
+
+
 def plot_curve(lam, sigma, title, outfile, minima=True):
     """Render sigma(lambda) for visual inspection. Returns the path."""
     import matplotlib
@@ -158,4 +186,5 @@ def summary(m):
     return (f'{m["key"]:20s} nb={m["n_basis"]:4d} rtol={m["rtol"]:.0e}  '
             f'minima={m["n_minima"]:4d} expected={m["n_expected"]:5.1f} '
             f'ratio={m["ratio"]:6.2f}  sigma_min={m["sigma_min"]:.2e} '
-            f'contrast={m["contrast"]:.1e}')
+            f'sigma_med={m["sigma_med"]:.2e} contrast={m["contrast"]:.1e}'
+            + ('   BACKGROUND SUSPECT (basis or collocation)' if background_suspect(m) else ''))
