@@ -86,6 +86,7 @@ def make_basis(dom, n_basis, fs_placement='default', fs_d=1.0, fs_frac=0.5):
 
 def _fs_outside(dom, per_seg, d):
     """`by_boundary` sources, with any that land inside the domain dropped (see above)."""
+    from lappy import bases
     from matplotlib.path import Path
     b = dom.bdry_pts(per_seg)
     nrm = dom.bdry_normals(per_seg)

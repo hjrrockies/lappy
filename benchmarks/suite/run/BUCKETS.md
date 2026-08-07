@@ -411,3 +411,53 @@ run. Previously every one of these domains claimed 1e-13. Now:
   `verify_gram` measures 4.8e-16 -- because the corner model is pessimistic for convex
   non-integer `nu`. That errs in the direction that cannot mislead, and tightening it is
   the obvious next piece of work.
+
+---
+
+# Bucket-2 basis study (2026-08-06)
+
+Attacking the ten bucket-2 domains one at a time, screening with `basis_lab.probe` (tension at
+a known eigenvalue -- seconds per configuration) and confirming end to end through `bucket.py`.
+
+**32 / 10 / 2  ->  37 / 5 / 2.** Five domains converted, every one verified across three seeds
+and checked for completeness against its baseline eigenvalue list.
+
+| domain | was | now | n_basis | lever |
+|---|---|---|---|---|
+| `parallelogram_p65` | 7.50 | **11.65** | 320 | sources on an offset boundary, d=0.3 |
+| `parallelogram_p127` | 4.12 | **9.72** | 640 | placement d=0.4 **and** size |
+| `chevron_1_15` | 6.31 | **11.31** | 480 | placement, d=0.2 |
+| `chevron_1_125` | 5.03 | **10.71** | 480 | placement, d=0.15 |
+| `mushroom_thin` | 7.40 | **9.13** | 480 | basis size only, default basis untouched |
+
+Seed spreads are tight where it matters: `chevron_1_15` 11.3/11.3/11.3, `chevron_1_125`
+10.7/10.7/10.7, `mushroom_thin` 9.1/9.1/9.1, `parallelogram_p65` 11.6/11.6/11.7.
+
+Still bucket 2: `chevron_2_3` (3.65), `chevron_2_4` (3.30), `stadium` (2.83), `stadium_L2`
+(2.77), `mushroom_neck01` (5.01 -> **7.44**, improved but 0.6 short). Bucket 3 unchanged:
+`spiral`, `spiral_t25`.
+
+### Two results withdrawn, and why it matters more than the five that stand
+
+`chevron_2_3` (claimed 10.31) and `chevron_2_4` (claimed 11.43) are **withdrawn**. Their bases
+placed fundamental-solution sources by outward-normal offset, and on those domains 24 and 20 of
+240 sources landed *inside* the domain -- their reentrant corner spans 305 degrees, leaving a
+55-degree exterior wedge, so a perpendicular offset from one arm lands in the other for any
+offset (still 8 inside at d=0.05).
+
+A source inside `Omega` is a pole inside `Omega`: that column is not a particular solution
+there, so the MPS premise fails and Moler--Payne's hypothesis -- `u` exact in `Omega` -- is
+void. Every number computed from such a basis, including the certificate, means nothing.
+
+The failure is silent and it makes the tension look *better*. With those columns the background
+`sigma` sat at ~3e-07 across the entire search window, so `ttol=1e-3` accepted every point,
+the search took a background wiggle at 203.4449 for an eigenvalue and missed a true one at
+226.6204. Dropping the 24 columns restores a background of 5e-02 and a contrast of 3.0e+07.
+
+The catch came from asking whether a tension that small is possible in exact arithmetic. It is
+not -- it would put every `lambda` within 1e-05 of an eigenvalue, against about ten eigenvalues
+in `[18, 336]`. **An MPS basis has to be validated, not just constructed**, and `lappy` should
+refuse to build a `FundamentalBasis` whose sources are not all exterior.
+
+`bucket.py` now filters interior sources and reports the count; corrected runs for the two
+withdrawn domains are in progress.
