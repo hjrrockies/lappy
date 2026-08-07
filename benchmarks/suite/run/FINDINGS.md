@@ -645,3 +645,19 @@ tension does not blow up. It gets *better*, which is what makes it dangerous: th
 boundary data with an interior pole, so `sigma` falls everywhere and every downstream number,
 including a "rigorous" certificate, is quietly void. `lappy` should refuse to build a
 `FundamentalBasis` whose sources are not all exterior, or at minimum warn.
+
+### Corrected: both chevrons convert on legitimate bases, at lower numbers
+
+Re-run with interior sources filtered out (24 and 20 columns dropped), two seeds each:
+
+    chevron_2_3   3.65 -> 8.26, 8.26    complete, and now finds the 226.6204 it had missed
+    chevron_2_4   3.30 -> 9.50, 9.50    complete
+
+Both convert, so the placement lever is real on these domains too -- but the honest numbers are
+2.0 and 1.9 digits below what the invalid bases claimed (10.31 and 11.43). That gap is the
+signature of the bug rather than an incidental loss: a column with a pole inside the domain
+lets the fit absorb boundary error that a legitimate basis cannot, so the tension -- and every
+number derived from it -- reads better than the truth.
+
+**Final: 32 / 10 / 2 -> 39 / 3 / 2.** Seven of the ten bucket-2 domains converted. The three
+that remain are `stadium`, `stadium_L2` and `mushroom_neck01`.

@@ -419,8 +419,8 @@ run. Previously every one of these domains claimed 1e-13. Now:
 Attacking the ten bucket-2 domains one at a time, screening with `basis_lab.probe` (tension at
 a known eigenvalue -- seconds per configuration) and confirming end to end through `bucket.py`.
 
-**32 / 10 / 2  ->  37 / 5 / 2.** Five domains converted, every one verified across three seeds
-and checked for completeness against its baseline eigenvalue list.
+**32 / 10 / 2  ->  39 / 3 / 2.** Seven domains converted, every one verified across seeds and
+checked for completeness against its baseline eigenvalue list.
 
 | domain | was | now | n_basis | lever |
 |---|---|---|---|---|
@@ -429,13 +429,14 @@ and checked for completeness against its baseline eigenvalue list.
 | `chevron_1_15` | 6.31 | **11.31** | 480 | placement, d=0.2 |
 | `chevron_1_125` | 5.03 | **10.71** | 480 | placement, d=0.15 |
 | `mushroom_thin` | 7.40 | **9.13** | 480 | basis size only, default basis untouched |
+| `chevron_2_3` | 3.65 | **8.26** | 480 | placement d=0.4, interior sources filtered |
+| `chevron_2_4` | 3.30 | **9.50** | 480 | placement d=0.4, interior sources filtered |
 
 Seed spreads are tight where it matters: `chevron_1_15` 11.3/11.3/11.3, `chevron_1_125`
 10.7/10.7/10.7, `mushroom_thin` 9.1/9.1/9.1, `parallelogram_p65` 11.6/11.6/11.7.
 
-Still bucket 2: `chevron_2_3` (3.65), `chevron_2_4` (3.30), `stadium` (2.83), `stadium_L2`
-(2.77), `mushroom_neck01` (5.01 -> **7.44**, improved but 0.6 short). Bucket 3 unchanged:
-`spiral`, `spiral_t25`.
+Still bucket 2: `stadium` (2.83), `stadium_L2` (2.77), `mushroom_neck01` (5.01 -> **7.44**,
+improved but 0.6 short). Bucket 3 unchanged: `spiral`, `spiral_t25`.
 
 ### Two results withdrawn, and why it matters more than the five that stand
 
@@ -459,5 +460,8 @@ not -- it would put every `lambda` within 1e-05 of an eigenvalue, against about 
 in `[18, 336]`. **An MPS basis has to be validated, not just constructed**, and `lappy` should
 refuse to build a `FundamentalBasis` whose sources are not all exterior.
 
-`bucket.py` now filters interior sources and reports the count; corrected runs for the two
-withdrawn domains are in progress.
+`bucket.py` now filters interior sources and reports the count. **Re-run on legitimate bases,
+both domains do convert** -- `chevron_2_3` to 8.26 and `chevron_2_4` to 9.50, two seeds each,
+both lists complete, and `chevron_2_3` now finds the 226.6204 it had been missing. The honest
+numbers are 2.0 and 1.9 digits BELOW what the illegitimate bases claimed, which is the
+signature of the bug: an interior pole buys apparent accuracy that is not there.
