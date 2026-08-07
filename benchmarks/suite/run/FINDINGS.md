@@ -703,3 +703,21 @@ either side. `bucket.py` now prints a warning and records `background_suspect` i
 
 This is the check that would have caught the withdrawn `chevron_2_3` and `chevron_2_4` results
 before they were ever reported, and it costs nothing -- the scan is already being run.
+
+### The picture: why no global offset is safe on a reentrant domain
+
+`benchmarks/suite/run/curves/sources_inside_chevron.png`. `chevron_2_3` is a Lambda-shaped
+band -- apex at (0,3), tips at (+-1,0), inner notch at (0,2) with interior angle 306.9 degrees.
+The V-gap between the two inner walls IS the exterior wedge, 53 degrees wide, and it pinches to
+a point at the notch. Sources offset outward from the left inner wall cross the gap and land
+inside the right arm.
+
+The geometry gives the rule directly: a boundary point at distance `r` from a reentrant corner
+of exterior wedge angle `beta` has its normal offset cross to the far side once
+`d >~ r*tan(beta/2)`. For `beta = 53` degrees that is `r <~ 2d`, which matches the measured band
+(24 sources at d=0.4, extending ~0.6 down each inner wall; 8 at d=0.05).
+
+So **no global offset is safe** on such a domain, and filtering -- what `bucket.py` now does --
+is the blunt fix. The principled one is to taper the offset toward zero at a reentrant corner,
+scaling with the LOCAL EXTERIOR clearance rather than a constant or, as tried earlier and
+failed, the interior thickness.
