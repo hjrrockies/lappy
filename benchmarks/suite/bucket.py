@@ -77,26 +77,17 @@ def make_basis(dom, n_basis, fs_placement='default', fs_d=1.0, fs_frac=0.5):
     # noise and misses real eigenvalues. Filtering restores a 3e+07 contrast.
     if len(dom.corners) == 0:
         return bases.FundamentalBasis.by_boundary(
-            dom, bases.fs_bdry_sps(dom, n_basis, order=1), d=fs_d, order=1)
+            dom, bases.fs_bdry_sps(dom, n_basis, order=1), d=fs_d, order=1,
+            spacing='legendre')
     n_fs = int(round(fs_frac*n_basis))
     fb = bases.FourierBesselBasis.from_domain(dom, bases.fb_corner_orders(dom, n_basis - n_fs))
     per_seg = bases.fs_bdry_sps(dom, n_fs, order=1)
-    return fb + _fs_outside(dom, per_seg, fs_d)
-
-
-def _fs_outside(dom, per_seg, d):
-    """`by_boundary` sources, with any that land inside the domain dropped (see above)."""
-    from lappy import bases
-    from matplotlib.path import Path
-    b = dom.bdry_pts(per_seg)
-    nrm = dom.bdry_normals(per_seg)
-    src = b.pts + d*nrm.pts
-    poly = np.concatenate([sg.p(np.linspace(0, 1, 600)) for sg in dom.bdry.segments])
-    inside = Path(np.column_stack([poly.real, poly.imag])).contains_points(
-        np.column_stack([src.real, src.imag]))
-    if inside.any():
-        print(f'BASIS      dropped {int(inside.sum())}/{len(src)} sources that landed inside')
-    return bases.FundamentalBasis(src[~inside], 1)
+    # spacing='legendre' matches bdry_pts' own default, which is what the recorded runs used;
+    # by_boundary's default is 'even', and the two differ enough to matter here (legendre
+    # clusters toward segment ends, so on chevron_2_3 it puts 24 sources in the danger band
+    # against 12 for even). The interior-source filtering now lives in lappy itself.
+    return fb + bases.FundamentalBasis.by_boundary(dom, per_seg, d=fs_d, order=1,
+                                                   spacing='legendre')
 
 
 def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,

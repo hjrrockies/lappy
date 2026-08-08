@@ -8,6 +8,7 @@ from scipy.special import jv, jvp, yv, yvp
 from scipy.linalg import norm
 from .cache import instance_cache, instance_lru_cache
 from abc import ABC, abstractmethod
+import warnings
 
 import mpmath as mp
 
@@ -917,6 +918,52 @@ def fs_corner_orders(domain, n, f=None, order=1, min_sources=1):
     
     return sources_per_corner
     
+def _exterior_sources_only(domain, sources, where):
+    """Drop fundamental-solution sources that lie inside `domain`, with a warning.
+
+    A source inside Omega is a POLE inside Omega, so that column does not solve the Helmholtz
+    equation there. Three things break at once and all of them silently:
+
+    * the MPS premise -- the basis is no longer made of particular solutions;
+    * the Moler--Payne certificate, whose hypothesis is that u solves the PDE exactly in Omega,
+      so any "certified" digit count computed from such a basis is void;
+    * the tension itself, which gets BETTER rather than worse, because an interior pole lets
+      the fit absorb boundary error that a legitimate basis cannot. Measured on a chevron with
+      a 307-degree reentrant corner: 24 of 240 sources inside took the tension background from
+      5e-02 to 3e-07 across the whole search window, which in turn made `ttol` accept every
+      point, produced a spurious eigenvalue and hid a real one.
+
+    Normal-offset placement does this routinely on a reentrant boundary. At distance `r` from a
+    reentrant corner whose exterior wedge is `beta`, the offset crosses to the far side once
+    `d >~ r tan(beta/2)`, so the affected band has width proportional to `d` and never vanishes
+    -- but whether any SAMPLED source lands in it depends on the boundary density. Measured on a
+    307-degree notch the count goes about as `npts*d` (60 pts/seg: 16 at d=0.4, 0 at d=0.02;
+    2000 pts/seg: 536 and 26). A small enough offset is therefore safe at a fixed density and no
+    offset is safe at every density, which is why this belongs in the constructor rather than in
+    a recommended parameter range. Dropping the offenders is the blunt fix; a placement that
+    tapers the offset to zero at such a corner is the principled one.
+    """
+    sources = np.asarray(sources)
+    try:
+        inside = np.asarray(domain.contains(sources), dtype=bool)
+    except Exception as exc:          # no containment test available: do not silently proceed
+        warnings.warn(f"FundamentalBasis.{where}: could not test whether sources lie inside the "
+                      f"domain ({type(exc).__name__}: {exc}); they are used unchecked, and if "
+                      "any is interior every result from this basis is invalid.")
+        return sources
+    if not inside.any():
+        return sources
+    if inside.all():
+        raise ValueError(f"FundamentalBasis.{where}: every source lies inside the domain; none "
+                         "is a particular solution there. Reduce the offset, or place sources "
+                         "from the exterior geometry.")
+    warnings.warn(f"FundamentalBasis.{where}: dropped {int(inside.sum())} of {len(sources)} "
+                  "sources that lie inside the domain (they would not be particular solutions "
+                  "there, and would invalidate both the tension and any certified bound). "
+                  "Pass check_exterior=False to keep them.")
+    return sources[~inside]
+
+
 class FundamentalBasis(ParticularBasis):
     """
     Basis of real-valued fundamental solutions to the Helmholtz equation
@@ -964,15 +1011,17 @@ class FundamentalBasis(ParticularBasis):
         return cls(sources, orders)
     
     @classmethod
-    def by_boundary(cls, domain, n_per_seg, d=1, order=1, spacing='even'):
+    def by_boundary(cls, domain, n_per_seg, d=1, order=1, spacing='even', check_exterior=True):
         n_per_seg = np.asarray(n_per_seg, dtype='int')
         bdry_pts = domain.bdry_pts(n_per_seg, kind=spacing).pts
         bdry_normals = domain.bdry_normals(n_per_seg, kind=spacing).pts
         sources = bdry_pts + d*bdry_normals
+        if check_exterior:
+            sources = _exterior_sources_only(domain, sources, 'by_boundary')
         return cls(sources, order)
     
     @classmethod
-    def by_corners(cls, domain, n_per_corner, C=1, sigma=1, order=1):
+    def by_corners(cls, domain, n_per_corner, C=1, sigma=1, order=1, check_exterior=True):
         if isinstance(n_per_corner, np.integer):
             n_per_corner = np.full(len(domain.corners), n_per_corner)
         psi = domain.int_angles
@@ -983,6 +1032,8 @@ class FundamentalBasis(ParticularBasis):
         J = [np.arange(1,n+1) for n in n_per_corner]
         dists = [C*np.exp(-sigma*(np.sqrt(n)-np.sqrt(j))) for n,j in zip(n_per_corner, J)]
         sources = np.concatenate([corner+d*ray for corner,d,ray in zip(domain.corners,dists,rays)])
+        if check_exterior:
+            sources = _exterior_sources_only(domain, sources, 'by_corners')
         return cls(sources, order)
 
     def _build_index_maps(self):

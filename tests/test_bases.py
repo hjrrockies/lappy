@@ -1,5 +1,7 @@
 """Tests for lappy.bases — FourierBesselBasis / ExPrecFBBasis."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -353,3 +355,102 @@ def test_multibasis_cols_skips_unneeded_sub_basis():
     cols = np.array([0, 2, 5])   # entirely within fb's [0, len(fb)) range
     out = mb(lam, pts, cols=cols)
     assert out.shape == (1, 3)
+
+
+# ── Fundamental-solution sources must lie outside the domain ─────────────────
+#
+# A source inside Omega is a pole inside Omega, so that column solves the Helmholtz equation
+# nowhere near it. The MPS premise fails and, worse, so does the hypothesis of the Moler--Payne
+# bound (u exact in Omega), which makes any "certified" digit count from such a basis void.
+#
+# The failure is silent and it makes the tension look BETTER, not worse: measured on a chevron
+# with a 307-degree reentrant corner, 24 of 240 interior sources took the tension background
+# from 5e-02 to 3e-07 across the whole search window, which made ttol accept every point,
+# invented an eigenvalue and hid a real one.
+#
+# Normal-offset placement does this routinely on a reentrant boundary, and no global offset
+# avoids it: at distance r from a reentrant corner of exterior wedge beta, the offset crosses
+# over once d >~ r tan(beta/2), so a smaller d only shrinks the affected band.
+
+def _chevron_like():
+    """Lambda-shaped band with a strongly reentrant notch: tips at +-1, notch at 2i, apex 3i."""
+    from lappy.geometry import Polygon
+    return Polygon(np.array([-1+0j, 0+2j, 1+0j, 0+3j]))
+
+
+def test_by_boundary_drops_sources_that_land_inside():
+    from lappy.bases import FundamentalBasis
+    dom = _chevron_like()
+    n_per_seg = np.full(len(dom.bdry.segments), 60)
+    with pytest.warns(UserWarning, match='lie inside the domain'):
+        kept = FundamentalBasis.by_boundary(dom, n_per_seg, d=0.4, order=1)
+    unchecked = FundamentalBasis.by_boundary(dom, n_per_seg, d=0.4, order=1,
+                                             check_exterior=False)
+    assert len(kept) < len(unchecked)
+    assert not dom.contains(kept.sources).any()
+    assert dom.contains(unchecked.sources).any(), 'the unchecked path must still be available'
+
+
+def test_by_boundary_leaves_a_convex_domain_alone():
+    """The guard must cost nothing where nothing is wrong."""
+    from lappy.bases import FundamentalBasis
+    from lappy.geometry import rect
+    dom = rect(2.0, 1.0)
+    n_per_seg = np.full(len(dom.bdry.segments), 40)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')          # any warning here is a failure
+        b = FundamentalBasis.by_boundary(dom, n_per_seg, d=0.5, order=1)
+    assert len(b) == len(FundamentalBasis.by_boundary(dom, n_per_seg, d=0.5, order=1,
+                                                      check_exterior=False))
+
+
+def _n_inside(dom, npts, d):
+    nps = np.full(len(dom.bdry.segments), npts)
+    src = dom.bdry_pts(nps, kind='even').pts + d*dom.bdry_normals(nps, kind='even').pts
+    return int(np.asarray(dom.contains(src)).sum())
+
+
+def test_the_danger_band_scales_with_offset_and_sampling():
+    """The affected band has width proportional to the offset, so it never vanishes -- but
+    whether any SAMPLED source falls in it depends on the boundary density.
+
+    Measured on the chevron below, the count goes roughly as npts*d:
+
+        pts/seg   d=0.4   d=0.1   d=0.02
+             30       8       2        0
+            600     160      40        8
+           2000     536     134       26
+
+    So a small enough offset is safe at a fixed density, and any offset is unsafe at a fine
+    enough density. Since MPS wants both a working offset and dense sampling near corners, the
+    collision is generic rather than something to tune away -- which is why the check belongs
+    in the constructor rather than in a recommended parameter range.
+    """
+    dom = _chevron_like()
+    assert _n_inside(dom, 60, 0.4) > 0
+    assert _n_inside(dom, 60, 0.005) == 0, 'a tiny offset should be safe at coarse sampling'
+    assert _n_inside(dom, 2000, 0.005) > 0, 'but the band is still there at fine sampling'
+    assert _n_inside(dom, 600, 0.4) > _n_inside(dom, 60, 0.4)   # denser sampling, more hits
+    assert _n_inside(dom, 600, 0.4) > _n_inside(dom, 600, 0.1)  # bigger offset, wider band
+
+
+def test_by_corners_also_checks():
+    from lappy.bases import FundamentalBasis
+    dom = _chevron_like()
+    # push the corner rays far enough that some cross the notch
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        b = FundamentalBasis.by_corners(dom, np.full(len(dom.corners), 6), 3.0, 0.5, 1)
+    assert not np.asarray(dom.contains(b.sources)).any()
+    if caught:
+        assert any('lie inside the domain' in str(c.message) for c in caught)
+
+
+def test_all_sources_inside_is_an_error_not_a_warning():
+    from lappy.bases import FundamentalBasis
+    from lappy.geometry import rect
+    dom = rect(2.0, 1.0)
+    n_per_seg = np.full(len(dom.bdry.segments), 20)
+    # a NEGATIVE offset drives every source inward
+    with pytest.raises(ValueError, match='every source lies inside'):
+        FundamentalBasis.by_boundary(dom, n_per_seg, d=-0.2, order=1)

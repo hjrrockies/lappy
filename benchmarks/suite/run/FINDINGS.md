@@ -721,3 +721,25 @@ So **no global offset is safe** on such a domain, and filtering -- what `bucket.
 is the blunt fix. The principled one is to taper the offset toward zero at a reentrant corner,
 scaling with the LOCAL EXTERIOR clearance rather than a constant or, as tried earlier and
 failed, the interior thickness.
+
+### Correction: "no global offset is safe" was too strong
+
+I wrote that no offset avoids interior sources on a reentrant domain. The band's *width* is
+proportional to `d` and never vanishes, but whether any **sampled** source falls in it depends
+on the boundary density. Counting, on the 307-degree notch:
+
+    pts/seg    d=0.4    d=0.1   d=0.02   d=0.005
+         30        8        2        0         0
+        600      160       40        8         2
+       2000      536      134       26         6
+
+The count scales about as `npts * d`. So a small enough offset IS safe at a fixed density, and
+no offset is safe at every density. Since MPS wants both a working offset and dense sampling
+near corners, the collision is generic rather than something to tune away -- which is the
+argument for putting the check in the constructor instead of in a recommended parameter range.
+
+Also worth recording, because it bit my own measurements: `by_boundary` defaults to
+`spacing='even'` while `Domain.bdry_pts` defaults to `'legendre'`. Legendre clusters toward
+segment ends, i.e. toward the corners, so it puts 24 sources in the danger band on
+`chevron_2_3` where even spacing puts 12. My screens used one and my confirmations the other.
+`bucket.py` now passes `spacing='legendre'` explicitly and there is a single code path.
