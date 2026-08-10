@@ -2824,7 +2824,7 @@ six. `lappy/quad.py` therefore keeps its current model; only the INSTRUMENT land
 tried. The error is not at the corners -- it is the smooth panels, whose requirement is set by
 the basis's own pole placement (see the H_shape entry above), which no geometry-only model can
 see. The open proposal is to demote `bq.precision` to a sizing heuristic and let `verify_gram`
-certify. Not decided; recorded in `docs/orientation.md` §5.
+certify. Not decided; recorded in `docs/orientation.pdf` §5.
 
 ### Method notes, both of which cost time here
 
