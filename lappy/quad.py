@@ -401,8 +401,12 @@ def corner_model_error(kind, order, nu, gamma=None, sub=None, curved=True, k=1.0
 @cache
 def corner_order_for_precision(kind, nu, gamma=None, sub=None, curved=True, precision=1e-14,
                                scale=1.0, k=1.0, order_min=4, order_max=64, step=2):
-    """Smallest order whose `corner_rule_residual` meets `precision`, subject to the
+    """Smallest order whose `corner_model_error` meets `precision`, subject to the
     coordinate-collapse cap. Returns `(order, achieved)`.
+
+    (It scans `corner_model_error`, NOT `corner_rule_residual`, which this docstring claimed
+    for a while -- long enough to nearly send a calibration effort at the wrong function.
+    `corner_rule_residual` is kept as a diagnostic only.)
 
     Scans rather than extrapolating, because accuracy is NOT monotone in order: past a
     nu-dependent threshold the integrand's dynamic range (tau**(2nu-2) is ~6e8 at tau~1e-9
