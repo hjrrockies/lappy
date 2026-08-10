@@ -2751,3 +2751,94 @@ its own validation against the sector bars and a re-run before it becomes a defa
 here with the data so that work starts from a measurement rather than a guess. Note also that
 the current setting errs conservative -- it buys nodes nobody needed, which is the safe
 direction.
+
+## The Hadamard contract, and the corner-moving weight it immediately broke
+
+`tests/test_shape_derivative.py` (12 tests, ~2s) is the permanent contract promised in
+`docs/scope_and_downstream.md` §4: rectangle edge translation against closed form, a degenerate
+cluster compared by matrix EIGENVALUES (the eigenspace basis is arbitrary), dilation recovering
+Rellich, and the sector radius. All pass at machine precision.
+
+The corner-moving case did not. On a reentrant sector with the EXACT eigenfunction, so any
+error is the quadrature's alone, `dlam/dalpha` was capped near 1e-06 and did **not** improve
+with refinement (6.2e-06 at 90 nodes, 3.9e-06 at 166, still ~1e-06 at precision 1e-14).
+
+The cause is not parity, which is how it first presented. `sub = nu` rationalizes the
+eigenfunction's own family, but sends a weight `r^m` to `t^(m/nu)` -- a non-integer power with
+a SMALL exponent, on which Gauss decays only as `n^(-(2m/nu+2))`. `sub = 1/2` reverses which
+half is exact: integer `m` becomes the exact polynomial `t^(2m)`, and the Bessel family becomes
+`t^(2 j nu)`, non-integer but with exponents growing by `2 nu` per term, which Gauss eats.
+
+    alpha      nodes  even       nodes  integer
+    0.75 pi     178   3.2e-08      86   4.3e-14
+    1.50 pi      90   6.2e-06      94   3.0e-14
+    1.75 pi     188   2.9e-06     152   2.8e-14
+
+Six to eight orders, at FEWER nodes in half the cases. It assumes nothing about `nu`, so it
+also covers the generic arc-arc corner where `corner_substitution` reports no exact
+substitution exists (verified to 1e-15 at nu = 1/1.37 and nu = 1/phi). Landed opt-in as
+`boundary_quadrature(..., weight_family='integer')`; the default is unchanged.
+
+**`cornerinterp` cannot be rescued, and it is a NODE problem.** Two alternatives were measured
+and rejected first. `sub = 1/q` on the dense family works (4e-15 even at nu=4/5) but needs
+rational `nu`. Rebuilding `cornerinterp` on the dense exponent set fails outright -- 2.0e-06 at
+order 32, WORSE than on the sparse set -- and raising `n_exp` runs `cond(V)` to 4.4e18. It is
+not arithmetic: reconstructing the same rule at 60 dps makes it worse still, `sum|w|` reaching
+4e10. The Jacobi nodes are simply wrong for that family; fixing it means solving for nodes AND
+weights jointly (Ma-Rokhlin). `sub = 1/2` made that unnecessary.
+
+## The corner order model is wrong in BOTH directions; `n_j=2` is not the fix
+
+Following the previous entry's recommendation, `n_j=2` was tested -- and it is not enough,
+because the previous calibration covered only convex `nu`. Measured against closed-form truth
+over 3822 configurations (`benchmarks/eigfun_quad/corner_model_calibration.py`: alpha/pi in
+[0.6, 1.9], k in [0.5, 10.6] which is the measured suite range, every order 6..64, restricted
+to the band where the value actually decides an order):
+
+    model                 worst optimism   %opt >2x   median |log10 ratio|
+    unsigned n_j=6              1.0e-09      32.7%           1.68    <- default
+    unsigned n_j=2              4.5e-09      29.4%           1.46
+    max(signed, unsigned)       7.6e-06      13.0%           1.20
+
+The two regimes fail oppositely, which is exactly why neither was noticed -- each looked fine
+on the half of the range the other covered:
+
+    reentrant nu=0.75, order 16   true 3.7e-09   model 4.1e-10   OPTIMISTIC 9x
+    convex    nu=1.4,  order 24   true 6.0e-10   model 2.1e-04   PESSIMISTIC 3e5x
+
+Two causes. Unsigned coefficients drop the `(-1)^q` of the real J_nu series, inflating
+high-order content (pessimistic). Fixed depth `n_j=6` cuts AT the series peak `q ~ k/2` once
+`k > 8`, making the model integrand smoother than the real one (optimistic); `k` reaches 10.6
+in the suite, so this is live.
+
+**Three candidate replacements were built and all three rejected on measurement.** Signed +
+k-adaptive had the best aggregate and fixed `chevron_2_3`'s spurious shortfall (568 -> 152
+nodes) -- but cancellation shrinks the model integral, so a relative error against it
+understates, and it FAILED an exact test: H-polyomino 288 -> 232 nodes, claiming 1e-14 while
+delivering 2.7e-12. The `max(signed, unsigned)` envelope fixed that but the pessimistic branch
+then dominates: claimed precision collapsed on 12 suite domains and nodes inflated 43-73% on
+six. `lappy/quad.py` therefore keeps its current model; only the INSTRUMENT landed.
+
+**A perfect corner model would still not deliver the advertised number.** `chevron_1_2` claims
+1e-13 while `verify_gram` measures 4.9e-08, and that gap is IDENTICAL under every corner model
+tried. The error is not at the corners -- it is the smooth panels, whose requirement is set by
+the basis's own pole placement (see the H_shape entry above), which no geometry-only model can
+see. The open proposal is to demote `bq.precision` to a sizing heuristic and let `verify_gram`
+certify. Not decided; recorded in `docs/orientation.md` §5.
+
+### Method notes, both of which cost time here
+
+**`mpmath.quad` is not usable as truth for corner integrands -- fifth occurrence.** The first
+calibration harness reported `nu=0.5714` errors pinned at 5.4e-07 across every order; the
+reference itself was only good to 5.3e-07. The harness now self-checks at two precisions, and
+its truth is a closed-form double series (`exact_corner_integral`), not quadrature.
+
+**Do not monkeypatch a module global to build a before/after table.** Twice in this session a
+comparison script captured the "before" function AFTER a previous loop iteration had already
+overwritten it, producing confident and entirely wrong tables -- once claiming a basis result,
+once claiming `chevron_2_3` at 272 nodes/2.1e-13 when a clean process measured 240/3.1e-02.
+Run one model per process, or capture every function object before any patching.
+
+**Aggregate statistics must not outrank an exact test.** The signed model won on 3822
+configurations and lost on one polyomino with closed-form truth. The polyomino was right. Gate
+candidates on Legs 1-3 FIRST, then consult the grid.
