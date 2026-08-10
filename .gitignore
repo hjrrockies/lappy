@@ -178,3 +178,10 @@ Claude.md
 
 # overnight reference run: logs are large and reproducible; results/queue/notes are kept
 benchmarks/suite/run/logs/
+
+# LaTeX build artifacts (docs/*.tex are built to *.pdf, which IS tracked)
+*.aux
+*.out
+*.toc
+*.fls
+*.fdb_latexmk

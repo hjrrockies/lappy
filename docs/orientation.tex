@@ -1,0 +1,367 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{microtype}
+\usepackage[htt]{hyphenat}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newcommand{\dd}{\,\mathrm{d}}
+\newcommand{\Om}{\Omega}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\pdn}[1]{\frac{\partial #1}{\partial n}}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.15}
+
+\title{Orientation: Boundary Integrals in \texttt{lappy}\\
+\large A map of the machinery, and where the difficulty lives}
+\author{lappy development notes}
+\date{2026-08-10}
+
+\begin{document}
+\sloppy
+\maketitle
+
+\begin{abstract}
+\noindent
+A map, not a lab notebook. \code{benchmarks/suite/run/NOTEBOOK.md} (2700+ lines)
+records \emph{how} things were found; this records \emph{what is true now} and
+\emph{where the difficulty lives}. Read this first; go there for evidence.
+
+\medskip\noindent
+The companion documents are \code{corner\_quadrature.pdf} (the research record,
+which derives the corner rule properly) and
+\code{boundary\_quadrature\_primer.pdf} (a gentler introduction for someone new
+to the project).
+\end{abstract}
+
+\section{Why boundary integrals at all}
+
+Two formulas, one instrument:
+\begin{align}
+  \text{Rellich}  &&  \int_\Om u^2 \dd x &= \frac{1}{2\lambda}
+    \oint_{\partial\Om} (r\cdot N)\Big(\pdn{u}\Big)^{\!2} \dd s,
+    && r = x - x_0, \label{eq:rellich}\\[2pt]
+  \text{Hadamard} &&  d\lambda &= -
+    \oint_{\partial\Om} \Big(\pdn{u}\Big)^{\!2} (V\cdot n) \dd s,
+    && V = \text{boundary velocity}. \label{eq:hadamard}
+\end{align}
+
+Both turn a statement about the \emph{domain} into an integral over the
+\emph{boundary}, against the same Cauchy data $\partial u/\partial n$, on the
+same nodes, with the same weights. Only the weight function differs: $r\cdot N$
+for the norm, $V\cdot n$ for the shape derivative.
+
+This matters because MPS produces $\partial u/\partial n$ on the boundary
+natively. So \textbf{normalizing an eigenfunction} (needed for anything
+quantitative) and \textbf{differentiating an eigenvalue with respect to shape}
+(needed downstream, for optimization and inverse problems) are the \emph{same
+computation with a different weight}. One quadrature investment buys both. The
+alternative --- interior cubature for the norm --- needs volume points and has
+measured as the fragile half every time the two were compared.
+
+The case $V = x - x_0$ (uniform dilation) makes \eqref{eq:hadamard} reduce to
+\eqref{eq:rellich} exactly, which pins the sign and scale of the shape
+derivative for free. \code{gram()} and the shape derivative are literally the
+same call to \code{weighted\_integral(ed, 'NN', $\cdot$)} with different weights.
+
+\medskip\noindent
+\textbf{Consequence.} Essentially all of \code{lappy}'s accuracy risk is
+concentrated in \emph{one boundary quadrature}. That is a deliberate bet, and it
+is working. It also means a defect there is systemic, which is why so much
+effort has gone into it.
+
+\section{Where the difficulty actually lives}
+
+At a corner of interior angle $\alpha$, with $\nu = \pi/\alpha$, a Dirichlet
+eigenfunction expands as
+$u = \sum_k c_k J_{k\nu}(\sqrt{\lambda}\,r)\sin(k\nu\theta)$, so on an edge
+leaving the corner
+\[
+  \pdn{u} \sim r^{\nu-1} F(r),
+  \qquad
+  \Big(\pdn{u}\Big)^{\!2} \sim r^{2\nu-2} G(r).
+\]
+The integrand carries a \textbf{non-integer power of arclength} at every corner.
+Gauss--Legendre converges only algebraically on $\tau^\gamma$ (as
+$n^{-(2\gamma+2)}$), not spectrally, so an unadapted rule loses most of the
+precision. Everything below is machinery for that one fact.
+
+Note carefully: this is \textbf{not} only about reentrant corners. The power
+$r^{2\nu-2}$ is non-smooth whenever $2\nu-2$ is not a non-negative even integer,
+which includes plenty of \emph{convex} corners ($\nu = 1.4$ gives $r^{0.8}$).
+That is why the regular $n$-gons need corner rules at all.
+
+\section{The case table}
+
+This is the thing to keep in your head. \code{boundary\_quadrature()} classifies
+every corner, then every panel.
+
+\subsection{Which rule a corner gets}
+
+The test for ``does this corner need special treatment'' is \textbf{measured,
+not assumed}. The function \code{quad.smooth\_power\_error} is asked directly
+whether plain Gauss--Legendre can integrate $\tau^{2\nu-2}$ to the target; if it
+cannot, the corner gets an adapted rule. (Switch \code{nonintegral}, on by
+default.)
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}L l l c L@{}}
+\toprule
+\textbf{corner class} & \textbf{edges} & \textbf{rule} & \textbf{sub} & \textbf{why} \\
+\midrule
+smooth rule suffices
+  & either & Legendre & --- &
+  plain Gauss already reaches the target; nothing to fix \\
+$2/\nu$ an integer
+  & \textbf{straight} & \code{cornerjac} & $\nu$ &
+  family is the sparse $\{j\nu + 2q\}$, which $t = r^\nu$ rationalizes. Among
+  reentrant angles this is \textbf{only} $\alpha = 3\pi/2$ \\
+everything else, including irrational $\nu$
+  & curved, or straight with $2/\nu \notin \mathbb{Z}$ & \code{cornerinterp} & $\nu$ &
+  family is the dense $\{j\nu + m\}$; no substitution rationalizes it without
+  crushing nodes, so exactness comes from the \emph{weights} while the nodes
+  keep the mild $\text{sub} = \nu$ placement \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent
+Three further classes get no corner rule at all, because none would help:
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l L@{}}
+\toprule
+\textbf{demoted class} & \textbf{why, and what is reported} \\
+\midrule
+$\nu \le 1/2 + \varepsilon$ (near-slit) &
+  the Rellich integrand is barely integrable and no rule recovers it. Precision
+  is reported as $\infty$. Remedy: place $x_0$ on that corner (\S4) \\
+mixed BC (Zaremba corner) &
+  the integrand $\sim r^{\nu-2}$ is not integrable for $\nu<1$, so the identity
+  itself fails here \\
+non-Dirichlet \code{bc\_type} &
+  only Dirichlet corners are wired; a Neumann corner needs different exponents
+  on the \code{uv} and \code{TT} kernels \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Demotions are never silent: \code{shortfalls} names the corner and the reason,
+\code{bq.precision} becomes $\infty$, and a warning is raised.
+\code{singular\_corner\_report(domain)} prints the whole classification and is
+the first thing to look at when accuracy disappoints.
+
+\subsection{Which weight you are integrating}
+
+The corner rule is built for the eigenfunction's own exponent family. A
+\emph{weight} multiplies that, and whether the product stays in the exact class
+depends on the weight's behaviour at the corner.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l L c l@{}}
+\toprule
+\textbf{weight} & \textbf{corner behaviour} & \textbf{in class?} & \textbf{what to pass} \\
+\midrule
+$r\cdot N$, straight edge & exactly \textbf{constant} ($m=0$) & yes & default \code{weight\_family='even'} \\
+$r\cdot N$, curved edge & analytic series in $s$, integer powers & yes & default \\
+$V\cdot n$ vanishing to even order & even integer powers & yes & default \\
+$V\cdot n$ \textbf{moving a corner} ($\sim r$) & \textbf{odd} integer powers & \textbf{no} & \code{weight\_family='integer'} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The last row is the one that bites, and it is exactly what a shape-optimization
+parametrization supplies. With the default $\text{sub} = \nu$, a weight $r^m$
+becomes $t^{m/\nu}$ --- a non-integer power with a \emph{small} exponent, so
+Gauss decays only as $n^{-(2m/\nu+2)}$. Measured on a $1.5\pi$ sector against
+40-digit truth:
+
+\begin{center}\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & $p=0$ & $p=1$ & $p=2$ & $p=3$ \\
+\midrule
+$\text{sub} = \nu$, order 32   & 2.9e-14 & \textbf{4.6e-07} & 8.5e-14 & 4.0e-14 \\
+$\text{sub} = 1/2$, order 16   & 4.7e-15 & \textbf{1.2e-14} & 1.1e-14 & 1.0e-14 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{weight\_family='integer'} switches singular corners to $\text{sub} = 1/2$,
+which makes every integer power the exact polynomial $t^{2m}$ while sending the
+Bessel family to $t^{2j\nu}$ --- non-integer, but with exponents growing by
+$2\nu$ per term, which Gauss resolves at once. It assumes \emph{nothing} about
+$\nu$, so it covers the generic arc--arc corner where no exact substitution
+exists. End-to-end on $d\lambda/d\alpha$ this is 6--8 orders, at fewer nodes in
+half the cases.
+
+The default stays \code{'even'}: it is equally accurate and cheaper for
+everything \code{lappy} integrates itself, and changing it would perturb every
+recorded reference value.
+
+\subsection{The smooth part of the boundary}
+
+Away from corners, panels use plain Gauss--Legendre, with two independent sizing
+questions.
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l l L@{}}
+\toprule
+\textbf{question} & \textbf{function} & \textbf{notes} \\
+\midrule
+resolve the \emph{oscillation} $e^{ik\tau}$ & \code{smooth\_order\_for\_precision} &
+  $k = \sqrt{\lambda_{\max}}\cdot(\text{panel arclength})$ \\
+resolve the \emph{geometry} & \code{geometry\_order\_for\_precision} &
+  curved segments only; asks whether the arclength reparametrization itself is
+  resolved. \code{resolve\_geometry=True} by default \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{The methods, one at a time}
+
+\paragraph{\code{cornerjac}.} Gauss--Jacobi after the substitution $t = r^{\rm sub}$.
+Exact when the substitution maps the corner's exponent family to integers. Cheap
+(order 8 suffices at $\alpha = 3\pi/2$ where \code{cornerinterp} needs 24). Its
+limitation is node placement: $\tau = t^{1/\rm sub}$ crushes the innermost node
+as $\rm sub$ shrinks, and once $\tau_{\min}$ falls below
+\code{\_KRESS\_TAU\_FLOOR} $= 10^{-9}$ the node rounds onto the corner itself
+under a segment's parametrization, where a basis's $1/r$ terms are fatal. That is
+why $\text{sub} = 1/q$ for $\nu = p/q$ --- which \emph{would} rationalize the
+dense family exactly --- is not used for placement: $q \ge 4$ puts $\tau_{\min}$
+below the floor.
+
+\paragraph{\code{cornerinterp}.} Nodes from \code{cornerjac}'s mild
+$\text{sub} = \nu$ placement, weights solved so the rule is exact on the corner's
+actual exponent set. It gets exactness from the weights instead of the
+coordinates, so $\tau_{\min}$ stays at ${\sim}10^{-5}$. The weight solve is
+deliberately \emph{under-determined} (\code{n\_exp < order}, minimum-norm least
+squares), which keeps $\sum|w| = 1$; the square solve is exact on the span but
+has $\operatorname{cond}(V) \sim 10^{19}$ and weights reaching $-10^4$.
+
+\medskip\noindent
+\textbf{Known limit.} \code{cornerinterp} cannot be pushed further by raising
+\code{n\_exp} --- $\operatorname{cond}(V)$ goes
+$8\!\times\!10^{6} \to 5.7\!\times\!10^{15} \to 4.4\!\times\!10^{18}$ --- and it
+is \emph{not} an arithmetic problem: rebuilding the same rule at 60 dps makes it
+worse, with $\sum|w|$ exploding to $4\!\times\!10^{10}$. The Jacobi nodes are
+simply the wrong nodes for the dense family. Fixing that properly means solving
+for nodes \emph{and} weights jointly (a true generalized Gaussian rule,
+Ma--Rokhlin). Not attempted, and $\text{sub} = 1/2$ (\S3.2) made it unnecessary
+for the case that motivated it.
+
+\paragraph{Panel structure.} Corner panels are anchored at the corner and cover a
+fraction \code{panel\_frac} of the segment; that fraction is halved when both
+ends of a segment are singular. A \emph{clearance cap} limits the panel to a
+fraction of the distance to the nearest non-adjacent boundary piece, because the
+corner expansion stops being valid beyond it.
+
+\paragraph{The reference point $x_0$.} Identity \eqref{eq:rellich} holds for
+\emph{every} $x_0$, which makes $x_0$-invariance a free diagnostic: any variation
+across $x_0$ is pure quadrature error. \code{default\_x0} puts it at the most
+singular corner, where $r\cdot N$ vanishes identically on both edges --- removing
+that corner from the integrand rather than resolving it. Free, but it can only
+ever cover one corner.
+
+\section{The two ways to know it worked --- and the open decision}
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l l L@{}}
+\toprule
+ & \textbf{mechanism} & \textbf{what it is} \\
+\midrule
+\emph{a priori} & \code{corner\_model\_error} $\to$ \code{bq.precision} &
+  \emph{predicts} a rule's error from a model of the integrand class, before
+  computing anything \\
+\emph{a posteriori} & \code{refine\_quadrature} $\to$ \code{verify\_gram} &
+  \emph{measures}, by recomputing on a refined rule and reporting what moved \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent
+\textbf{This is the live architectural question.} \code{bq.precision} is
+currently treated as an advertised precision, but it is a single scalar standing
+in for a whole class of integrands, and it is measurably not up to that job.
+
+\begin{itemize}
+\item Calibrated against closed-form truth over 3822 configurations
+  (\code{benchmarks/eigfun\_quad/corner\_model\_calibration.py}), worst-case
+  \textbf{optimism is nine orders} --- it promises precision it does not deliver.
+  It is also pessimistic by up to $3\!\times\!10^5$ at convex $\nu$, which
+  inflates node counts. Two causes pull in opposite directions: unsigned Bessel
+  coefficients (pessimistic) and a fixed series depth that cuts at the peak once
+  $k > 8$ (optimistic). Since $k$ reaches 10.6 across the suite, both are live.
+\item Three candidate replacements were built and \textbf{all three rejected on
+  measurement} --- each fixed one regime and broke another. The instrument
+  landed; the fix did not.
+\item More fundamentally: \code{chevron\_1\_2} claims $10^{-13}$ while
+  \code{verify\_gram} measures $4.9\!\times\!10^{-8}$, and that gap is
+  \emph{identical} under every corner model tried. The error is not at the
+  corners --- it comes from the smooth panels, whose requirement is set by the
+  \textbf{basis's own singularity structure} (where the fundamental solutions put
+  their poles), which no geometry-only model can ever see.
+\end{itemize}
+
+\noindent
+So a perfect corner model still would not deliver the advertised number. The open
+proposal is to \textbf{demote \code{bq.precision} to a sizing heuristic and let
+\code{verify\_gram} be what certifies}. The corner model would then only need to
+land in the right ballpark, and its calibration would leave the critical path.
+Not yet decided.
+
+\section{State of play}
+
+\paragraph{Settled and load-bearing.}
+\begin{itemize}
+\item Certification runs on boundary norms ($\varepsilon$ is scale-invariant, so
+  this is both sound and faster).
+\item \code{FundamentalBasis} rejects sources inside the domain --- those columns
+  are not particular solutions, which voids the MPS premise \emph{and} the
+  Moler--Payne hypothesis. This was a real correctness bug; its signature is a
+  suspiciously \emph{low} tension background.
+\item \code{weight\_family='integer'} for corner-moving shape velocities (\S3.2).
+\item \code{tests/test\_shape\_derivative.py} --- the Hadamard contract, 12
+  tests, ${\sim}2$\,s.
+\item Benchmark tally 39 / 3 / 2 (8+ digits / complete but fewer / failure).
+\end{itemize}
+
+\paragraph{Open.}
+\begin{itemize}
+\item Corner order model calibration --- instrumented, unsolved (\S5).
+\item Claimed versus measured precision --- the architectural decision above.
+\item Basis-selection heuristics:
+  \code{make\_default\_basis(domain, lam\_max, precision)} is sketched in
+  \code{docs/basis\_heuristics.md}, not built.
+\item Buckets 2 and 3: \code{stadium}, \code{mushroom\_neck01}, and the two
+  spirals.
+\item Still unbuilt from the Hadamard plan: the Tier-3 finite-difference
+  benchmark and the objective study ($\lambda$ digits versus $d\lambda$ digits
+  across bases).
+\end{itemize}
+
+\section{Where to read further}
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}L l@{}}
+\toprule
+\textbf{topic} & \textbf{file} \\
+\midrule
+the identity and its derivation & \code{docs/rellich.md}, \code{rellich\_hadamard\_mps.pdf} \\
+corner quadrature theory (research record) & \code{docs/corner\_quadrature.pdf} \\
+gentler introduction, for someone new & \code{docs/boundary\_quadrature\_primer.pdf} \\
+the integration API & \code{docs/eigfun\_integrals.md}, \code{boundary\_integrals.md} \\
+what lappy owns vs.\ a downstream shape package & \code{docs/scope\_and\_downstream.md} \\
+evidence, chronologically & \code{benchmarks/suite/run/NOTEBOOK.md}, \code{FINDINGS.md} \\
+per-domain status & \code{benchmarks/suite/run/BUCKETS.md} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\end{document}
