@@ -12,26 +12,53 @@ sides are computed here in 40-digit precision and agreed to 50 digits against an
 analytic evaluation of the Hadamard integral itself, so the reference is far more accurate than
 what it measures -- the discipline `reference._bessel_zero` insists on.
 
-WHAT THIS FOUND. With the EXACT eigenfunction, so that any error is the quadrature's alone:
+WHAT THIS FOUND, AND HOW IT WAS FIXED. With the EXACT eigenfunction, so that any error is the
+quadrature's alone:
 
-    alpha      mode    rel err
-    0.50 pi   (1,1)    8.6e-16      nu = 2, integer
-    0.75 pi   (1,1)    3.2e-08      nu = 4/3
-    1.50 pi   (1,1)    6.2e-06      nu = 2/3, reentrant
-    1.50 pi   (2,1)    1.3e-09      milder mode at the same corner
+    alpha      mode    nodes  weight_family='even'   nodes  weight_family='integer'
+    0.50 pi   (1,1)      52          8.6e-16            52          8.6e-16
+    0.75 pi   (1,1)     178          3.2e-08            86          4.3e-14
+    1.50 pi   (1,1)      90          6.2e-06            94          3.0e-14
+    1.75 pi   (1,1)     188          2.9e-06           152          2.8e-14
 
-Six orders worse than the same node set delivers for the L2 norm (8.6e-15), and it does NOT
-improve with refinement: 6.2e-06 at 90 nodes, 3.9e-06 at 166, still ~1e-06 at precision 1e-14.
+The default was six to eight orders worse than the same node set delivers for the L2 norm, and
+it did NOT improve with refinement: 6.2e-06 at 90 nodes, 3.9e-06 at 166, still ~1e-06 at
+precision 1e-14. `weight_family='integer'` reaches machine precision, at FEWER nodes in two of
+the four cases.
 
-WHY. The corner rule for a straight edge with `2/nu` integral uses the substitution `t = r^nu`,
-which rationalizes the Rellich exponent family `{j nu + 2q}` into polynomials in `t`. A weight
-`r^p` contributes `t^(p/nu)`, an integer power only when `p/nu` is. At `nu = 2/3` that means
+WHY IT FAILED. The corner rule uses the substitution `t = r^nu`, which rationalizes the
+eigenfunction's own exponent family `{j nu + 2q}` into polynomials in `t`. A weight `r^p`
+contributes `t^(p/nu)`, an integer power only when `p/nu` is. At `nu = 2/3` that means
 `t^(3p/2)`: polynomial for EVEN `p`, not for odd. Measured on the same node set:
 
     weight r^p     p=0      p=1      p=2      p=3      p=4
     rel err      3.4e-14  6.2e-06  3.5e-14  3.2e-11  3.5e-14
 
 Even exact, odd degraded, exactly as predicted.
+
+WHY `sub = 1/2` FIXES IT. The defect is not really parity, it is that `t^(p/nu)` is a
+non-integer power with a SMALL exponent, on which Gauss decays only as `n^(-(2p/nu + 2))`.
+Taking `sub = 1/2` reverses which half of the integrand is exact: every integer `p` becomes the
+exact polynomial `t^(2p)`, and the Bessel family becomes `t^(2 j nu)` -- still non-integer, but
+with exponents growing by `2 nu` per term, which Gauss resolves at once. That is the better
+trade by six orders, and, crucially, it assumes NOTHING about `nu`:
+
+    weight r^p on the moving radius   p=0      p=1      p=2      p=3
+    nu = 2/3      sub=nu,  order 32  2.9e-14  4.6e-07  8.5e-14  4.0e-14
+                  sub=1/2, order 16  4.7e-15  1.2e-14  1.1e-14  1.0e-14
+    nu = 1/1.37   sub=nu,  order 32  2.4e-11  4.3e-07  1.3e-10  9.2e-14
+    (IRRATIONAL)  sub=1/2, order 16  2.3e-16  1.9e-15  3.6e-15  6.0e-15
+
+The irrational row matters most: the generic corner between two circular arcs has irrational
+`nu`, for which `corner_substitution` reports that no exact substitution exists at all. Two
+alternatives were measured and rejected. Rationalizing the DENSE family with `sub = 1/q` from
+`corner_substitution` works (4e-15 at nu = 4/5) but needs rational `nu`. Rebuilding the
+interpolatory `cornerinterp` rule on the dense exponent set fails outright -- 2.0e-06 at order
+32, WORSE than on the sparse set -- and it is not an arithmetic problem: reconstructing the
+same rule at 60 dps makes it worse still, with `sum|w|` exploding to 4e+10 as `n_exp` rises.
+The Jacobi nodes are simply the wrong nodes for that family, and fixing that means solving for
+nodes and weights jointly (a true generalized Gaussian rule). `sub = 1/2` makes that
+unnecessary.
 
 WHY IT WAS INVISIBLE UNTIL NOW. Every weight lappy has ever integrated is in the exact class.
 `gram` uses `r.N`, which with `x0` placed at the singular corner is identically zero on both
@@ -40,11 +67,10 @@ i.e. `p = 0`. The first genuinely new weight is a corner-moving shape velocity, 
 `O(r^1)`, and it is the first one outside the class.
 
 CONSEQUENCE. A downstream shape-optimization package cannot assume the node set built for the
-norm serves an arbitrary Hadamard weight. Either the rule is constructed for the product family
-(`cached_cornerjacgauss` already takes `gamma` and `sub`, so a caller who declares the weight's
-corner exponent can get an exact rule), or the perturbation is restricted to fields vanishing to
-even order at singular corners. Perturbations that move a corner are exactly the ones that do
-not.
+norm serves an arbitrary Hadamard weight -- it must ASK for the right one, by passing
+`weight_family='integer'` to `boundary_quadrature`. The default stays `'even'`: it is the
+cheaper, equally accurate rule for everything lappy itself integrates (`gram`'s `r.N` weight is
+`p = 0`), and changing the default would perturb every recorded reference value for no gain.
 """
 import warnings
 
@@ -106,22 +132,25 @@ def moving_radius(dom, bq, alpha):
 def main():
     R = 1.0
     print('CORNER-MOVING SHAPE DERIVATIVE, exact eigenfunction (error is the quadrature\'s)')
-    print(f"{'alpha/pi':>9} {'mode':>7} {'nu':>7} {'dlam/dalpha':>16} {'quadrature':>16} {'rel err':>9}")
+    print(f"{'alpha/pi':>9} {'mode':>7} {'nu':>7} {'dlam/dalpha':>16} "
+          f"{'nodes':>6} {'even':>9} {'nodes':>6} {'integer':>9}")
     for ao in (0.5, 0.75, 1.0, 1.5, 1.75):
         alpha = ao*np.pi
         for (m, n) in ((1, 1), (2, 1)):
             lam = ref.sector_eig(m, n, R, alpha)
             dom = disk_sector(R, alpha)
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                bq = boundary_quadrature(dom, 3*lam, precision=1e-13)
-            ed = exact_data(m, n, R, alpha, bq)
-            mask = moving_radius(dom, bq, alpha)
-            Vn = np.where(mask, np.abs(bq.pts), 0.0)
-            got = -weighted_integral(ed, 'NN', Vn)[0, 0]
             ex = dlam_dalpha(m, n, R, alpha)
-            print(f'{ao:9.2f} {str((m, n)):>7} {m*np.pi/alpha:7.4f} {ex:16.10f} {got:16.10f} '
-                  f'{abs(got - ex)/abs(ex):9.1e}', flush=True)
+            cols = []
+            for fam in ('even', 'integer'):
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    bq = boundary_quadrature(dom, 3*lam, precision=1e-13, weight_family=fam)
+                ed = exact_data(m, n, R, alpha, bq)
+                mask = moving_radius(dom, bq, alpha)
+                got = -weighted_integral(ed, 'NN', np.where(mask, np.abs(bq.pts), 0.0))[0, 0]
+                cols += [len(bq.pts), abs(got - ex)/abs(ex)]
+            print(f'{ao:9.2f} {str((m, n)):>7} {m*np.pi/alpha:7.4f} {ex:16.10f} '
+                  f'{cols[0]:6d} {cols[1]:9.1e} {cols[2]:6d} {cols[3]:9.1e}', flush=True)
 
     print('\nREFERENCE CROSS-CHECK (two independent routes, 40 dps)')
     for ao in (0.75, 1.5):

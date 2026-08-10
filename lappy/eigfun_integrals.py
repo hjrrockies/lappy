@@ -564,7 +564,7 @@ def lowdin_transform(G, ttol=1e-3):
 
 def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
                         clearance_frac=_CLEARANCE_FRAC, warn=True, nonintegral=True,
-                        smooth_safety=1.0, resolve_geometry=True):
+                        smooth_safety=1.0, resolve_geometry=True, weight_family='even'):
     """The entry point: a boundary node set for `domain`, accurate to `precision` for
     eigenfunctions up to spectral parameter `lam_max`.
 
@@ -650,17 +650,44 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
         x0 = default_x0(domain, singular_test)
 
     # per-corner order, from the corner's own exponent set
-    orders, achieved = {}, {}
+    orders, achieved, subs, kinds = {}, {}, {}, {}
     for sp in specs:
         if not (sp.singular and sp.admissible):
             continue
         curved = not sp.straight
         frac = min(panel_frac, 0.5) if _both_ends_singular(specs, sp) else panel_frac
         seg_len = segs[sp.seg_out].len
-        o, ach = corner_order_for_precision(sp.kind, sp.nu, None, sp.sub, curved,
-                                            precision, scale=frac,
-                                            k=np.sqrt(max(lam_max, 0.0))*seg_len*frac)
+        k_corner = np.sqrt(max(lam_max, 0.0))*seg_len*frac
+        sub, kind = sp.sub, sp.kind
+        o, ach = corner_order_for_precision(sp.kind, sp.nu, None, sub, curved,
+                                            precision, scale=frac, k=k_corner)
+        if weight_family == 'integer':
+            # The corner rules are built for the exponent family the EIGENFUNCTION has,
+            # `{gamma + j nu + ...}`, which `sub = nu` rationalizes. An integer-power
+            # boundary weight -- what a shape derivative supplies, `V.n ~ r` for a
+            # perturbation that moves the corner -- is outside it, and `sub = nu` sends
+            # `r^m` to `t^(m/nu)`: non-integer with a SMALL exponent, so Gauss decays on it
+            # only as `n^(-(2m/nu + 2))`. That is the whole defect. Measured against 40-digit
+            # truth on the 1.5pi sector, weight `r^p`:
+            #
+            #     sub = nu,  order 32     p=0 2.9e-14  p=1 4.6e-07  p=2 8.5e-14  p=3 4.0e-14
+            #     sub = 1/2, order 16     p=0 4.7e-15  p=1 1.2e-14  p=2 1.1e-14  p=3 1.0e-14
+            #
+            # `sub = 1/2` reverses the trade: every integer `m` becomes the exact polynomial
+            # `t^(2m)`, while the Bessel family goes to `t^(2 j nu)` -- still non-integer, but
+            # with exponents growing by `2 nu` per term, which Gauss resolves at once. It needs
+            # NO rationality of nu, so it covers the generic arc-arc corner where no exact
+            # substitution exists at all; verified at nu = 1/1.37 and nu = 1/phi to 1e-15, and
+            # across nu in [0.57, 1.34] at order 16. `tau_min` stays above 1e-6 throughout,
+            # far clear of the coordinate-collapse floor that rules out `sub = 1/q` at q >= 4.
+            # Forced to 'cornerjac' even on a curved edge, where `corner_rule_spec` would
+            # pick 'cornerinterp': that rule takes no substitution, so it cannot make the
+            # weight exact, and its fixed-node interpolation is the weaker rule here anyway.
+            o, ach = corner_order_for_precision('cornerjac', sp.nu, None, 0.5, curved,
+                                                precision, scale=frac, k=k_corner)
+            sub, kind = 0.5, 'cornerjac'
         orders[sp.idx], achieved[sp.idx] = o, ach
+        subs[sp.idx], kinds[sp.idx] = sub, kind
 
     panels = []
     for p in corner_panels(domain, specs, order_corner=1, order_smooth=1,
@@ -669,7 +696,9 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
         if p.rule == 'legendre':
             panels.append(p._replace(order=smooth_orders[p.seg_idx]))
         else:
-            panels.append(p._replace(order=orders.get(p.corner, 16)))
+            panels.append(p._replace(order=orders.get(p.corner, 16),
+                                     sub=subs.get(p.corner, p.sub),
+                                     rule=kinds.get(p.corner, p.rule)))
     # Honest precision. A corner short of the target contributes its model bound; a SINGULAR
     # corner demoted to a smooth rule contributes no bound at all, because the smooth model
     # cannot see the singularity it is being asked to integrate -- `sector_slit`'s nu=0.504

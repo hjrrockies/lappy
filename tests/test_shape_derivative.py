@@ -217,12 +217,13 @@ def test_sector_radius_derivative():
 # See benchmarks/hadamard/sector_angle.py. The bounds below are measured, not aspirational: they
 # will catch a regression and will not obstruct a fix.
 
-def _sector_angle_setup(alpha_over_pi, m=1, n=1, R=1.0):
+def _sector_angle_setup(alpha_over_pi, m=1, n=1, R=1.0, weight_family='even'):
     from lappy import reference as ref
     alpha = alpha_over_pi*np.pi
     dom = disk_sector(R, alpha)
     lam = ref.sector_eig(m, n, R, alpha)
-    bq = boundary_quadrature(dom, 3*lam, precision=1e-13, warn=False)
+    bq = boundary_quadrature(dom, 3*lam, precision=1e-13, warn=False,
+                             weight_family=weight_family)
     u, norm2 = ref.sector_eigfun(m, n, R, alpha)
     s = 1.0/np.sqrt(norm2)
     G = s*ref.sector_eigfun_grad(m, n, R, alpha)(bq.pts)
@@ -260,9 +261,15 @@ def test_corner_moving_derivative_is_exact_at_integer_nu():
 
 
 def test_weight_parity_at_a_reentrant_corner():
-    """Even powers of `r` stay inside the rule's exactness class; odd powers do not. If the
-    corner rule is ever built for the product family, the odd-power bound here should be
-    tightened rather than deleted."""
+    """`weight_family` decides whether an ODD power of `r` is integrated exactly at a singular
+    corner -- which is what a corner-moving shape velocity supplies, and the whole reason the
+    option exists.
+
+    The default 'even' rule uses `sub = nu`, exact on the eigenfunction's own family
+    `{gamma + j nu + 2q}` but sending `r^m` to the slowly-resolved `t^(m/nu)`. 'integer' uses
+    `sub = 1/2`, making every integer power the exact polynomial `t^(2m)` at the cost of
+    leaving `t^(2 j nu)` inexact -- a good trade, because those exponents grow by `2 nu` per
+    term. Both columns are asserted here so a regression in either is caught."""
     import mpmath as mp
     # 40 dps, not 30: the p=0 reference integrand carries r^(2nu-2) = r^(-2/3) at the endpoint
     # and `mp.quad` resolves it to only 4.9e-12 at 30 dps (3.4e-14 at 40, stable to 50). This is
@@ -289,3 +296,30 @@ def test_weight_parity_at_a_reentrant_corner():
         assert err[p] < 1e-12, (p, err[p])          # in the class: machine precision
     assert err[1] < 1e-5, err[1]                    # out of the class: ~6e-6 today
     assert err[1] > 100*err[0], (err[0], err[1])    # and decisively worse than p=0
+
+    # weight_family='integer' removes the parity distinction entirely.
+    _, bq2, ed2, mask2, _ = _sector_angle_setup(1.5, weight_family='integer')
+    err2 = {}
+    for p in (0, 1, 2, 3, 4):
+        got = weighted_integral(ed2, 'NN', np.where(mask2, np.abs(bq2.pts)**p, 0.0))[0, 0]
+        err2[p] = abs(got - truth(p))/abs(truth(p))
+    for p in (0, 1, 2, 3, 4):
+        assert err2[p] < 1e-11, (p, err2[p])        # every power, ~1e-14 today
+    assert err2[1] < 1e-4*err[1], (err[1], err2[1]) # the odd power gains >= 4 orders
+
+
+def test_integer_weight_family_fixes_the_corner_moving_derivative():
+    """The contract this option exists for: `dlam/dalpha` on a reentrant sector, where the
+    velocity `V.n = r` moves the singular corner. The default rule is capped near 1e-06 and
+    does not improve with refinement; 'integer' reaches the eigenfunction's own accuracy."""
+    import mpmath as mp
+    mp.mp.dps = 40
+    for aop in (1.5, 1.75):
+        alpha = aop*np.pi
+        nu = mp.mpf(1)*mp.pi/mp.mpf(alpha)
+        j = mp.besseljzero(nu, 1)
+        dj = mp.diff(lambda v: mp.besseljzero(v, 1), nu)
+        exact = float(2*j*dj*(-nu/mp.mpf(alpha)))
+        _, bq, ed, mask, _ = _sector_angle_setup(aop, weight_family='integer')
+        got = -weighted_integral(ed, 'NN', np.where(mask, np.abs(bq.pts), 0.0))[0, 0]
+        assert abs(got - exact)/abs(exact) < 1e-11, (aop, got, exact)
