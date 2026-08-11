@@ -12,6 +12,18 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       heuristics.md` is *a* theory with partial evidence (the FS offset scaling with wavelength
       is the empirically grounded part), not a spec. Approach is open-ended: gather evidence for
       what works, taking the current implementation's ideas as inspiration rather than law.
+- [ ] Resolve the ~10-digit plateau. `pure_fb` stops there on both L_shape and plus_shape while
+      Moler-Payne is good to 14, so it is real and it caps every construction measured. Separate
+      collocation ratio (`mult=2`), regularization tolerance, interior-point count, and a
+      genuine basis limit by varying each with the basis fixed. Until this is settled no fitted
+      convergence rate means much. See NOTEBOOK, first basis measurements entry.
+- [ ] Find an exact-truth domain that actually exercises a corner singularity. Sectors are
+      degenerate (FB about the apex spans the exact eigenfunctions) and polyominoes are
+      degenerate the other way (closed-form eigenfunctions are smooth at reentrant corners).
+      This is the real obstacle to measuring convergence rates honestly.
+- [ ] "Singular corner" means two different things in this codebase: `pi/alpha` non-integer in
+      `bases` (counts sharp CONVEX corners -- chevron(1,2) has four) versus the quadrature's
+      reentrant/nonintegral notion (same domain, one). Pick distinct names.
 - [ ] Decide the objective before optimizing to it: certified digits for `lambda` is what every
       measurement so far scores, but the stated goal is a Hadamard-ready solver and nobody has
       checked whether a basis tuned for `lambda` is also good for `dlambda`.
