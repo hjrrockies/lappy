@@ -3078,3 +3078,78 @@ the three method notes above are all asking for, and it is cheaper than any of t
   is deterministic; it is probably not what an MPS solve wants. Documented, not changed.
 - **The near-slit ceiling still has no lever.** Panel subdivision or a joint node/weight solve
   (Ma-Rokhlin) remain the candidates; nothing here moved it.
+
+## Starting the basis work: a measuring stick, and three things it found before any proposal
+
+`make_default_basis(domain, lam_max, precision)` is the target. The approach is open-ended --
+`docs/basis_heuristics.md` is *a* theory with partial evidence, not a spec, and the current
+constructor's branch ideas are inspiration rather than law. First step is therefore an
+instrument, not a proposal: `benchmarks/basis_lab/bench.py`, scoring any basis-building
+callable the same way (Moler--Payne certified digits, with `n_basis` and wall time attached).
+
+**The measurement is a curve, not a score.** Different geometries converge differently in KIND:
+corner-centred FB can converge spectrally on a domain whose only singularity it is centred on,
+while several singular corners appear to prevent it. A fixed `n` cannot see that, and worse can
+rank two constructions differently depending which `n` was picked -- the first sweep here was
+run at a fixed n=160 and thrown away for exactly that reason. `classify_rate` fits exponential,
+root-exponential and algebraic models to digits(n), drops saturated points, and returns
+`flat-or-noisy` rather than naming the best of three bad fits.
+
+### The instrument is sound: Moler--Payne is not the floor
+
+Checked before anything was concluded from a curve, on the sector where truth is closed form:
+
+    n         8     12     16     24     32     48
+    MP      9.2   12.1    9.9   10.4   13.7   14.4
+    true    9.6   12.5   10.3   10.8   14.1    inf
+
+Within ~0.4 digits, slightly conservative, all the way to 14. So a plateau in a curve is a fact
+about the basis, not about the bound -- which is what makes the plateaus below worth chasing.
+
+### `fb_corner_orders` puts everything at the singular corners
+
+    sector(1.5pi)  angles/pi [1.5 0.5 0.5]        orders(n=64) [64  0  0]
+    L_shape        angles/pi [1.5 0.5 ...]        orders(n=64) [64  0 0 0 0 0]
+    plus_shape     four 1.5pi corners             orders(n=64) [16 x4, rest 0]
+
+Regular corners get NOTHING. So `pure_fb` on a one-singular-corner domain is exactly the
+classical setup, all terms about the singularity -- worth knowing before reading any FB curve,
+and it removes a confound I had assumed was there.
+
+### The circular sector is a DEGENERATE exemplar and must not be the one-corner test case
+
+    sector(1.5pi) pure_fb, digits:  8:9.6  12:12.5  16:10.3  24:10.8  32:14.1  48:inf  64:12.2
+
+Nine digits at n=8, and non-monotone thereafter. That is not a convergence curve; the FB terms
+about a circular sector's apex ARE its exact eigenfunctions, so the basis contains the solution
+and the residual variation is the eigenvalue search, not basis quality. It is the natural
+exact-truth domain and it answers nothing about rates. (Second trap of this kind in the same
+area: polyominoes are excluded for the opposite reason -- their closed-form eigenfunctions are
+smooth at every reentrant corner. Exact truth and an exercised singularity are hard to get at
+once, and that is the real obstacle to this study.)
+
+### What the honest cases show, provisionally
+
+    L_shape      1 singular  pure_fb   16:3.1  24:5.5  32:6.7  48:9.9  64:10.2   plateau ~10
+    plus_shape   4 singular  pure_fb   40:3.3  60:5.4  90:8.2 130:9.9 180:9.7 240:9.6  plateau ~9.7
+    plus_shape   4 singular  mixed     40:3.8  60:5.3  90:6.2 130:7.6 180:9.4 240:10.0  still rising
+
+Two things not to over-read. First, both `pure_fb` curves PLATEAU near 10 digits, and since the
+bound is good to 14 that plateau is real -- but whether it is the basis, the collocation
+defaults, or GSVD conditioning is unresolved, and until it is, no rate fitted through a
+plateauing curve means much. Second, on `plus_shape` the mixed branch is still climbing where
+pure FB has stopped, which is consistent with the constructor's multi-singular-corner branch
+being right, at sizes large enough to matter.
+
+**`chevron(1,2)` has FOUR singular corners, not one.** `make_default_basis` calls a corner
+singular when `pi/alpha` is non-integer, which includes very sharp CONVEX corners -- chevron's
+are 0.102pi and 0.295pi. That is a different notion from the quadrature's, where the same
+domain has one singular corner (nu=2/3, the reentrant one), and the two words do not name the
+same set. Worth keeping straight in anything that talks about both.
+
+### Next
+
+The plateau is the question, because it caps every construction measured so far and no rate
+claim survives it. Candidates: collocation ratio (`mult=2` default), regularization tolerance,
+interior-point count, or a genuine basis limit. It is cheap to separate -- vary each with the
+basis held fixed.
