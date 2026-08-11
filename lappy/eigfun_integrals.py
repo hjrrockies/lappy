@@ -886,6 +886,91 @@ def verify_gram(basis, lam, coef, bq, domain, x0=None, depth=2, smooth_order=48)
     return G, G_ref, float(np.abs(G - G_ref).max()/scale)
 
 
+CertifiedQuad = namedtuple('CertifiedQuad',
+                           ['bq', 'error', 'smooth_safety', 'certified', 'history'])
+# What `certified_quadrature` returns. `error` is the `verify_gram` measurement for `bq` -- the
+# certificate -- and `certified` says whether it met the target. `history` is the full
+# (safety, n_nodes, error) trace, so a caller that did not reach its target can see whether it
+# was close, plateauing, or getting worse.
+
+
+def certified_quadrature(domain, basis, lam, coef, lam_max, target=1e-12, precision=1e-13,
+                         safety_schedule=(1.0, 2.0, 3.0, 4.0, 6.0), x0=None, depth=2,
+                         smooth_order=48, stall_factor=2.0, warn=True, **kw):
+    """A node set whose accuracy on the ACTUAL integrand is measured, not modelled.
+
+    `boundary_quadrature` sizes from a model of the integrand's class; `verify_gram` measures
+    what a node set achieved on the integrand in hand. This closes the loop between them:
+    build, measure, escalate, stop when the measurement clears `target`.
+
+    **It escalates the sizing knob and REBUILDS; it does not refine in place.** That is not a
+    stylistic choice. `refine_quadrature` is the right reference for a measurement and the wrong
+    thing to adopt as the working rule: shrinking a corner panel hands the vacated piece to a
+    legendre rule that is still inside the singularity, and near the slit that loses ground.
+    Measured on the sector, exact eigenfunction, true error before and after one refinement:
+
+        alpha/pi     1.10      1.50      1.60      1.75      1.90
+        before    1.2e-14   1.3e-15   5.9e-12   3.3e-12   9.5e-10
+        after     9.4e-15   8.7e-15   3.9e-13   1.3e-10   4.9e-09
+
+    -- better at 1.6, forty times WORSE at 1.75. A loop that adopted the refinement would walk
+    backwards in exactly the regime that needs it. Rebuilding at a higher `smooth_safety`
+    instead means every candidate is independently sized and independently measured, and the
+    best measured one is what comes back (not merely the last).
+
+    `smooth_safety` is the knob because that is where the residual lives: the corner rules are
+    at their own ceiling well before the smooth panels are, and the smooth panels' true
+    requirement is set by the basis's pole placement, which the oscillation model cannot see.
+
+    ON THE STOPPING TEST. `verify_gram` reports the change across a refinement, which estimates
+    the error of the COARSER rule. Against exact truth on the sectors it tracked the true error
+    to within 6.3x and never under-reported by more -- good enough to stop on, not good enough
+    to quote as an error bar without margin. Ask for a `target` an order below what you need.
+
+    Where the reference is itself poor -- the near-slit corners above -- the measurement is
+    dominated by the reference's error and becomes PESSIMISTIC (38x at alpha=1.75pi), which is
+    the safe direction: such a domain will exhaust the schedule and return `certified=False`
+    rather than claim something it has not got. `stall_factor` cuts that short, abandoning the
+    escalation once more nodes stop buying at least that factor, since on a corner-limited
+    domain they never will.
+
+    COST. One `boundary_quadrature` build plus two basis evaluations per step, so a certified
+    build is a few times a plain one -- paid once per solve, not once per lam. It needs a
+    representative `lam` and `coef`, so certify at the top of the lam window and reuse the node
+    set across the window, which is what `lam_max` sizes for anyway.
+    """
+    best = CertifiedQuad(None, float('inf'), None, False, ())
+    history = []
+    for safety in safety_schedule:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')     # sizing shortfalls are not the certificate
+            bq = boundary_quadrature(domain, lam_max, precision=precision, x0=x0,
+                                     smooth_safety=safety, warn=False, **kw)
+        _, _, err = verify_gram(basis, lam, coef, bq, domain, x0=x0, depth=depth,
+                                smooth_order=smooth_order)
+        history.append((float(safety), len(bq.pts), float(err)))
+        if err < best.error:
+            improved = err < best.error/stall_factor
+            best = CertifiedQuad(bq, float(err), float(safety), err <= target, ())
+        else:
+            improved = False
+        if err <= target:
+            return best._replace(certified=True, history=tuple(history))
+        if len(history) > 1 and not improved:
+            # more nodes have stopped paying: a corner ceiling, not an under-resolved panel
+            break
+    if best.bq is None:
+        raise ValueError("safety_schedule is empty: nothing was built or measured")
+    best = best._replace(history=tuple(history))
+    if warn and not best.certified:
+        warnings.warn(
+            f"certified_quadrature did not reach target={target:.1e}: best measured "
+            f"{best.error:.2e} at smooth_safety={best.smooth_safety} on {len(best.bq.pts)} "
+            f"nodes. Trace (safety, nodes, error): {best.history}. A plateau here is a corner "
+            "ceiling rather than an under-resolved smooth panel -- more nodes will not fix it.")
+    return best
+
+
 def _both_ends_singular(specs, spec):
     """Does the segment leaving `spec`'s corner also END at an admissible singular corner?
     Such an edge must split, since a corner panel anchors at one endpoint only."""

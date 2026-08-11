@@ -1051,6 +1051,111 @@ def test_verify_gram_reports_zero_on_an_exactly_integrated_case():
     assert abs(G - G_ref) < 1e-13
 
 
+# ── The closed loop: certified_quadrature ────────────────────────────────────
+#
+# The sizing model on one side, `verify_gram` on the other, and until now nothing between them.
+# These tests cover the loop and, more importantly, the measurement that decided its shape:
+# refining in place is the obvious design and it is wrong.
+
+def _sector_true_and_refined(aop, precision=1e-13, depth=2, smooth_order=48):
+    """(true error, true error after one refine_quadrature) on an exactly normalized sector."""
+    dom, lam, u, g = sector_setup(aop, 1, 1)
+    x0 = 0.4 + 0.05j                              # 'generic': cancels no corner
+    bq = ei.boundary_quadrature(dom, lam, precision=precision, warn=False)
+    rq = ei.refine_quadrature(dom, bq, depth=depth, smooth_order=smooth_order)
+    before = abs(ei.gram(dirichlet_data(bq, g, u), lam, bq, x0)[0, 0] - 1.0)
+    after = abs(ei.gram(dirichlet_data(rq, g, u), lam, rq, x0)[0, 0] - 1.0)
+    return before, after
+
+
+def test_refining_in_place_loses_ground_near_the_slit():
+    """Why `certified_quadrature` rebuilds instead of refining. `refine_quadrature` shrinks a
+    corner panel and gives the vacated piece to a legendre rule that is still inside the
+    singularity; near the slit that costs more than the shrink buys. At alpha=1.75pi the true
+    error goes 3.3e-12 -> 1.3e-10 across one refinement.
+
+    It remains the right REFERENCE -- verify_gram only needs a rule that differs -- but adopting
+    it as the working rule would walk a loop backwards exactly where it is needed."""
+    before, after = _sector_true_and_refined(1.75)
+    assert after > 10*before, (before, after)
+
+    # and it is genuinely a near-slit effect, not a general property of refinement
+    b_mid, a_mid = _sector_true_and_refined(1.1)
+    assert a_mid <= 10*b_mid, (b_mid, a_mid)
+
+
+def test_verify_gram_estimate_tracks_the_true_error():
+    """The stopping test is only as good as this. On exactly normalized sectors the estimate
+    stayed within 6.3x of the true error and never under-reported by more, across nu from 2.0
+    down to 0.526 -- which is what makes it safe to stop on, given margin."""
+    x0 = 0.4 + 0.05j
+    worst_optimism = 0.0
+    for aop in (0.5, 2/3, 1.1, 1.25, 4/3, 1.5, 1.6, 1.75, 1.9):
+        dom, lam, u, g = sector_setup(aop, 1, 1)
+        bq = ei.boundary_quadrature(dom, lam, precision=1e-13, warn=False)
+        rq = ei.refine_quadrature(dom, bq, depth=2, smooth_order=48)
+        G = ei.gram(dirichlet_data(bq, g, u), lam, bq, x0)
+        G_ref = ei.gram(dirichlet_data(rq, g, u), lam, rq, x0)
+        true_err = abs(G[0, 0] - 1.0)
+        est = float(abs(G - G_ref).max()/max(abs(np.diag(G_ref)).max(), np.finfo(float).tiny))
+        worst_optimism = max(worst_optimism, true_err/max(est, 1e-18))
+    assert worst_optimism < 20.0, worst_optimism
+
+
+def _mps_case(dom, n_basis=200):
+    from lappy import bases, bounds
+    from lappy.mps import MPSEigensolver, weyl_est
+    basis = bases.make_default_basis(dom, n_basis)
+    solver = MPSEigensolver.from_domain(dom, basis=basis)
+    out = solver.solve_interval(bounds.faber_krahn(dom), weyl_est(2, dom), 20)
+    eigs = np.atleast_1d(np.asarray(out[0] if isinstance(out, tuple) else out)).ravel()
+    lam = float(eigs[0])
+    return basis, solver, lam, solver.eigenfunction_coef(lam, mult=1), weyl_est(2, dom)
+
+
+def test_certified_quadrature_closes_a_gap_the_sizing_model_misses():
+    """The point of the loop, on a domain where the model and the measurement disagree:
+    chevron(1,2) is sized at 1e-13 and measures 9.1e-12 as the solver builds it. Escalating to
+    smooth_safety=3 brings it to 1.8e-13 for 1.5x the nodes."""
+    dom = chevron(1, 2)
+    basis, solver, lam, coef, lam_max = _mps_case(dom)
+    _, _, baseline = ei.verify_gram(basis, lam, coef, solver.bdry_quad, dom)
+    assert baseline > 1e-12, f"baseline {baseline:.2e}: this domain no longer shows the gap"
+
+    out = ei.certified_quadrature(dom, basis, lam, coef, lam_max, target=1e-12)
+    assert out.certified, out.history
+    assert out.error <= 1e-12
+    assert out.error < baseline/10
+    assert out.smooth_safety > 1.0, "expected escalation to be what fixed it"
+
+
+def test_certified_quadrature_reports_failure_rather_than_claiming_it():
+    """An unreachable target must come back `certified=False`, with the trace, the best rule
+    actually measured (not the last one tried), and a warning -- never a silent claim."""
+    dom = L_shape()
+    basis, solver, lam, coef, lam_max = _mps_case(dom)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        out = ei.certified_quadrature(dom, basis, lam, coef, lam_max, target=1e-18)
+    assert not out.certified
+    assert np.isfinite(out.error) and out.error > 1e-18
+    assert out.error == min(e for _, _, e in out.history), 'must return the BEST, not the last'
+    assert any('did not reach target' in str(w.message) for w in caught)
+
+
+def test_certified_quadrature_stops_escalating_once_nodes_stop_paying():
+    """A corner-limited domain must not burn the whole schedule. The stall test abandons the
+    escalation as soon as more nodes stop buying `stall_factor`, so the cost of an unreachable
+    target stays bounded."""
+    dom = L_shape()
+    basis, solver, lam, coef, lam_max = _mps_case(dom)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        out = ei.certified_quadrature(dom, basis, lam, coef, lam_max, target=1e-18,
+                                      safety_schedule=(1.0, 2.0, 3.0, 4.0, 6.0))
+    assert len(out.history) < 5, out.history
+
+
 # ── The parametrization, not the eigenfunction ───────────────────────────────
 #
 # `int (r.N) ds = 2|Omega|` by the divergence theorem: a closed form involving no
