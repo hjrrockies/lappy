@@ -2961,3 +2961,38 @@ single panel at the reentrant corner and failed. A corner has one panel on each 
 and at chevron(2,3) the same corner at the same order measures 5.2e-10 on one and 5.2e-14 on
 the other. A test looking at one of them could have reported either story; the bar is the worst
 of the panels.
+
+## Correction: "cap the corner order near the slit" was a lam=1 artifact
+
+The previous entry closed with a recommendation -- that `corner_order_for_precision` picks the
+wrong side of the accuracy optimum for near-slit corners, since order 32 beat the chosen 64 on
+both accuracy and node count, and called it the next cheap win. **It is wrong, and no code
+changed.** Recording it because the recommendation is in the previous entry and in a commit
+message, and because the mistake is the same species as the two already logged here.
+
+Every measurement behind it was taken with `boundary_quadrature(dom, lam_max=1.0)`. A corner
+order serves two demands: resolving the singular exponent family, and resolving oscillation at
+wavenumber `k`. At lam=1 there is no oscillation, so only the first is exercised, and the
+saturation point sits early. It moves right, fast, with lam -- true optimum order, measured
+against closed-form truth on the same panels:
+
+                              lam=1   lam=100   lam=1000
+    chevron(2,3)   nu=0.587      24        88        128
+    chevron(0.5,3) nu=0.772      40       128        128
+
+At lam=100 the chosen order of 64 is if anything too LOW, and a fixed cap at 32-40 would have
+been a clear regression on every domain in the suite, which runs lam into the hundreds. The
+model's disagreement with the truth is still real -- the model error falls monotonically to
+1e-16 while the true error saturates and then degrades -- but the fix is not a cap, and the
+"more nodes AND less accuracy" framing only holds below the saturation point's own lam.
+
+What survives at every lam: the near-slit ceiling itself (~1e-9 to 1e-10 at nu ~ 0.56-0.59,
+whatever the order), and the degradation PAST the optimum wherever the optimum happens to sit.
+`tests/test_eigfun_integrals.py::test_leg3b_more_order_does_not_rescue_a_near_slit_corner_at_low_k`
+is renamed accordingly and carries the table, so the qualifier cannot go missing again.
+
+**Method note, fourth of its kind.** The first three were: mpmath.quad as truth, a monkeypatched
+before/after, and a geometrically-damped series at large nu. This is the same shape --
+measuring in a regime that is not the operating regime and generalizing. The tell was available
+before the measurement: `_score_corner_panels` hardcodes `lam_max=1.0`, and nothing in the
+suite runs at lam=1. Ask what the harness holds FIXED before reading a curve off it.

@@ -666,15 +666,26 @@ def test_leg3b_near_slit_cornerinterp_has_a_ceiling_and_says_so():
     assert any('could not size for' in str(w.message) for w in caught)
 
 
-def test_leg3b_more_order_does_not_rescue_a_near_slit_corner():
-    """The lever that does NOT work, and the reason the order cap is load-bearing rather than
-    arbitrary. Raising the order past `corner_order_for_precision`'s cap makes this corner
-    WORSE, monotonically: 9.5e-11 at order 32 against 1.2e-08 at 128. The weights stay positive
-    and sum|w| is unchanged, so this is not the weight blow-up that killed `cornerinterp` on the
-    dense exponent set -- it is accuracy loss in the interpolatory solve itself.
+def test_leg3b_more_order_does_not_rescue_a_near_slit_corner_at_low_k():
+    """Raising the order past `corner_order_for_precision`'s choice makes this corner WORSE:
+    9.5e-11 at order 32 against 1.2e-08 at 128. The weights stay positive and sum|w| is
+    unchanged, so this is not the weight blow-up that killed `cornerinterp` on the dense
+    exponent set -- it is accuracy loss in the interpolatory solve itself. Controls at
+    nu = 0.888 and nu = 0.772 stay flat to order 192, so it is specific to the near-slit regime.
 
-    Controls at nu = 0.888 and nu = 0.772 stay flat to order 192, so the effect is specific to
-    the near-slit regime and is not a general high-order defect."""
+    **AT THIS lam_max, WHICH IS 1.** That qualifier is the whole content of the test's name and
+    was missing when it was written. The corner order serves two demands -- resolving the
+    singular exponent family and resolving oscillation at wavenumber k -- and `_score_corner_
+    panels` builds at `lam_max=1`, which exercises only the first. The saturation point moves
+    right, fast, with lam:
+
+        true optimum order      lam=1    lam=100   lam=1000
+        chevron(2,3)   nu=0.587    24         88        128
+        chevron(0.5,3) nu=0.772    40        128        128
+
+    So this must NOT be read as "cap the corner order" -- at realistic lam the model's choice is
+    if anything too low, and a fixed cap would be a regression. What survives at every lam is
+    the ceiling itself and the degradation PAST the optimum, wherever the optimum sits."""
     dom = chevron(2, 3)
 
     def at(order):
