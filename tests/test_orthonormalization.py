@@ -356,3 +356,91 @@ def test_orthonormal_eigenfunction_matches_interior_cubature():
     nodes, weights = cubature.polygon_cubature(dom, eig, 1e-12)
     u = (solver.basis(eig, nodes)@coef)[:, 0]
     assert la.norm(u*np.sqrt(weights)) == pytest.approx(1.0, abs=1e-8)
+
+
+# ── Lazy certification: the sizing model checked against the actual integrand ──
+#
+# `orthonorm_precision` sizes the rule from a model of the integrand's class. What the rule
+# achieves on the integrand in hand is a different number, and on chevron(1,2) the two differ by
+# two orders. These cover the lazy path that reports it, and the invariant that it only ever
+# reports -- resizing under a caller who asked for a solve is what `certified_quadrature` is
+# for, called deliberately.
+
+def _chevron_solver(**kw):
+    dom = geometry.chevron(1, 2)
+    basis = bases.make_default_basis(dom, 200)
+    solver = MPSEigensolver.from_domain(dom, basis=basis, **kw)
+    out = solver.solve_interval(bounds.faber_krahn(dom), mps_mod.weyl_est(2, dom), 20)
+    eigs = np.atleast_1d(np.asarray(out[0] if isinstance(out, tuple) else out)).ravel()
+    return dom, solver, float(eigs[0])
+
+
+def test_certification_is_off_by_default_and_costs_nothing():
+    """The default path must be byte-for-byte the old one: no domain use, no extra basis
+    evaluation, no certification recorded."""
+    dom, solver, lam = _chevron_solver()
+    solver.eigenfunction_coef(lam, mult=1)
+    assert solver.certifications == {}
+
+
+def test_certify_gram_measures_what_sizing_only_models():
+    """The gap, on the production path: sized for 1e-13, measures ~3.7e-11."""
+    dom, solver, lam = _chevron_solver()
+    err = solver.certify_gram(lam)
+    assert err > 10*solver.bdry_quad.sizing_precision, (err, solver.bdry_quad.sizing_precision)
+    assert solver.certifications[(lam, 1)] == err
+
+
+def test_certify_target_warns_lazily_without_changing_the_answer():
+    """The lazy path fires during normalization and warns -- and changes nothing else.
+
+    Tested by toggling the flag on ONE solver rather than comparing two: `make_default_int_pts`
+    is random by default, so two independently built solvers have different interior points and
+    legitimately different coefficients. (`mesh=True` would make them comparable but takes
+    minutes on this domain.) The invariant that matters is exactly this one: the same solver,
+    the same eigenvalue, the same transform, with and without the hook."""
+    dom, solver, lam = _chevron_solver()
+    bq_before = solver.bdry_quad
+    D0, G0 = solver._orthonorm_transform_coef(lam, 1)
+    assert solver.certifications == {}
+
+    # the transform is instance-cached, so the second call would never reach the hook; drop
+    # that one cache entry (name derived, not hardcoded) so both paths really execute
+    solver.__dict__.pop(
+        f'_icache_{MPSEigensolver._orthonorm_transform_coef.__qualname__.replace(".", "_")}',
+        None)
+    solver._certify_target = 1e-12
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        D1, G1 = solver._orthonorm_transform_coef(lam, 1)
+
+    assert solver.certifications, 'lazy certification did not run'
+    assert any('is short at lam' in str(w.message) for w in caught)
+    np.testing.assert_array_equal(D0, D1)
+    np.testing.assert_array_equal(G0, G1)
+    assert solver.bdry_quad is bq_before, 'certification must report, never resize'
+
+
+def test_certify_target_is_silent_when_the_rule_is_good_enough():
+    dom, solver, lam = _chevron_solver(certify_target=1e-8)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        solver.eigenfunction_coef(lam, mult=1)
+    assert solver.certifications
+    assert not any('is short at lam' in str(w.message) for w in caught)
+
+
+def test_certification_needs_the_domain_and_says_so():
+    """The solver has no notion of a domain by design; `_domain` exists only because
+    refine_quadrature needs a segment's p/N/T, which a materialized BoundaryQuad cannot give.
+    A hand-built solver must get a clear error, not an AttributeError."""
+    domain = Polygon(RECT_VERTS, bc='dir')
+    basis = FourierBesselBasis.from_domain(domain, orders=[8, 8, 8, 8])
+    bdry_pts, bdry_normals, bc_param = make_default_bdry_data(domain, basis)
+    int_pts = make_default_int_pts(domain, 'random', False, len(basis))
+    basis_norm = basis.to_normalized((bdry_pts, int_pts))
+    bq = boundary_quadrature(domain, rect_eig(3, 3, L, H))
+    solver = MPSEigensolver(basis_norm, bdry_pts, int_pts, bdry_normals, bc_param,
+                            bdry_quad=bq)
+    with pytest.raises(ValueError, match='needs the domain'):
+        solver.certify_gram(rect_eig(1, 2, L, H))

@@ -7,7 +7,7 @@ from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBa
 from .cubature import polygon_cubature
 from .asymp import weyl_est
 from .eigfun_integrals import (boundary_quadrature, EigfunData, gram as eigfun_gram,
-                               lowdin_transform)
+                               lowdin_transform, refine_quadrature)
 
 from .cache import instance_lru_cache
 import numpy as np
@@ -225,7 +225,7 @@ def make_ddiff_vander(basis, pts, vecs, wts=None):
 class MPSEigensolver(BaseEigensolver):
     def __init__(self, basis, bdry_pts, int_pts, bdry_normals=None, bc_param=0,
                  reg_type='svd', rtol=rtol_default, ttol=ttol_default, ltol=ltol_default,
-                 bdry_quad=None):
+                 bdry_quad=None, domain=None, certify_target=None):
 
         self.basis = basis
         self.bdry_pts = bdry_pts
@@ -254,6 +254,15 @@ class MPSEigensolver(BaseEigensolver):
         # coefficients with a warning).
         self._bdry_quad = bdry_quad
 
+        # Lazy certification (see certify_gram). `_domain` is the ONE place this class knows
+        # about a domain, and it is optional and used for nothing else: `refine_quadrature`
+        # needs a segment's p/N/T to build the comparison rule, and a materialized BoundaryQuad
+        # cannot supply them. Absent (manual construction), certification is simply unavailable
+        # and everything else behaves exactly as before.
+        self._domain = domain
+        self._certify_target = certify_target
+        self._certifications = {}
+
     @property
     def bdry_quad(self):
         """The corner-adapted boundary quadrature backing L^2-orthonormalization (see
@@ -278,7 +287,8 @@ class MPSEigensolver(BaseEigensolver):
     @classmethod
     def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False,
                     reg_type='svd', rtol=rtol_default, ttol=ttol_default,
-                    orthonorm=True, orthonorm_precision=1e-13, orthonorm_x0=None):
+                    orthonorm=True, orthonorm_precision=1e-13, orthonorm_x0=None,
+                    certify_target=None):
         """Builds a solver for `domain`, including (by default) the corner-adapted boundary
         quadrature that makes `eigenfunction_coef` return L^2-orthonormal eigenfunctions with
         no further configuration.
@@ -286,7 +296,12 @@ class MPSEigensolver(BaseEigensolver):
         `orthonorm_precision` is the only accuracy knob: the quadrature sizes itself from the
         domain's geometry, `lam_max` and that target (eigfun_integrals.boundary_quadrature).
         It needs no basis and has no grading orders, point-count multipliers or Nyquist
-        constants to set. Pass `orthonorm=False` to skip building it."""
+        constants to set. Pass `orthonorm=False` to skip building it.
+
+        `orthonorm_precision` SIZES the rule; it does not certify it. Pass `certify_target` to
+        measure what the rule achieves on each eigenfunction as it is normalized, warning when
+        the measurement is short (see `certify_gram`). It is off by default because it costs an
+        extra basis evaluation per eigenvalue, and it reports rather than resizes."""
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
         if lam_max is None:
@@ -324,7 +339,7 @@ class MPSEigensolver(BaseEigensolver):
                                                 x0=orthonorm_x0)
 
         return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec,
-                   bdry_quad=bdry_quad)
+                   bdry_quad=bdry_quad, domain=domain, certify_target=certify_target)
         
     def _get_params(self, reg_type=None, rtol=None, ttol=None, ltol=None):
         """Helper to resolve parameters against instance defaults"""
@@ -396,7 +411,76 @@ class MPSEigensolver(BaseEigensolver):
         U_T = self.basis.ddiff(eig, bq.pts, bq.tangents) @ coef
         ed = EigfunData(bq.pts, bq.normals, bq.tangents, bq.wts, U, U_N, U_T)
         G = eigfun_gram(ed, eig, bq)
+        if self._certify_target is not None:
+            self.certify_gram(eig, mult, reg_type, rtol, ttol, G=G)
         return lowdin_transform(G), G
+
+    def certify_gram(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, target=None,
+                     G=None, depth=2, smooth_order=48):
+        """What the boundary rule ACHIEVED on this eigenfunction, measured not modelled.
+
+        `bdry_quad.sizing_precision` is the model bound that chose the orders; this recomputes
+        the Rellich Gram on a refined rule and reports the largest entrywise change, relative to
+        the diagonal (eigfun_integrals.verify_gram). It is the certificate, and it can differ
+        from the sizing by orders -- chevron(1,2) is sized at 1e-13 and measures 9.1e-12.
+
+        Set `certify_target` at construction to run this automatically whenever
+        `eigenfunction_coef` normalizes, warning when the measurement is short. It is OFF by
+        default because it is not free: one refined-rule build plus one basis evaluation at
+        roughly five times the nodes, per eigenvalue. The Gram itself is reused from the
+        orthonormalization that was happening anyway, so the marginal cost is the reference
+        rule, not both sides of the comparison -- but in a shape-optimization inner loop that
+        is still a real cost, and the caller should decide when to pay it.
+
+        This does NOT resize the quadrature. A short measurement is reported, never silently
+        fixed: escalating would change node counts underneath a caller who asked for a solve.
+        `eigfun_integrals.certified_quadrature` is the escalating version, to be called
+        deliberately with a target.
+
+        Returns the measured error. Results are cached per (eig, mult) and readable afterwards
+        via `certifications`."""
+        if self._bdry_quad is None:
+            raise ValueError("no bdry_quad: nothing to certify")
+        if self._domain is None:
+            raise ValueError("certification needs the domain the quadrature was built for; "
+                             "construct via from_domain, or pass domain= to __init__")
+        key = (float(eig), int(mult))
+        if key in self._certifications:
+            return self._certifications[key]
+
+        bq = self._bdry_quad
+        coef = self._nullspace_coef_raw(eig, mult, reg_type, rtol, ttol)
+        if G is None:
+            U = self.basis(eig, bq.pts) @ coef
+            U_N = self.basis.ddiff(eig, bq.pts, bq.normals) @ coef
+            U_T = self.basis.ddiff(eig, bq.pts, bq.tangents) @ coef
+            G = eigfun_gram(EigfunData(bq.pts, bq.normals, bq.tangents, bq.wts, U, U_N, U_T),
+                            eig, bq)
+        bq_ref = refine_quadrature(self._domain, bq, depth=depth, smooth_order=smooth_order)
+        U = self.basis(eig, bq_ref.pts) @ coef
+        U_N = self.basis.ddiff(eig, bq_ref.pts, bq_ref.normals) @ coef
+        U_T = self.basis.ddiff(eig, bq_ref.pts, bq_ref.tangents) @ coef
+        G_ref = eigfun_gram(
+            EigfunData(bq_ref.pts, bq_ref.normals, bq_ref.tangents, bq_ref.wts, U, U_N, U_T),
+            eig, bq_ref)
+        scale = max(np.abs(np.diag(G_ref)).max(), np.finfo(float).tiny)
+        err = float(np.abs(G - G_ref).max()/scale)
+        self._certifications[key] = err
+
+        tgt = self._certify_target if target is None else target
+        if tgt is not None and err > tgt:
+            warnings.warn(
+                f"boundary quadrature is short at lam={eig:.10g}: measured {err:.2e} against "
+                f"target {tgt:.1e} on {len(bq.pts)} nodes (sized for "
+                f"{bq.sizing_precision:.1e}). The node set is unchanged -- use "
+                f"eigfun_integrals.certified_quadrature to build one that meets a target.")
+        return err
+
+    @property
+    def certifications(self):
+        """Every certify_gram measurement so far, keyed by (eig, mult). Empty unless
+        `certify_target` was set or `certify_gram` was called."""
+        return dict(self._certifications)
 
     @instance_lru_cache(maxsize=64)
     def eigenfunction_coef(self, eig, mult=1, reg_type=None, rtol=None, ttol=None, orthonorm=True):
