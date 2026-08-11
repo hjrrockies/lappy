@@ -1039,19 +1039,30 @@ def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam
     global RNG, so callers relying on `np.random.seed` are unaffected. The draw genuinely moves
     the answer -- `iso_right_tri` spanned 2.5 to 5.8 certified digits across draws -- so
     anything producing reference values, or any comparison between two solver builds, should
-    pass one. `kind='mesh'` is deterministic and ignores it."""
+    pass one. `kind='mesh'` is deterministic and ignores it.
+
+    Curved domains use `Domain.int_pts`, which handles both kinds -- rejection sampling against
+    `contains` for 'random', a curvature-adapted spline mesh for 'mesh'. This used to raise a
+    bare `NotImplementedError` for anything that was not a `Polygon`, which is what kept every
+    curved domain out of the solver entirely: `ellipse_a4` and `stadium` could not be built at
+    all, so the smooth-panel plateau measured on them was never reachable through
+    `from_domain`. Only the mesh branch is polygon-specific, and only because
+    `polygon_cubature` is the better rule where it applies.
+
+    A warning about 'mesh' on a curved domain: the point count comes from the mesh resolution,
+    not from the basis size, and runs to 1.9e4 on a unit disk against the ~50 a random draw
+    gives. That is a cubature-grade node set being used for collocation. It works, it is
+    deterministic, and it is usually not what you want for an MPS solve."""
+    if kind not in ('random', 'mesh'):
+        raise ValueError(f"kind must be 'random' or 'mesh', got {kind!r}")
+    if kind == 'random':
+        return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand, rng=rng)
     if isinstance(domain, Polygon):
-        if kind == 'random':
-            return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand,
-                                  rng=rng)
-        elif kind == 'mesh':
-            if lam_max is None:
-                lam_max = weyl_est(6, domain)
-            nodes, weights = polygon_cubature(domain, lam_max, prec)
-            if weights:
-                int_pts = PointSet(nodes, weights)
-            else:
-                int_pts = PointSet(nodes)
-            return int_pts
-    else:
-        raise NotImplementedError
+        if lam_max is None:
+            lam_max = weyl_est(6, domain)
+        # `wts`, NOT `weights`: rebinding the parameter here made `if weights:` a truth test on
+        # a numpy array, so this branch raised "truth value of an array is ambiguous" for BOTH
+        # values of the flag. kind='mesh' has therefore never worked, on any domain.
+        nodes, wts = polygon_cubature(domain, lam_max, prec)
+        return PointSet(nodes, wts) if weights else PointSet(nodes)
+    return domain.int_pts(method='mesh', weights=weights)

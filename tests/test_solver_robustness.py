@@ -202,3 +202,55 @@ def test_convergence_tests_default_draw_is_unchanged():
     expected = dom.int_pts(npts_rand=30).pts
     solver = ct.make_solver(dom, 30, 0, 0, {'d': 0.1}, {'C': 1.0, 'sigma': 1.0})
     assert np.array_equal(solver.int_pts.pts[:len(expected)], expected[:len(solver.int_pts.pts)])
+
+
+# --- 5. curved domains reach the solver at all -----------------------------
+
+def test_make_default_int_pts_handles_curved_domains():
+    """`make_default_int_pts` raised a bare NotImplementedError for anything that was not a
+    Polygon, which kept every curved domain out of MPSEigensolver.from_domain entirely --
+    ellipse_a4 and stadium could not be built, so the smooth-panel plateau measured on them was
+    unreachable through the solver. Domain.int_pts handled both kinds all along."""
+    from lappy.mps import make_default_int_pts
+    for dom in (G.ellipse(4, 1), G.stadium(1, 1), G.disk(1)):
+        pts = make_default_int_pts(dom, 'random', npts_rand=30, rng=3)
+        assert len(pts.pts) == 30
+        assert np.all(dom.contains(pts.pts))
+
+
+@pytest.mark.parametrize('weights', [False, True])
+@pytest.mark.parametrize('dom,label', [(G.L_shape(), 'Polygon'), (G.ellipse(4, 1), 'curved')])
+def test_mesh_int_pts_does_not_raise_on_an_array_truth_test(dom, label, weights):
+    """`kind='mesh'` rebound its own `weights` parameter to the cubature weight ARRAY and then
+    tested `if weights:`, so it raised "truth value of an array is ambiguous" for both values of
+    the flag. It had therefore never worked, on any domain."""
+    from lappy.mps import make_default_int_pts
+    pts = make_default_int_pts(dom, 'mesh', weights=weights, lam_max=100.0)
+    assert len(pts.pts) > 0
+    # PointSet only HAS a .wts attribute when it was built with weights
+    assert hasattr(pts, 'wts') == weights, f'{label}: weights flag ignored'
+
+
+def test_make_default_int_pts_rejects_an_unknown_kind():
+    from lappy.mps import make_default_int_pts
+    with pytest.raises(ValueError, match="'random' or 'mesh'"):
+        make_default_int_pts(G.L_shape(), 'nonsense')
+
+
+@pytest.mark.slow
+def test_disk_solves_end_to_end_against_exact_bessel_eigenvalues():
+    """The acceptance test for the above: a curved domain through the full default pipeline,
+    checked against closed-form truth (squared Bessel zeros). This could not run at all before
+    -- from_domain raised NotImplementedError building the interior points."""
+    sp = pytest.importorskip('scipy.special')
+    from lappy import bases
+    from lappy.mps import MPSEigensolver, weyl_est
+    dom = G.disk(1)
+    solver = MPSEigensolver.from_domain(dom, basis=bases.make_default_basis(dom, 120), rng=7)
+    out = solver.solve_interval(bounds.faber_krahn(dom), weyl_est(2, dom), 20)
+    eigs = np.atleast_1d(np.asarray(out[0] if isinstance(out, tuple) else out)).ravel()
+    assert len(eigs) >= 2, eigs
+
+    exact = np.sort(np.concatenate([sp.jn_zeros(m, 3)**2 for m in range(4)]))
+    for computed in eigs[:2]:
+        assert np.min(np.abs(exact - computed)/computed) < 1e-6, computed
