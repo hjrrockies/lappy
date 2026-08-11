@@ -1052,7 +1052,25 @@ def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam
     A warning about 'mesh' on a curved domain: the point count comes from the mesh resolution,
     not from the basis size, and runs to 1.9e4 on a unit disk against the ~50 a random draw
     gives. That is a cubature-grade node set being used for collocation. It works, it is
-    deterministic, and it is usually not what you want for an MPS solve."""
+    deterministic, and it is usually not what you want for an MPS solve.
+
+    WHY 'mesh' EXISTS, since nothing in the default path asks for it. It was built when interior
+    cubature was believed to be the way to L^2-orthonormalize eigenfunctions. It is not --
+    orthonormalization goes through the boundary-only Rellich identity (`eigfun_integrals`), and
+    these points are collocation points for the MPS pencil, a different job entirely.
+
+    Its remaining mechanism is on the same trajectory. `weights=True` gives the PointSet a
+    `sqrt_wts`, which `bases` applies to every Vandermonde it builds, making the pencil a
+    quadrature-weighted least-squares problem rather than plain collocation -- but that existed
+    to let tension evaluation approximate L^2 norms on the boundary and interior, which the
+    tension pipeline no longer needs in order to be reliable. So both the original motivation
+    and the weighting it feeds are superseded, `weights=False` is the default everywhere, and
+    every `sqrt_wts` consumer sits behind a `hasattr(pts, 'wts')` guard that is False in the
+    default path.
+
+    Kept anyway: it is optional, it costs nothing when unused, and 'mesh' remains the only
+    deterministic interior draw that does not go through `rng`. Treat it as a working capability
+    with no current caller, not as load-bearing."""
     if kind not in ('random', 'mesh'):
         raise ValueError(f"kind must be 'random' or 'mesh', got {kind!r}")
     if kind == 'random':
