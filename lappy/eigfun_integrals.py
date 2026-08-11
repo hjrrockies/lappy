@@ -931,7 +931,7 @@ CertifiedQuad = namedtuple('CertifiedQuad',
 
 def certified_quadrature(domain, basis, lam, coef, lam_max, target=1e-12, precision=1e-13,
                          safety_schedule=(1.0, 2.0, 3.0, 4.0, 6.0), x0=None, depth=2,
-                         smooth_order=48, stall_factor=2.0, warn=True, **kw):
+                         smooth_order=48, stall_factor=2.0, patience=2, warn=True, **kw):
     """A node set whose accuracy on the ACTUAL integrand is measured, not modelled.
 
     `boundary_quadrature` sizes from a model of the integrand's class; `verify_gram` measures
@@ -969,6 +969,12 @@ def certified_quadrature(domain, basis, lam, coef, lam_max, target=1e-12, precis
     escalation once more nodes stop buying at least that factor, since on a corner-limited
     domain they never will.
 
+    `patience` is why that cutoff needs two strikes rather than one. Convergence in
+    `smooth_safety` is NOT monotone -- on a disk it goes 7.1e-10, 6.4e-11, 4.6e-10, and then
+    5.2e-15 at safety=4. A one-strike rule quits at the 4.6e-10 and reports `certified=False`
+    one step before the answer, which is exactly what the first version of this function did.
+    The cost of patience on a genuinely corner-limited domain is one extra build.
+
     COST. One `boundary_quadrature` build plus two basis evaluations per step, so a certified
     build is a few times a plain one -- paid once per solve, not once per lam. It needs a
     representative `lam` and `coef`, so certify at the top of the lam window and reuse the node
@@ -976,6 +982,7 @@ def certified_quadrature(domain, basis, lam, coef, lam_max, target=1e-12, precis
     """
     best = CertifiedQuad(None, float('inf'), None, False, ())
     history = []
+    stalls = 0
     for safety in safety_schedule:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')     # sizing shortfalls are not the certificate
@@ -984,14 +991,12 @@ def certified_quadrature(domain, basis, lam, coef, lam_max, target=1e-12, precis
         _, _, err = verify_gram(basis, lam, coef, bq, domain, x0=x0, depth=depth,
                                 smooth_order=smooth_order)
         history.append((float(safety), len(bq.pts), float(err)))
+        stalls = 0 if err < best.error/stall_factor else stalls + 1
         if err < best.error:
-            improved = err < best.error/stall_factor
             best = CertifiedQuad(bq, float(err), float(safety), err <= target, ())
-        else:
-            improved = False
         if err <= target:
             return best._replace(certified=True, history=tuple(history))
-        if len(history) > 1 and not improved:
+        if stalls >= patience:
             # more nodes have stopped paying: a corner ceiling, not an under-resolved panel
             break
     if best.bq is None:

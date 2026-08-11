@@ -1154,6 +1154,44 @@ def test_certified_quadrature_reports_failure_rather_than_claiming_it():
     assert any('did not reach target' in str(w.message) for w in caught)
 
 
+def test_certified_quadrature_survives_non_monotone_convergence():
+    """A one-strike stall rule quits one step before the answer, and the disk is the case that
+    shows it -- the simplest domain in the library, and the only one of four that failed.
+
+        safety=1   28 nodes   7.1e-10
+        safety=2   44 nodes   6.4e-11
+        safety=3   58 nodes   4.6e-10     <- a one-strike rule stops here, reports FAILURE
+        safety=4   74 nodes   5.8e-15     <- certified
+
+    The estimate is not at fault: it is 1.803e-10 for the baseline rule at every reference
+    strength from depth=2/order=48 through depth=5/order=128. Convergence in `smooth_safety` is
+    genuinely not monotone, so the cutoff needs `patience`."""
+    from lappy import bases, bounds
+    from lappy.geometry import disk
+    from lappy.mps import MPSEigensolver, weyl_est
+    dom = disk(1)
+    basis = bases.make_default_basis(dom, 120)
+    solver = MPSEigensolver.from_domain(dom, basis=basis, rng=7)
+    lam_max = weyl_est(2, dom)
+    out = solver.solve_interval(bounds.faber_krahn(dom), lam_max, 20)
+    eigs = np.atleast_1d(np.asarray(out[0] if isinstance(out, tuple) else out)).ravel()
+    lam = float(eigs[0])
+    coef = solver.eigenfunction_coef(lam, mult=1)
+
+    out = ei.certified_quadrature(dom, basis, lam, coef, lam_max, target=1e-12)
+    assert out.certified, out.history
+    assert out.error < 1e-13, out.error
+
+    errs = [e for _, _, e in out.history]
+    assert any(b > a for a, b in zip(errs, errs[1:])), \
+        'this domain is supposed to converge non-monotonically; it no longer does'
+
+    # and one strike would indeed have failed
+    one_strike = ei.certified_quadrature(dom, basis, lam, coef, lam_max, target=1e-12,
+                                         patience=1, warn=False)
+    assert not one_strike.certified
+
+
 def test_certified_quadrature_stops_escalating_once_nodes_stop_paying():
     """A corner-limited domain must not burn the whole schedule. The stall test abandons the
     escalation as soon as more nodes stop buying `stall_factor`, so the cost of an unreachable
