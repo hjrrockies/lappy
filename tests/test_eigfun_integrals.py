@@ -38,7 +38,7 @@ import numpy as np
 import pytest
 
 from lappy import reference as ref
-from lappy.geometry import disk_sector, L_shape, H_shape, rect
+from lappy.geometry import disk_sector, L_shape, H_shape, rect, chevron
 from lappy.utils import complex_dot
 from lappy import eigfun_integrals as ei
 
@@ -343,7 +343,15 @@ def test_default_x0_lands_on_a_singular_corner_when_there_is_one():
 def _corner_series(nu, L, n_terms=4, seed=0, at_end=False):
     """A genuine member of the class: sum_j a_j s^(j*nu + nu - 1), even offsets only, with
     geometrically decaying amplitudes (an undamped series would be dominated by high-order
-    terms no eigenfunction contains). `at_end` mirrors it to be singular at s=L instead."""
+    terms no eigenfunction contains). `at_end` mirrors it to be singular at s=L instead.
+
+    ONLY VALID FOR nu = O(1) -- use `_bessel_corner_series` at a sharp convex corner. The 0.4^j
+    damping is a stand-in for the expansion's true 1/Gamma(k nu + q + 1), and the two part
+    company badly once nu is large: at nu = 22 this model's exponents run 21, 43, 65, 87 with
+    O(1) amplitudes, giving a squared integrand of degree 174, where the physical amplitude of
+    the k=1 term alone is ~1e-21. Scoring a corner rule against it there measures the model,
+    not the rule -- it reported 1.7e-02 at a corner the physical series integrates to 4.4e-16.
+    Harmless for L_shape and H_shape, whose corners are all nu = 2/3."""
     rng = np.random.default_rng(seed)
     terms = [(rng.uniform(0.5, 1.5)*0.4**j, j*nu + nu - 1.0) for j in range(n_terms)]
     return terms, at_end
@@ -493,6 +501,251 @@ def test_leg3_reference_is_closed_form_not_quadrature():
 
 
 from math import lgamma  # noqa: E402  (used by the reference guard above)
+
+
+# ── Leg 3b: the SAME dense family at a `cornerinterp` corner ──────────────────
+#
+# Leg 3 above certifies the dense corner series -- but only ever at nu = 2/3 on a straight edge,
+# which `quad.corner_rule_spec` routes to 'cornerjac'. That rule is the exception: it is chosen
+# only for a straight edge whose 2/nu is an integer, which among reentrant angles is essentially
+# alpha = 3pi/2 alone. EVERY other corner -- any non-right polygon angle, every curved edge --
+# runs 'cornerinterp', and until this section that rule had been measured only against Leg 1's
+# sector eigenfunction, a SPARSE single Bessel mode. The dense multi-term family it actually
+# meets on a generic domain was untested. `chevron(h1, h2)` supplies it: a nonconvex quadrilateral
+# whose reentrant nu varies continuously with the parameters, on straight edges throughout, so
+# the corner series {j nu + nu - 1} remains exactly the right class and the reference stays
+# closed form.
+
+def _bessel_corner_series(nu, L, n_k=3, n_q=3, lam=1.0, seed=0, at_end=False):
+    """A class member with the expansion's OWN amplitudes, not a geometric stand-in.
+
+        un(s) = sum_k c_k nu_k J_{k nu}(sqrt(lam) s)/s,
+        J_{k nu}(z) = sum_q (-1)^q (z/2)^(k nu + 2q)/(q! Gamma(k nu + q + 1))
+
+    so s^(k nu - 1 + 2q) carries c_k (k nu) (-1)^q (sqrt(lam)/2)^(k nu + 2q)
+    / (q! Gamma(k nu + q + 1)), with c_k = O(1) random. That supplies both the Gamma damping
+    that `_corner_series` approximates and the (-1)^q alternation it drops -- the two together
+    are what make the model a member of the class at any nu rather than only at nu = O(1).
+
+    Built in log space: k nu can reach 20+ at a sharp convex corner, where the amplitude
+    underflows a direct evaluation."""
+    rng = np.random.default_rng(seed)
+    terms = []
+    for k in range(1, n_k + 1):
+        c_k = rng.uniform(0.5, 1.5)*rng.choice([-1.0, 1.0])
+        for q in range(n_q + 1):
+            p = k*nu + 2*q
+            log_a = p*np.log(np.sqrt(lam)/2.0) - lgamma(q + 1) - lgamma(k*nu + q + 1)
+            terms.append((c_k*(k*nu)*(-1.0)**q*np.exp(log_a), p - 1.0))
+    return terms, at_end
+
+
+def _two_notch(h1=2.0, h2=3.0, w=0.6):
+    """Two reentrant corners at generic (non-right) angles: the multi-corner half of the
+    question, so the dense family is asked at more than one `cornerinterp` corner at once."""
+    from lappy.geometry import Polygon
+    v = np.array([-1.0, -w + 1j*h1, 0.0 + 0.35j*h1, w + 1j*h1, 1.0, 1j*h2])
+    return Polygon(v, val_simple=False)
+
+
+_LEG3B_X0 = 0.37 + 0.181j
+_LEG3B_SEEDS = (0, 1, 2, 3, 4)
+
+
+def _score_corner_panels(dom, lam_max=1.0, precision=1e-14, physical=True, orders=None):
+    """(rule, nu, order, worst rel err over seeds) per corner panel, against closed-form truth.
+
+    `_leg3_case`'s scoring, generalized: any amplitude model, and an optional order override so
+    the same panel can be scored off the sizing model's choice."""
+    bq = ei.boundary_quadrature(dom, lam_max, precision=precision, warn=False)
+    segs = dom.bdry.segments
+    out = []
+    for pid, panel in enumerate(bq.panels):
+        if panel.rule == 'legendre':
+            continue
+        if orders is not None:
+            panel = panel._replace(order=orders)
+        seg = segs[panel.seg_idx]
+        at_end = panel.tau0 > panel.tau1
+        mid = seg.p(np.array([0.5]))[0]
+        rN = complex_dot(mid - _LEG3B_X0, seg.N(np.array([0.5]))[0])
+        h = panel.tau1 - panel.tau0
+        u_local, w = ei._panel_rule(panel)
+        s = seg.len*(panel.tau0 + h*u_local)
+        wts = seg.len*abs(h)*w
+        lo, hi = sorted((panel.tau0*seg.len, panel.tau1*seg.len))
+        worst = 0.0
+        for seed in _LEG3B_SEEDS:
+            model = (_bessel_corner_series(panel.nu, seg.len, 3, 3, lam_max, seed + pid, at_end)
+                     if physical else _corner_series(panel.nu, seg.len, 4, seed + pid, at_end))
+            got = float(np.sum(wts*rN*_series_un(model, seg.len)(s)**2))
+            exact = _partial_exact(model, seg.len, rN, lo, hi)
+            worst = max(worst, abs(got/exact - 1.0))
+        out.append((panel.rule, panel.nu, panel.order, worst))
+    return out
+
+
+# (factory, nu, bar). Bars are the MEASURED capability with an order of margin, not a wish:
+# 4.0e-15 at nu=0.888, 3.6e-14 at nu=0.772, 1.5e-12 at nu=0.615. The degradation as nu -> 1/2
+# is real and monotone, which is why the bars are not flat -- see the ceiling test below.
+LEG3B_CASES = [(lambda: chevron(0.2, 1), 0.888363, 1e-12),
+               (lambda: chevron(0.5, 3), 0.772101, 1e-12),
+               (lambda: chevron(1.5, 4), 0.615133, 1e-10)]
+
+
+@pytest.mark.parametrize("factory,nu_expected,bar", LEG3B_CASES)
+def test_leg3b_cornerinterp_integrates_the_dense_family(factory, nu_expected, bar):
+    """The gap this section exists to close: a dense corner series with real singular amplitude,
+    at the interpolatory rule a generic domain actually gets."""
+    dom = factory()
+    scored = [(r, nu, o, e) for r, nu, o, e in _score_corner_panels(dom) if nu < 1.0]
+    assert scored, "expected at least one singular corner panel"
+    assert any(r == 'cornerinterp' for r, _, _, _ in scored), \
+        "this domain is supposed to exercise cornerinterp, not cornerjac"
+    assert any(abs(nu - nu_expected) < 1e-5 for _, nu, _, _ in scored), \
+        [nu for _, nu, _, _ in scored]
+    for rule, nu, order, err in scored:
+        assert err < bar, f"nu={nu:.6f} rule={rule} order={order}: {err:.3e} >= {bar:.1e}"
+
+
+def test_leg3b_sharp_convex_corners_are_exact_on_a_physical_series():
+    """A sharp convex corner (nu up to 22 here) also draws the corner rule, via `nonintegral`.
+    On a physical series the rule is exact there -- 3.5e-14 worst across every convex panel of
+    the chevron family."""
+    worst = 0.0
+    for factory in (lambda: chevron(1, 2), lambda: chevron(2, 3), lambda: chevron(0.5, 3)):
+        for rule, nu, order, err in _score_corner_panels(factory()):
+            if nu > 1.0:
+                worst = max(worst, err)
+    assert worst > 0.0, "expected some convex corner panels"
+    assert worst < 1e-12, worst
+
+
+def test_leg3b_geometric_amplitudes_are_not_a_class_member_at_large_nu():
+    """Why `_bessel_corner_series` exists, pinned as arithmetic rather than left as a caution.
+
+    `_corner_series` gives its leading term an O(1) amplitude at every nu. The true one is
+    (sqrt(lam)/2)^nu/Gamma(nu+1), which at a sharp corner is vanishingly small -- so the
+    geometric model demands the rule integrate a term the eigenfunction does not have, and
+    convicts it. Scoring the SAME panels both ways shows it directly."""
+    nu = 9.764063                                  # chevron(1,2)'s sharp corner
+    true_amp = np.exp(nu*np.log(0.5) - lgamma(nu + 1.0))
+    assert true_amp < 1e-9, true_amp               # against the geometric model's O(1)
+
+    dom = chevron(1, 2)
+    phys = max(e for _, n, _, e in _score_corner_panels(dom, physical=True) if n > 1.0)
+    geom = max(e for _, n, _, e in _score_corner_panels(dom, physical=False) if n > 1.0)
+    assert phys < 1e-13, phys
+    assert geom > 1e4*phys, (geom, phys)
+
+
+def test_leg3b_near_slit_cornerinterp_has_a_ceiling_and_says_so():
+    """The known limitation, pinned so it is a fact and not a surprise: below nu ~ 0.6 the
+    interpolatory rule tops out near 1e-10 on the dense family. What makes this acceptable
+    rather than silent is the second half -- `boundary_quadrature` warns and records a
+    shortfall. What makes it a real limitation is that the reported bound is 450x optimistic
+    (1.15e-12 claimed against 5.2e-10 delivered), which is `sizing_precision` being a sizing
+    heuristic exactly as documented.
+
+    If a future rule clears this, the first assert fires -- update the bars, do not delete."""
+    dom = chevron(2, 3)
+    scored = [(r, nu, o, e) for r, nu, o, e in _score_corner_panels(dom) if nu < 0.6]
+    # one panel per adjacent edge, and they are NOT alike: the same corner at the same order
+    # measures 5.2e-10 on one edge and 5.2e-14 on the other, so the corner's capability is the
+    # worst of its panels and a test that looked at one of them could report either story.
+    assert len(scored) == 2, scored
+    assert all(r == 'cornerinterp' for r, _, _, _ in scored), scored
+    nu, err = scored[0][1], max(e for _, _, _, e in scored)
+    assert 1e-12 < err < 1e-7, f"known ceiling moved: nu={nu:.6f} err={err:.3e}"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        bq = ei.boundary_quadrature(dom, 1.0, precision=1e-14)
+    assert bq.sizing_precision > 1e-14
+    assert any(r == 'model bound above target' for _, _, r in bq.shortfalls)
+    assert any('could not size for' in str(w.message) for w in caught)
+
+
+def test_leg3b_more_order_does_not_rescue_a_near_slit_corner():
+    """The lever that does NOT work, and the reason the order cap is load-bearing rather than
+    arbitrary. Raising the order past `corner_order_for_precision`'s cap makes this corner
+    WORSE, monotonically: 9.5e-11 at order 32 against 1.2e-08 at 128. The weights stay positive
+    and sum|w| is unchanged, so this is not the weight blow-up that killed `cornerinterp` on the
+    dense exponent set -- it is accuracy loss in the interpolatory solve itself.
+
+    Controls at nu = 0.888 and nu = 0.772 stay flat to order 192, so the effect is specific to
+    the near-slit regime and is not a general high-order defect."""
+    dom = chevron(2, 3)
+
+    def at(order):
+        return max(e for _, nu, _, e in _score_corner_panels(dom, orders=order) if nu < 0.6)
+
+    lo, hi = at(32), at(128)
+    assert hi > 10*lo, f"order 32 {lo:.2e} vs order 128 {hi:.2e}"
+
+    for factory in (lambda: chevron(0.2, 1), lambda: chevron(0.5, 3)):
+        ctrl = factory()
+        errs = [max(e for _, nu, _, e in _score_corner_panels(ctrl, orders=o) if nu < 1.0)
+                for o in (32, 192)]
+        assert max(errs) < 1e-12, errs
+
+
+def test_leg3b_bars_have_teeth():
+    """Do the Leg 3b bars actually detect a broken rule? `test_leg1_nu_sensitivity_guard` asks
+    this of 'cornerjac'; 'cornerinterp' takes its exactness from the WEIGHTS rather than from
+    node placement, so it needs its own answer, and the bars above are only worth having if it
+    is yes.
+
+    Perturb the RULE's nu while holding the MODEL at the true nu -- perturbing both leaves them
+    consistent and measures nothing, which is how this check read 'no sensitivity' on the first
+    attempt. Measured at nu = 0.7721, order 28, against the 1e-12 bar:
+
+        correct rule          1.7e-13
+        rule nu off by 3e-4   7.0e-06        7 orders, and over the bar
+        rule nu off by 3e-2   8.0e-04
+        smooth legendre       1.7e-02        the rule itself being wrong
+    """
+    dom = chevron(0.5, 3)
+    panels = ei.corner_panels(dom, ei.corner_specs(dom), order_corner=28, order_smooth=32)
+
+    def score(nu_scale=1.0, rule=None):
+        worst = 0.0
+        for pid, p in enumerate(panels):
+            if p.rule == 'legendre' or p.nu > 1.0:
+                continue
+            q = p._replace(nu=p.nu*nu_scale)
+            if rule is not None:
+                q = q._replace(rule=rule)
+            seg = dom.bdry.segments[p.seg_idx]
+            at_end = p.tau0 > p.tau1
+            mid = seg.p(np.array([0.5]))[0]
+            rN = complex_dot(mid - _LEG3B_X0, seg.N(np.array([0.5]))[0])
+            u_local, w = ei._panel_rule(q)
+            h = q.tau1 - q.tau0
+            s = seg.len*(q.tau0 + h*u_local)
+            wts = seg.len*abs(h)*w
+            lo, hi = sorted((q.tau0*seg.len, q.tau1*seg.len))
+            for seed in _LEG3B_SEEDS:
+                model = _bessel_corner_series(p.nu, seg.len, 3, 3, 1.0, seed + pid, at_end)
+                got = float(np.sum(wts*rN*_series_un(model, seg.len)(s)**2))
+                worst = max(worst, abs(got/_partial_exact(model, seg.len, rN, lo, hi) - 1.0))
+        return worst
+
+    clean = score()
+    assert clean < 1e-12, clean
+    assert score(1 + 3e-4) > 1e4*max(clean, 1e-15)
+    assert score(rule='legendre') > 1e-4
+
+
+def test_leg3b_two_generic_reentrant_corners_at_once():
+    """Multi-corner, both corners generic, both on `cornerinterp`: the nearest thing to a real
+    optimization domain in the exact-truth tier. nu = 0.5557 is inside the ceiling regime, so
+    the bar is the measured 4.1e-10 with margin rather than machine precision."""
+    scored = [(r, nu, o, e) for r, nu, o, e in _score_corner_panels(_two_notch()) if nu < 1.0]
+    assert len(scored) >= 2, scored
+    assert all(r == 'cornerinterp' for r, _, _, _ in scored), scored
+    for rule, nu, order, err in scored:
+        assert err < 1e-8, f"nu={nu:.6f} order={order}: {err:.3e}"
 
 
 # ── Leg 2: multiple singular corners, exact, but ZERO singular amplitude ──────
