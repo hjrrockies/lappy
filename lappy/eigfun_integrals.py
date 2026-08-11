@@ -129,13 +129,22 @@ CornerPanel = namedtuple('CornerPanel',
 # makes per-corner diagnostics (and the edge/arc split that corner tests must report) possible.
 BoundaryQuad = namedtuple('BoundaryQuad',
                           ['pts', 'normals', 'tangents', 'wts', 'dir_mask', 'neu_mask',
-                           'panels', 'panel_id', 'precision', 'x0', 'shortfalls'],
+                           'panels', 'panel_id', 'sizing_precision', 'x0', 'shortfalls'],
                           defaults=((),))
+# `sizing_precision` is the MODEL bound that chose the orders -- a sizing heuristic, not a
+# certificate. It was called `precision` and read as an accuracy claim, which it is not:
+# `chevron_1_2` reports 1e-13 here while `verify_gram` measures 4.9e-08 on the actual
+# integrand, and that gap is identical under every corner model tried, because it comes from
+# the smooth panels, whose requirement is set by the basis's own pole placement -- something no
+# geometry-only model can see. Use `verify_gram` to certify a node set; use this to size one.
+#
 # `shortfalls` names every corner whose rule cannot honour the requested precision, so that
-# `precision` is never a claim contradicted elsewhere in the same object. It is a tuple of
-# (corner_idx, achieved_or_None, reason). A corner that was DEMOTED to a smooth rule (an
+# `sizing_precision` is never a claim contradicted elsewhere in the same object. It is a tuple
+# of (corner_idx, achieved_or_None, reason). A corner that was DEMOTED to a smooth rule (an
 # inadmissible near-slit nu) has no bound at all -- `sector_slit` measured 6.9e-01 against a
-# reported 1e-13 -- so it sets `precision` to inf rather than to a number that is not one.
+# reported 1e-13 -- so it sets `sizing_precision` to inf rather than to a number that is not
+# one. inf therefore means "the model declines to size this", the one case where the heuristic
+# is also a genuine warning.
 
 # A small cluster of eigenfunctions' Cauchy data at a BoundaryQuad's nodes. U/U_N/U_T are
 # (n_nodes, mult) -- already-evaluated function values, never a basis matrix.
@@ -440,7 +449,7 @@ def _panel_rule(panel):
     raise ValueError(f"unknown panel rule {panel.rule!r}")
 
 
-def assemble_panels(domain, panels, precision=None, x0=None, shortfalls=()):
+def assemble_panels(domain, panels, sizing_precision=None, x0=None, shortfalls=()):
     """BoundaryQuad from a panel plan, via each segment's own p/N/T at normalized arclength.
 
     Segments are parametrized by normalized arclength, so |dp/dtau| == seg.len identically and
@@ -463,7 +472,7 @@ def assemble_panels(domain, panels, precision=None, x0=None, shortfalls=()):
         x0 = default_x0(domain)
     return BoundaryQuad(np.concatenate(P), np.concatenate(N), np.concatenate(T),
                         np.concatenate(W), np.concatenate(D), np.concatenate(U),
-                        tuple(panels), np.concatenate(PID), precision, x0,
+                        tuple(panels), np.concatenate(PID), sizing_precision, x0,
                         tuple(shortfalls))
 
 
@@ -565,20 +574,28 @@ def lowdin_transform(G, ttol=1e-3):
 def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.0,
                         clearance_frac=_CLEARANCE_FRAC, warn=True, nonintegral=True,
                         smooth_safety=1.0, resolve_geometry=True, weight_family='even'):
-    """The entry point: a boundary node set for `domain`, accurate to `precision` for
+    """The entry point: a boundary node set for `domain`, SIZED for `precision` on
     eigenfunctions up to spectral parameter `lam_max`.
 
     No basis, and none of the tuning knobs the graded rule required -- the node set is a pure
     function of geometry, `lam_max` and the requested accuracy, so it can be built once and
-    reused for every lam in a search. Sizing is self-certifying rather than calibrated
-    offline: every panel's rule is scored against a model integrand whose integral is
-    closed-form (`quad.corner_rule_residual` on the corner's own exponent set,
-    `quad.smooth_order_for_precision` on exp(i k tau)), so `precision` is honoured directly.
+    reused for every lam in a search. Every panel's rule is scored against a model integrand
+    whose integral is closed-form (`quad.corner_rule_residual` on the corner's own exponent
+    set, `quad.smooth_order_for_precision` on exp(i k tau)), and the orders follow from those
+    scores.
+
+    **`precision` sizes the rule; it does not certify it.** The models are of the integrand's
+    CLASS, not the integrand in hand, and the gap can be large: `chevron_1_2` is sized at 1e-13
+    and `verify_gram` measures 4.9e-08 on the real integrand. That gap was identical under every
+    corner model tried, which is what identifies its source -- it is not the corners but the
+    smooth panels, whose true requirement is set by the basis's own pole placement, invisible to
+    anything that sees only geometry. To find out what a node set ACHIEVED, call `verify_gram`,
+    which refines the rule and measures the change in the Gram it actually produces.
 
     Where a corner cannot reach `precision` -- a near-slit nu, or the coordinate-collapse
     order cap binding first -- the best achievable order is used and a warning names the
-    corner and what it actually achieved, rather than silently missing the target. The
-    achieved value is recorded in the returned `BoundaryQuad.precision`.
+    corner and what its model bound came to, rather than silently missing the target. That
+    value is recorded in the returned `BoundaryQuad.sizing_precision`.
 
     The default is 1e-13, not 1e-14: these integrals sit near the float64 roundoff floor, and a
     270-degree corner typically lands at ~1.9e-14, so a 1e-14 default would warn on the
@@ -612,7 +629,8 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
 
     Polygons are already converged and pay only nodes. Curved boundaries improve sharply but
     `ellipse_a4` and `stadium` plateau above 1e-13, so a safety factor is a mitigation there
-    and not yet a fix -- use `verify_gram` to find out what a given node set achieved.
+    and not yet a fix -- another reason `precision` is a sizing knob and `verify_gram` is the
+    certificate.
     """
     segs = domain.bdry.segments
     k = 2.0*np.sqrt(max(lam_max, 0.0))     # a PRODUCT of eigenfunctions oscillates at 2*sqrt(lam)
@@ -675,11 +693,32 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
             #
             # `sub = 1/2` reverses the trade: every integer `m` becomes the exact polynomial
             # `t^(2m)`, while the Bessel family goes to `t^(2 j nu)` -- still non-integer, but
-            # with exponents growing by `2 nu` per term, which Gauss resolves at once. It needs
-            # NO rationality of nu, so it covers the generic arc-arc corner where no exact
-            # substitution exists at all; verified at nu = 1/1.37 and nu = 1/phi to 1e-15, and
-            # across nu in [0.57, 1.34] at order 16. `tau_min` stays above 1e-6 throughout,
-            # far clear of the coordinate-collapse floor that rules out `sub = 1/q` at q >= 4.
+            # with exponents growing by `2 nu` per term. It needs NO rationality of nu, so it
+            # covers the generic arc-arc corner where no exact substitution exists at all;
+            # verified at nu = 1/1.37 and nu = 1/phi to 1e-15, and across nu in [0.57, 1.34] at
+            # order 16. `tau_min` stays above 1e-6 throughout, far clear of the
+            # coordinate-collapse floor that rules out `sub = 1/q` at q >= 4.
+            #
+            # **This is why it stays OPT-IN, and must not become the default.** "Gauss resolves
+            # the shifted Bessel family at once" is true only for a SPARSE member -- the single
+            # (m,n) sector mode, whose squared normal derivative has exponents spaced by 4. A
+            # real multi-term corner series has cross terms spaced by `2 nu`, and on those
+            # `sub = 1/2` converges only ALGEBRAICALLY. L_shape corner panel, nu = 2/3, the
+            # Leg 3 synthetic series against closed-form truth:
+            #
+            #     order            8         16         32         64        128
+            #     sub = nu    7.8e-16    2.7e-15    1.5e-14    6.1e-14    9.2e-14
+            #     sub = 1/2   4.1e-06    2.8e-07    1.8e-08    1.2e-09    7.2e-11
+            #
+            # about `n^-4.7`, never reaching machine precision at a usable order, while
+            # `sub = nu` is exact at order 8. Making this the default fails 12 tests including
+            # all of Leg 3 (3.6e-06 against a 1e-12 bar, at the SAME node count). It is the
+            # original defect with the roles swapped, and the two families are genuinely a
+            # trade: `sub = nu` for the eigenfunction's own dense family (Rellich, Gram),
+            # `sub = 1/2` for an integer-power weight on top of a sparse one (Hadamard
+            # corner-moving). Leg 1 alone cannot see this -- its eigenfunction IS the sparse
+            # case, where 'integer' ties or wins on half the nodes, which is exactly how the
+            # claim came to be overstated.
             # Forced to 'cornerjac' even on a curved edge, where `corner_rule_spec` would
             # pick 'cornerinterp': that rule takes no substitution, so it cannot make the
             # weight exact, and its fixed-node interpolation is the weaker rule here anyway.
@@ -699,7 +738,7 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
             panels.append(p._replace(order=orders.get(p.corner, 16),
                                      sub=subs.get(p.corner, p.sub),
                                      rule=kinds.get(p.corner, p.rule)))
-    # Honest precision. A corner short of the target contributes its model bound; a SINGULAR
+    # Honest sizing. A corner short of the target contributes its model bound; a SINGULAR
     # corner demoted to a smooth rule contributes no bound at all, because the smooth model
     # cannot see the singularity it is being asked to integrate -- `sector_slit`'s nu=0.504
     # corner measured 6.9e-01 while this function reported 1e-13. inf is the honest value, and
@@ -710,10 +749,10 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
         + [(s.idx, None, f'demoted to a smooth rule: {s.reason}') for s in demoted]
         + [(None, a, f'segment {i}: parametrization unresolved at order_max')
            for i, a in geom_short.items()])
-    achieved_precision = max([precision] + list(achieved.values()) + list(smooth_ach.values()))
+    sizing_precision = max([precision] + list(achieved.values()) + list(smooth_ach.values()))
     if demoted:
-        achieved_precision = float('inf')
-    bq = assemble_panels(domain, panels, precision=achieved_precision, x0=x0,
+        sizing_precision = float('inf')
+    bq = assemble_panels(domain, panels, sizing_precision=sizing_precision, x0=x0,
                          shortfalls=shortfalls)
 
     if warn:
@@ -722,8 +761,9 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
             msg = "; ".join(f"corner {c} at {specs[c].point:+.4g} "
                             f"(nu={specs[c].nu:.4f}) reached only {a:.2e}"
                             for c, a in short.items())
-            warnings.warn(f"boundary_quadrature could not reach precision={precision:.1e}: "
-                          f"{msg}. Achieved {bq.precision:.2e} overall.")
+            warnings.warn(f"boundary_quadrature could not size for precision={precision:.1e}: "
+                          f"{msg}. Model bound {bq.sizing_precision:.2e} overall; "
+                          f"call verify_gram to measure what the rule achieves.")
         fallback = demoted
         if fallback:
             warnings.warn("singular corners on a smooth rule: "
@@ -824,7 +864,7 @@ def refine_quadrature(domain, bq, depth=2, smooth_order=48):
         for a, b in zip(taus[:-1], taus[1:]):
             refined.append(CornerPanel(p.seg_idx, a, b, 'legendre', smooth_order,
                                        np.nan, None, np.nan, False, -1))
-    return assemble_panels(domain, refined, precision=bq.precision, x0=bq.x0,
+    return assemble_panels(domain, refined, sizing_precision=bq.sizing_precision, x0=bq.x0,
                            shortfalls=bq.shortfalls)
 
 
@@ -832,9 +872,9 @@ def verify_gram(basis, lam, coef, bq, domain, x0=None, depth=2, smooth_order=48)
     """Measure what the Gram on `bq` actually achieved, by recomputing it on a refined rule.
 
     Returns `(G, G_ref, err)` with `err` the largest entrywise change, relative to the
-    diagonal. Unlike `bq.precision` this is a statement about the integrand in hand rather
-    than about a model of its class, and unlike the x0-spread it does not depend on where the
-    reference point sits.
+    diagonal. This is the certificate. Unlike `bq.sizing_precision` it is a statement about the
+    integrand in hand rather than about a model of its class, and unlike the x0-spread it does
+    not depend on where the reference point sits.
 
     Costs one extra evaluation of the basis at the refined nodes -- paid once per lam, against
     a node set that is otherwise built once per solve.

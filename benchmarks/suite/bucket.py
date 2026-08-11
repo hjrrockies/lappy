@@ -160,7 +160,7 @@ def run(key, n_basis=None, rtol=None, int_npts=None, bdry_mult=2,
                fs_placement=fs_placement,
                fs_d=float(fs_d), fs_frac=float(fs_frac),
                bq_nodes=(len(solver.bdry_quad.pts) if solver.bdry_quad else None),
-               bq_precision=(float(solver.bdry_quad.precision)
+               bq_precision=(float(solver.bdry_quad.sizing_precision)
                              if solver.bdry_quad else None))
     t0 = time.time()
     try:

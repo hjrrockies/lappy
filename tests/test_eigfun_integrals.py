@@ -749,13 +749,13 @@ def test_demoted_singular_corner_makes_precision_infinite_and_is_named():
         bq = ei.boundary_quadrature(dom, 30.0, precision=1e-13)
     demoted = [s for s in ei.corner_specs(dom) if s.singular and not s.admissible]
     assert demoted, 'this geometry is supposed to have an inadmissible corner'
-    assert not np.isfinite(bq.precision)
+    assert not np.isfinite(bq.sizing_precision)
     assert bq.shortfalls and any('demoted' in str(r) for _, _, r in bq.shortfalls)
 
 
 def test_precision_stays_finite_and_shortfalls_empty_on_an_easy_domain():
     bq = ei.boundary_quadrature(rect(1.0, 1.0), 50.0, precision=1e-13, warn=False)
-    assert np.isfinite(bq.precision) and bq.precision <= 1e-13
+    assert np.isfinite(bq.sizing_precision) and bq.sizing_precision <= 1e-13
     assert bq.shortfalls == ()
 
 
@@ -850,6 +850,6 @@ def test_an_eccentric_ellipse_is_reported_not_pretended():
         warnings.simplefilter('always')
         bq = ei.boundary_quadrature(ellipse(6, 1), 30.0, precision=1e-13,
                                     resolve_geometry=True)
-    assert bq.precision > 1e-13, 'must not claim a precision it did not reach'
+    assert bq.sizing_precision > 1e-13, 'sizing must not report a target it did not meet'
     assert len(bq.shortfalls) == 1
     assert any('parametrization' in str(w.message) for w in caught)

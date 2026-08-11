@@ -20,7 +20,7 @@ solver = MPSEigensolver.from_domain(dom, basis=basis)
 t_build = time.time() - t0
 bq = solver.bdry_quad
 print(f"quadrature build (once per solve): {t_build:8.3f} s   "
-      f"{len(bq.pts)} nodes, {len(bq.panels)} panels, precision {bq.precision:.1e}")
+      f"{len(bq.pts)} nodes, {len(bq.panels)} panels, sized for {bq.sizing_precision:.1e}")
 
 eigs, mults, fevals = solver.solve_interval(bounds.faber_krahn(dom),
                                             asymp.weyl_est(2, dom), 20)

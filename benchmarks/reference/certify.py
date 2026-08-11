@@ -241,7 +241,7 @@ def boundary_l2(solver, lam, mult=1, n_probes=3):
                 gram_diag=[float(x) for x in np.diag(G)],
                 gram_offdiag=off,
                 bq_nodes=int(len(bq.pts)),
-                bq_precision=float(bq.precision))
+                bq_precision=float(bq.sizing_precision))
     return norms, info
 
 
