@@ -25,7 +25,7 @@ computes. `test_dilation_is_the_rellich_identity` pins that correspondence.
 import numpy as np
 import pytest
 
-from lappy import bases, mps, reference as ref
+from lappy import bases, geometry, mps, reference as ref
 from lappy.geometry import rect, disk_sector
 from lappy.mps import MPSEigensolver
 from lappy.eigfun_integrals import (boundary_quadrature, eigfun_cauchy_data, gram,
@@ -323,3 +323,90 @@ def test_integer_weight_family_fixes_the_corner_moving_derivative():
         _, bq, ed, mask, _ = _sector_angle_setup(aop, weight_family='integer')
         got = -weighted_integral(ed, 'NN', np.where(mask, np.abs(bq.pts), 0.0))[0, 0]
         assert abs(got - exact)/abs(exact) < 1e-11, (aop, got, exact)
+
+
+# ── hadamard_quadrature: the wrapper, and the measurement that justifies it ────
+#
+# `weight_family='integer'` was validated on the SPARSE sector eigenfunction, and separately
+# shown to fail on a dense family with the plain r^0 weight -- which is why it is not the
+# default. The case a shape derivative actually meets, a dense corner series AND an integer
+# weight, was measured only when this wrapper was written. It is the combination that decides
+# whether the wrapper is well founded, and it is: the split runs along the WEIGHT's parity, not
+# along the density of the eigenfunction's family.
+
+def _weighted_corner_error(dom, weight_family, p, lam_max, seeds=(0, 1, 2, 3, 4)):
+    """Worst relative error over corner panels for `int rN * r^p * un^2`, against closed form."""
+    from lappy.utils import complex_dot
+    import tests.test_eigfun_integrals as T
+    import lappy.eigfun_integrals as ei
+
+    bq = ei.boundary_quadrature(dom, lam_max, precision=1e-14, warn=False,
+                                weight_family=weight_family)
+    x0 = 0.37 + 0.181j
+    worst = 0.0
+    for pid, panel in enumerate(bq.panels):
+        if panel.rule == 'legendre' or panel.nu > 1.0:
+            continue
+        seg = dom.bdry.segments[panel.seg_idx]
+        at_end = panel.tau0 > panel.tau1
+        mid = seg.p(np.array([0.5]))[0]
+        rN = complex_dot(mid - x0, seg.N(np.array([0.5]))[0])
+        h = panel.tau1 - panel.tau0
+        u_local, w = ei._panel_rule(panel)
+        s = seg.len*(panel.tau0 + h*u_local)
+        wts = seg.len*abs(h)*w
+        lo, hi = sorted((panel.tau0*seg.len, panel.tau1*seg.len))
+        r = (seg.len - s) if at_end else s          # distance from the ANCHORED end
+        a, b = (seg.len - hi, seg.len - lo) if at_end else (lo, hi)
+        for seed in seeds:
+            terms, _ = T._bessel_corner_series(panel.nu, seg.len, 3, 3, lam_max, seed + pid,
+                                               at_end)
+            un = sum(c*r**q for c, q in terms)
+            got = float(np.sum(wts*rN*r**p*un**2))
+            exact = rN*sum(c1*c2*(b**(q1 + q2 + p + 1) - a**(q1 + q2 + p + 1))/(q1 + q2 + p + 1)
+                           for c1, q1 in terms for c2, q2 in terms)
+            worst = max(worst, abs(got/exact - 1.0))
+    return worst
+
+
+@pytest.mark.parametrize("factory,name", [
+    (lambda: geometry.L_shape(), 'L_shape (cornerjac, nu=2/3)'),
+    (lambda: geometry.chevron(0.5, 3), 'chevron(0.5,3) (cornerinterp, nu=0.772)'),
+    (lambda: geometry.chevron(2, 3), 'chevron(2,3) (cornerinterp, nu=0.587)'),
+])
+def test_integer_family_wins_for_a_corner_moving_weight_on_a_dense_family(factory, name):
+    """The gating measurement. Weight r^1 at lam_max=100, dense series, closed-form truth."""
+    dom = factory()
+    even = _weighted_corner_error(dom, 'even', 1, 100.0)
+    integer = _weighted_corner_error(dom, 'integer', 1, 100.0)
+    assert integer < even/100, f"{name}: even {even:.2e} vs integer {integer:.2e}"
+    assert integer < 1e-9, f"{name}: {integer:.2e}"
+
+
+def test_the_trade_runs_the_other_way_for_the_rellich_weight():
+    """Why this is a separate entry point and not a new default: with the plain r^0 weight the
+    same rules reverse, and by as much. A caller who swaps hadamard_quadrature in for the Gram
+    loses five orders."""
+    dom = geometry.L_shape()
+    even = _weighted_corner_error(dom, 'even', 0, 1.0)
+    integer = _weighted_corner_error(dom, 'integer', 0, 1.0)
+    assert even < 1e-13, even
+    assert integer > 100*even, (even, integer)
+
+
+def test_hadamard_quadrature_selects_the_integer_family():
+    from lappy.eigfun_integrals import hadamard_quadrature, boundary_quadrature
+    dom = geometry.chevron(2, 3)
+    hq = hadamard_quadrature(dom, 100.0, warn=False)
+    ref = boundary_quadrature(dom, 100.0, warn=False, weight_family='integer')
+    corner = [p for p in hq.panels if p.rule != 'legendre']
+    assert corner, 'expected corner panels'
+    assert all(p.rule == 'cornerjac' and p.sub == 0.5 for p in corner), corner
+    assert len(hq.pts) == len(ref.pts)
+    np.testing.assert_array_equal(hq.wts, ref.wts)
+
+
+def test_hadamard_quadrature_refuses_a_conflicting_weight_family():
+    from lappy.eigfun_integrals import hadamard_quadrature
+    with pytest.raises(TypeError, match='weight_family'):
+        hadamard_quadrature(geometry.L_shape(), 100.0, weight_family='even')

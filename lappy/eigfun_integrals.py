@@ -778,6 +778,41 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
     return bq
 
 
+def hadamard_quadrature(domain, lam_max, precision=1e-13, **kw):
+    """`boundary_quadrature` for SHAPE-DERIVATIVE integrals, where the weight is `V.n`.
+
+    A Hadamard integrand is `(du_i/dn)(du_j/dn)(V.n)`, and a shape velocity that moves a corner
+    supplies `V.n ~ r^1` there -- an integer power of distance from the corner, on top of the
+    eigenfunction's own family. That weight is what the corner rules are NOT built for, and it
+    is the whole reason `weight_family='integer'` exists. This is the thin wrapper that selects
+    it, so downstream callers do not have to remember which family a shape derivative needs.
+
+    Measured on a dense corner series against closed-form truth, worst relative error over five
+    draws per panel, weight `r^1`, lam_max=100:
+
+        domain                      even (sub=nu)   integer (sub=1/2)
+        L_shape        nu=2/3             2.5e-09             1.5e-13
+        chevron(1,2)   nu=2/3             2.8e-06             4.9e-11
+        chevron(0.5,3) nu=0.772           2.7e-05             5.1e-12
+        chevron(2,3)   nu=0.587           2.1e-06             2.2e-10
+
+    Four to seven orders, at fewer or comparable nodes, and it holds at both nu regimes and on
+    'cornerinterp' corners as well as 'cornerjac' -- the dense-family case that had never been
+    measured before this function was written.
+
+    **DO NOT use this node set for the Rellich/Gram normalization.** The trade runs the other
+    way there, and by as much: with the plain `r^0` weight the same rules give 4.0e-15 (even)
+    against 1.4e-05 (integer) on L_shape. `boundary_quadrature` remains correct for that, and
+    the two are cheap enough to build separately. The split is by the WEIGHT's parity, not by
+    the eigenfunction, which is why one function cannot serve both.
+    """
+    if 'weight_family' in kw:
+        raise TypeError("hadamard_quadrature selects weight_family='integer'; to choose one "
+                        "explicitly, call boundary_quadrature directly")
+    return boundary_quadrature(domain, lam_max, precision=precision,
+                               weight_family='integer', **kw)
+
+
 def geometry_order_for_precision(seg, x0, scale, precision=1e-13, order_min=8, order_max=512):
     """Smallest Gauss order at which this segment's own `(r.N)` integral has converged.
 
