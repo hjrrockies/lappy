@@ -2842,3 +2842,122 @@ Run one model per process, or capture every function object before any patching.
 **Aggregate statistics must not outrank an exact test.** The signed model won on 3822
 configurations and lost on one polyomino with closed-form truth. The polyomino was right. Gate
 candidates on Legs 1-3 FIRST, then consult the grid.
+
+## `sizing_precision`, and what `cornerinterp` actually does on a dense corner family
+
+Two decisions and one measurement session, continuing directly from the entry above, which left
+the `bq.precision` demotion as an open proposal and recommended validating `weight_family=
+'integer'` before it became a default. Both are now settled, in opposite directions.
+
+**The demotion landed (f6baf59).** `BoundaryQuad.precision` is now `sizing_precision`. Value and
+semantics unchanged -- still the model bound that chose the orders, still `inf` on a demoted
+corner -- but it no longer reads as an accuracy claim, the warning says "could not size for",
+and `verify_gram` is named as the certificate. The `bq_precision` key in `buckets.jsonl` is
+deliberately unchanged so existing records still parse.
+
+**`weight_family='integer'` must NOT become the default, and the earlier claim for it was
+overstated.** The previous entry's reasoning was that `sub = 1/2` sends the Bessel family to
+`t^(2 j nu)`, "which Gauss resolves at once". That holds for a SPARSE member -- the single
+(m,n) sector mode, whose squared normal derivative has exponents spaced by 4. A real corner
+series has cross terms spaced by `2 nu`, and there `sub = 1/2` converges only algebraically.
+L_shape corner panel, nu = 2/3, Leg 3 synthetic series against closed-form truth:
+
+    order            8         16         32         64        128
+    sub = nu    7.8e-16    2.7e-15    1.5e-14    6.1e-14    9.2e-14
+    sub = 1/2   4.1e-06    2.8e-07    1.8e-08    1.2e-09    7.2e-11
+
+About `n^-4.7`, never reaching machine precision at a usable order, where `sub = nu` is exact at
+order 8. Flipping the default fails 12 tests including all of Leg 3 (3.6e-06 against a 1e-12
+bar, at the SAME node count). It is the original corner-moving defect with the roles swapped.
+The two families are a genuine trade, not a better and a worse: `sub = nu` for the
+eigenfunction's own dense family (Rellich, Gram), `sub = 1/2` for an integer-power weight on top
+of a sparse one (Hadamard corner-moving). Leg 1 alone cannot see this, because its
+eigenfunction IS the sparse case -- where 'integer' ties or wins on half the nodes. That is
+exactly how the claim came to be overstated, and it is the same shape as the `n_j=2` mistake:
+a calibration that saw only half the range. The rationale now sits in the code at the branch.
+
+The wrapper for downstream (`douse`) use is still wanted; it should preset `weight_family` at
+the call site rather than move the default.
+
+### The coverage hole this exposed, and closing it (7342b7f)
+
+Asking why Leg 1 and Leg 3 disagreed turned up something worth more than the original question.
+**Leg 3 -- the certifying leg -- only ever exercises one corner rule at one exponent.**
+
+    L_shape      cornerjac    nu=0.6667
+    H_shape      cornerjac    nu=0.6667
+    sector1.5    cornerjac    nu=0.6667
+    sector1.1    cornerinterp nu=0.9091      <- Leg 1 only, and Leg 1 is SPARSE
+
+`corner_rule_spec` picks 'cornerjac' only for a straight edge with integer `2/nu`, which among
+reentrant angles is essentially `alpha = 3pi/2` alone. Every other corner -- any non-right
+polygon angle, every curved edge -- runs 'cornerinterp'. So the rule generic domains actually
+use had never met a dense multi-term family with real singular amplitude. `chevron(h1, h2)`
+supplies one: a nonconvex quadrilateral whose reentrant `nu` varies continuously, straight
+edges throughout, so the corner series stays exactly the right class and the reference stays
+closed form.
+
+**It holds down to nu ~ 0.77, and has a ceiling below nu ~ 0.6.**
+
+    nu = 0.888    4.0e-15      chevron(0.2,1)
+    nu = 0.772    3.6e-14      chevron(0.5,3)
+    nu = 0.615    1.5e-12      chevron(1.5,4)
+    nu = 0.587    5.2e-10      chevron(2,3)      ceiling
+    nu = 0.556    4.1e-10      two_notch, two generic reentrant corners at once
+
+**More order makes the ceiling WORSE, which makes the order cap load-bearing.** Forcing the
+order past `corner_order_for_precision`'s `order_max=64`:
+
+    order        chevron(2,3) nu=0.587    two_notch nu=0.556
+       32               9.5e-11               4.7e-10
+       64               4.9e-10               4.1e-10
+      128               1.2e-08               1.0e-06
+      192               2.3e-07               9.1e-06
+
+against controls at nu = 0.888 and 0.772 that stay flat at 1e-15/1e-14 to order 192. So it is
+specific to the near-slit regime and is not a general high-order defect. `sum|w|` holds at
+0.285 and the weights stay positive, so this is NOT the weight blow-up that killed cornerinterp
+on the dense exponent set -- it is accuracy loss in the interpolatory solve itself. Raising the
+cap is not the fix; the real levers are panel subdivision or a joint node/weight solve
+(Ma-Rokhlin). Note also that the sizing model picks the wrong side of the optimum here: order
+32 is both more accurate and cheaper than the 64 it chooses. That is the next cheap win.
+
+Not silent, which is what makes this a known limitation rather than a trap:
+`boundary_quadrature` warns and records a shortfall on both domains. But the reported bound is
+450x optimistic on chevron(2,3) (1.15e-12 claimed, 5.2e-10 delivered) and 90x pessimistic on
+chevron(1.5,4) (1.33e-10 claimed, 1.5e-12 delivered) -- a third independent confirmation that
+the corner model errs in BOTH directions, now on the rule axis rather than the nu axis.
+
+**Assessment, for the record.** Rellich orthonormalization on generic non-pathological domains
+is in good shape and now has exact-truth evidence at the rule those domains actually run, for
+nu >~ 0.65 (reentrant angles to about 1.55pi). Beyond that there is a ~1e-10 ceiling with no
+lever currently available. What is still missing for "to a target precision" is a closed loop:
+`verify_gram` is correct and is called by NOTHING in `lappy/` -- it appears only in tests and
+one script. Sizing model plus a posteriori measurement, with no refinement between them.
+
+### Method notes
+
+**A geometrically-damped corner series is not a class member at large nu.** `_corner_series`
+uses `0.4^j` as a stand-in for the expansion's true `1/Gamma(k nu + q + 1)`. At `nu = 22` that
+demands exponents 21, 43, 65, 87 with O(1) amplitudes -- a squared integrand of degree 174 --
+where the physical k=1 amplitude is ~1e-21. It convicted `cornerinterp` at 1.7e-02 on corners
+the physical series integrates to 4.4e-16, and I reported that as a finding before checking it.
+`_bessel_corner_series` now builds amplitudes from the Bessel series itself (in log space; `k
+nu` passes 20 at a sharp corner), carrying both the Gamma damping and the `(-1)^q` alternation.
+Harmless for L_shape and H_shape at nu = 2/3, so the existing legs never saw it. **The control
+is what caught it:** L_shape was carried through the new harness precisely so a wrong harness
+would be visible, and it reported 6.7e-16 while everything else burned.
+
+**A canary that perturbs the shared quantity measures nothing.** Perturbing `corner_specs`' nu
+to test whether the new bars have teeth moved the rule AND the model I was scoring against, so
+they stayed consistent and the error did not budge -- which reads as "cornerinterp is
+insensitive to nu, unlike cornerjac", an interesting and entirely false finding. Holding the
+model at the true nu, at nu = 0.7721 order 28: correct 1.7e-13, rule nu off by 3e-4 gives
+7.0e-06, a smooth Legendre rule gives 1.7e-02. The bars do have teeth. Same family as the
+monkeypatch note above: when a before/after shows NO difference, suspect the harness first.
+
+**One panel per adjacent edge, and they are not alike.** The first ceiling test asserted a
+single panel at the reentrant corner and failed. A corner has one panel on each adjacent edge,
+and at chevron(2,3) the same corner at the same order measures 5.2e-10 on one and 5.2e-14 on
+the other. A test looking at one of them could have reported either story; the bar is the worst
+of the panels.
