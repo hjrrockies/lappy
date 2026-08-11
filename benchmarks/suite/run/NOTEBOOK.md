@@ -2996,3 +2996,85 @@ before/after, and a geometrically-damped series at large nu. This is the same sh
 measuring in a regime that is not the operating regime and generalizing. The tell was available
 before the measurement: `_score_corner_panels` hardcodes `lam_max=1.0`, and nothing in the
 suite runs at lam=1. Ask what the harness holds FIXED before reading a curve off it.
+
+## Three threads: the order cap (retracted), the Hadamard wrapper, and curved domains
+
+Worked in order, unattended. One retraction, two landings, and two bugs found on the way --
+one of them mine, in code committed earlier the same session.
+
+**1. The near-slit order cap: retracted, see the entry above.** No code changed.
+`corner_order_for_precision` is unmodified.
+
+**2. `hadamard_quadrature` landed (bfab8aa), after the measurement that gates it.** The
+open question was whether `sub=1/2` survives an integer weight on a DENSE family: it was
+validated on the sparse sector, and separately shown to FAIL on a dense family at `r^0` (which
+is why it is not the default), leaving the case a real shape derivative meets unmeasured. It
+holds, decisively. Weight `r^1`, lam_max=100, dense series against closed-form truth:
+
+    domain                      even (sub=nu)   integer (sub=1/2)
+    L_shape        nu=2/3             2.5e-09             1.5e-13
+    chevron(1,2)   nu=2/3             2.8e-06             4.9e-11
+    chevron(0.5,3) nu=0.772           2.7e-05             5.1e-12
+    chevron(2,3)   nu=0.587           2.1e-06             2.2e-10
+
+Four to seven orders, at fewer or comparable nodes, on `cornerinterp` corners as well as
+`cornerjac`. So the split runs along the WEIGHT's parity, not along the density of the
+eigenfunction's family. That is what makes a wrapper right and a default flip still wrong: at
+`r^0` the same rules reverse by as much (4.0e-15 even against 1.4e-05 integer on L_shape), and
+that reversal is now a test so nobody swaps one for the other on the strength of the name.
+Measured at lam=1 AND lam=100, per the correction above.
+
+**3. Curved domains were one `raise NotImplementedError` away from working (205f33e).**
+`make_default_int_pts` gated on `isinstance(domain, Polygon)`. `Domain.int_pts` had handled both
+kinds all along -- rejection sampling for 'random', a curvature-adapted spline mesh for 'mesh'.
+Only the mesh branch is genuinely polygon-specific, and only because `polygon_cubature` is
+better where it applies. A unit disk now runs the full default pipeline and matches squared
+Bessel zeros to ~1e-8 at n_basis=120.
+
+Found in passing: **`kind='mesh'` had never worked on any domain.** It rebound its own `weights`
+parameter to the cubature weight ARRAY and then evaluated `if weights:`, raising "truth value of
+an array is ambiguous" for both values of the flag. So `from_domain(..., mesh=True)` was dead
+code. Renamed the local; unknown kinds now raise instead of returning None off the end.
+
+### The disk was the domain that failed, and the bug was mine
+
+With curved domains reachable, `certified_quadrature` finally ran on what motivated it:
+
+    disk         baseline 1.8e-10  ->  5.8e-15 at safety=4 ( 74 nodes)
+    ellipse_a2   baseline 1.3e-15  ->  already certified   (168 nodes)
+    ellipse_a4   baseline 9.5e-14  ->  already certified   (512 nodes)
+    stadium      baseline 9.6e-08  ->  1.4e-13 at safety=4 (120 nodes)
+
+`stadium` is the headline -- five orders for 120 nodes against 72, on a domain the
+`boundary_quadrature` docstring lists as plateauing above 1e-13 under `smooth_safety`. That
+table was measured at FIXED safety; the loop reaches what a fixed setting did not.
+
+The disk initially reported `certified=False` at 6.4e-11, which is absurd for the simplest
+domain in the library, and the absurdity is what made it worth chasing. Convergence in
+`smooth_safety` is not monotone:
+
+    safety=1   28 nodes   7.1e-10
+    safety=2   44 nodes   6.4e-11
+    safety=3   58 nodes   4.6e-10     <- one-strike stall rule stops here
+    safety=4   74 nodes   5.8e-15
+
+`certified_quadrature`'s stall cutoff assumed monotone improvement and quit one step before the
+answer. Fixed with `patience` (default 2); the regression test pins the trace and asserts
+patience=1 still fails on it.
+
+**The instrument was cleared before the search was blamed.** `verify_gram` reports 1.803e-10 for
+the baseline rule at every reference strength from depth=2/order=48 through depth=5/order=128 --
+flat to four digits, so the reference was not the limit and the rule really was short. Doing
+that first is what pointed at the stall rule instead of at the estimator. It is the same habit
+the three method notes above are all asking for, and it is cheaper than any of the mistakes.
+
+### Open, and worth a conversation
+
+- **`ellipse_a4` takes 512 nodes at safety=1**, driven by `geometry_order_for_precision` and a
+  warning that segment 0 resolves only to 1.3e-07 at order 512. It certifies, but the
+  parametrization is doing the spending, not the eigenfunction.
+- **`kind='mesh'` on a curved domain gives cubature-grade counts** -- 1.9e4 nodes on a unit disk
+  against ~50 from a random draw, sized by mesh resolution rather than basis size. It works and
+  is deterministic; it is probably not what an MPS solve wants. Documented, not changed.
+- **The near-slit ceiling still has no lever.** Panel subdivision or a joint node/weight solve
+  (Ma-Rokhlin) remain the candidates; nothing here moved it.
