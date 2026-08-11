@@ -161,3 +161,44 @@ def test_fundamental_int_pts_honours_rng():
     a = fundamental_int_pts(d, g, 20, rng=3).pts
     b = fundamental_int_pts(d, g, 20, rng=3).pts
     assert np.array_equal(a, b)
+
+
+def test_make_default_int_pts_honours_rng():
+    """The plumbing above `Domain.int_pts`: `make_default_int_pts` had no rng at all, so every
+    default solver build drew from the global RNG no matter what the caller asked for."""
+    from lappy.mps import make_default_int_pts
+    dom = G.L_shape()
+    a = make_default_int_pts(dom, 'random', npts_rand=20, rng=5).pts
+    b = make_default_int_pts(dom, 'random', npts_rand=20, rng=5).pts
+    c = make_default_int_pts(dom, 'random', npts_rand=20, rng=6).pts
+    assert np.array_equal(a, b)
+    assert not np.array_equal(a, c)
+
+
+def test_from_domain_rng_makes_two_solver_builds_comparable():
+    """The reason this matters. Without a seed, two solvers built for the same domain have
+    different interior points and therefore different coefficients in every element -- which
+    silently invalidates any A/B comparison between two builds."""
+    from lappy import bases
+    from lappy.mps import MPSEigensolver
+    dom = G.L_shape()
+
+    def build(**kw):
+        return MPSEigensolver.from_domain(dom, basis=bases.make_default_basis(dom, 60),
+                                          orthonorm=False, **kw)
+
+    seeded = [build(rng=11).int_pts.pts for _ in range(2)]
+    assert np.array_equal(*seeded), 'same seed must give the same interior points'
+    assert not np.array_equal(seeded[0], build(rng=12).int_pts.pts)
+
+
+def test_convergence_tests_default_draw_is_unchanged():
+    """`make_solver` gained an `rng` knob; its DEFAULT must still be the legacy global-MT19937
+    draw. np.random.seed(0) and default_rng(0) are different generators, so defaulting the new
+    parameter to 0 would have moved every convergence curve the module has produced."""
+    from lappy import convergence_tests as ct
+    dom = G.L_shape()
+    np.random.seed(0)
+    expected = dom.int_pts(npts_rand=30).pts
+    solver = ct.make_solver(dom, 30, 0, 0, {'d': 0.1}, {'C': 1.0, 'sigma': 1.0})
+    assert np.array_equal(solver.int_pts.pts[:len(expected)], expected[:len(solver.int_pts.pts)])

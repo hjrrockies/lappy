@@ -288,7 +288,7 @@ class MPSEigensolver(BaseEigensolver):
     def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False,
                     reg_type='svd', rtol=rtol_default, ttol=ttol_default,
                     orthonorm=True, orthonorm_precision=1e-13, orthonorm_x0=None,
-                    certify_target=None):
+                    certify_target=None, rng=None):
         """Builds a solver for `domain`, including (by default) the corner-adapted boundary
         quadrature that makes `eigenfunction_coef` return L^2-orthonormal eigenfunctions with
         no further configuration.
@@ -301,7 +301,12 @@ class MPSEigensolver(BaseEigensolver):
         `orthonorm_precision` SIZES the rule; it does not certify it. Pass `certify_target` to
         measure what the rule achieves on each eigenfunction as it is normalized, warning when
         the measurement is short (see `certify_gram`). It is off by default because it costs an
-        extra basis evaluation per eigenvalue, and it reports rather than resizes."""
+        extra basis evaluation per eigenvalue, and it reports rather than resizes.
+
+        `rng` (int seed or Generator) fixes the interior-point draw, which is random by default
+        and genuinely moves the answer. Two solvers built for the same domain without it are
+        NOT comparable: their coefficients differ in every element. Pass one whenever two builds
+        need to agree, or a result needs to be reproducible."""
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
         if lam_max is None:
@@ -319,7 +324,7 @@ class MPSEigensolver(BaseEigensolver):
 
         # interior points
         kind = 'mesh' if mesh else 'random'
-        int_pts = make_default_int_pts(domain, kind, weights, len(basis), lam_max, prec)
+        int_pts = make_default_int_pts(domain, kind, weights, len(basis), lam_max, prec, rng=rng)
 
         # normalize basis
         basis = basis.to_normalized((bdry_pts, int_pts))
@@ -1026,10 +1031,19 @@ def make_default_bdry_data(domain, basis, weights=False, mult=2, min_per_seg=0):
     bc_param = np.concatenate([np.full(n, seg.bc, 'float') for seg, n in zip(domain.bdry.segments, n_per_seg)])
     return bdry_pts, bdry_normals, bc_param
 
-def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam_max=None, prec=1e-8):
+def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam_max=None,
+                         prec=1e-8, rng=None):
+    """Interior collocation points for `domain`.
+
+    `rng` (int seed or numpy Generator) makes `kind='random'` reproducible; `None` keeps the
+    global RNG, so callers relying on `np.random.seed` are unaffected. The draw genuinely moves
+    the answer -- `iso_right_tri` spanned 2.5 to 5.8 certified digits across draws -- so
+    anything producing reference values, or any comparison between two solver builds, should
+    pass one. `kind='mesh'` is deterministic and ignores it."""
     if isinstance(domain, Polygon):
         if kind == 'random':
-            return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand)
+            return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand,
+                                  rng=rng)
         elif kind == 'mesh':
             if lam_max is None:
                 lam_max = weyl_est(6, domain)

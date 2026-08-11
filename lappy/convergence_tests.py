@@ -44,7 +44,8 @@ def make_bdry_pts(domain, fb_basis=None, fs_basis=None, mult=2, min_per_seg=3):
     return domain.bdry_pts(pts_per_seg)
 
 def make_solver(domain, n_fb, n_fs_bdry, n_fs_corner, fs_bdry_kwargs, fs_corner_kwargs,
-                rtol=1e-14, bdry_pts=None, int_pts=None, bdry_mult=2, bdry_mps=3):
+                rtol=1e-14, bdry_pts=None, int_pts=None, bdry_mult=2, bdry_mps=3,
+                rng=None):
     fb_basis = make_fb_corner_basis(domain, n_fb)
     fs_bdry_basis = make_fs_bdry_basis(domain, n_fs_bdry, **fs_bdry_kwargs)
     fs_corner_basis = make_fs_corner_basis(domain, n_fs_corner, **fs_corner_kwargs)
@@ -67,8 +68,15 @@ def make_solver(domain, n_fb, n_fs_bdry, n_fs_corner, fs_bdry_kwargs, fs_corner_
     if bdry_pts is None:
         bdry_pts = make_bdry_pts(domain, fb_basis, fs_basis, bdry_mult, bdry_mps)
     if int_pts is None:
-        np.random.seed(0)
-        int_pts = domain.int_pts(npts_rand=len(basis))
+        if rng is None:
+            # Preserved exactly, NOT modernized to rng=0. np.random.seed seeds the
+            # legacy global MT19937; default_rng(0) is PCG64 and draws different
+            # numbers, so `rng=0` would silently move every convergence curve this
+            # module has ever produced. The knob is additive; the default is not.
+            np.random.seed(0)
+            int_pts = domain.int_pts(npts_rand=len(basis))
+        else:
+            int_pts = domain.int_pts(npts_rand=len(basis), rng=rng)
 
     basis = NormalizedBasis(basis, (bdry_pts, int_pts))
     return MPSEigensolver(basis, bdry_pts, int_pts, rtol=rtol)
