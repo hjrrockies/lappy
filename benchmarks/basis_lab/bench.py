@@ -28,9 +28,9 @@ REPRODUCIBILITY. `rng` is threaded to the interior draw. Without it two builds o
 domain differ in every coefficient and no A/B comparison means anything.
 
 THE SEARCH MUST NOT BE THE LIMIT, and it was. The first version of this harness called
-`solver.solve_interval`, whose per-bracket minimizer converges to `ltol_default = 1e-8`. That
-caps the measurable accuracy around 10 digits no matter how good the basis is, so every curve
-it produced was a picture of the eigenvalue search and not of the basis. It manufactured a
+`solver.solve_interval`, whose per-bracket minimizer stops at `ltol_default = 1e-8` -- a
+RELATIVE tolerance on lam, so the search gives up after roughly eight significant digits. Every
+curve it produced was therefore a picture of where the eigenvalue search quit, not of the basis. It manufactured a
 "~10 digit plateau" on L_shape and plus_shape, and non-monotone bouncing everywhere, both of
 which were reported as basis findings before the check below was run:
 
@@ -61,8 +61,9 @@ def _polished_solve(solver, domain, n_eigs, n_pts_per_eig=11, bracket_xtol=1e-5,
                     minimize_tol=1e-12, ttol=1e-3, n_workers=4):
     """`manual_solve` + `polish_eigs`, i.e. `solve_domain_v2`'s search, on a prebuilt solver.
 
-    Not `solve_interval`: its per-bracket minimizer stops at `ltol_default = 1e-8`, which caps
-    measurable accuracy near 10 digits and would make this harness a measurement of the search.
+    Not `solve_interval`: its per-bracket minimizer stops at `ltol_default = 1e-8`, a relative
+    tolerance on lam, so it gives up after ~8 significant digits and would make this harness a
+    measurement of where the search quit.
     Imported from `benchmarks/reference/common.py`, which uses flat imports, hence the path
     insertion -- the alternative is duplicating the pipeline that produced `lappy.reference`,
     which would be worse.
@@ -103,9 +104,9 @@ def evaluate(domain, build_basis, n_eigs=4, rng=7, mp_kwargs=None, truth_fn=None
         basis = build_basis(domain, lam_max)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            # prec= IS ltol, the lambda-axis precision tolerance (from_domain passes it
-            # straight through). 1e-14, not the 1e-8 default: this harness measures best-case
-            # basis performance, and the default would cap every reading near 10 digits.
+            # prec= IS ltol, the relative lambda-axis stopping tolerance (from_domain passes
+            # it straight through). 1e-14, not the 1e-8 default: this harness measures best-case
+            # basis performance, and the default gives up after ~8 significant digits.
             solver = MPSEigensolver.from_domain(domain, basis=basis, rng=rng, prec=1e-14)
             eigs, _mults, tensions = _polished_solve(solver, domain, n_eigs)
         eigs = np.atleast_1d(np.asarray(eigs)).ravel()

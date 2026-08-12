@@ -16,7 +16,8 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       bracket tolerance, not the basis, so its "~10 digit plateau" and every fitted rate are
       void (retracted in NOTEBOOK). `bench.py` now uses `manual_solve`+`polish_eigs` and gets
       14.6 digits at n=64 on L_shape where the old path read 10.7.
-- [ ] `solve_interval`'s `ltol_default=1e-8` caps accuracy near 10 digits, and it is what
+- [ ] `solve_interval`'s `ltol_default=1e-8` is a relative stopping tolerance on lam, so the
+      search gives up after ~8 significant digits, and it is what
       `Eigenproblem.solve` uses -- so the documented headline path is the coarse one while the
       reference tables come from `benchmarks/reference/common.solve_domain_v2`. Either the
       polished pipeline belongs in `lappy`, or the default tolerance is too loose. Also affects

@@ -32,20 +32,24 @@ from tqdm import tqdm
 rtol_default = 1e-12
 ttol_default = 1e-3
 
-# ltol is the precision tolerance on the LAMBDA AXIS: how tightly the per-bracket minimizer
-# locates an eigenvalue along lam, as distinct from rtol (pencil regularization) and ttol
-# (tension/multiplicity). 1e-8 is a working default for a search, and it is a CEILING ON
-# MEASURED ACCURACY -- it caps what any downstream comparison can see at roughly 10 digits, no
-# matter how good the basis or the quadrature is.
+# ltol is the RELATIVE precision tolerance on the LAMBDA AXIS, as distinct from rtol (pencil
+# regularization) and ttol (tension/multiplicity). It is a STOPPING CRITERION, not a bound: the
+# minimizer converts it to an absolute tolerance against the bracket, tol = ltol*lam (see
+# opt.minimize_on_bracket, "get absolute tolerance from relative"), and quits once the bracket
+# is narrower than that or the parabolic step stops moving by more than that. So it roughly
+# sets how many SIGNIFICANT digits of lam the search will work for before calling it good
+# enough.
 #
-# **Set ltol=1e-14 whenever you are measuring ground-truth or best-case performance.** Leaving
-# it at the default silently turns a basis study, a convergence rate, or a regression check into
-# a measurement of this constant. That is not hypothetical: a convergence study in this repo
-# reported a "~10 digit plateau" for the Fourier-Bessel basis on L_shape and blamed the basis,
-# when the same basis reaches 15.7 digits at n=64 under a tighter tolerance --
+# **Set ltol=1e-14 whenever you are measuring ground-truth or best-case performance.** The 1e-8
+# default is fine for locating eigenvalues and quits far too early to resolve anything past
+# ~8 digits, so leaving it there silently turns a basis study, a convergence rate, or a
+# regression check into a measurement of where the search gave up. That is not hypothetical: a
+# convergence study in this repo reported a "~10 digit plateau" for the Fourier-Bessel basis on
+# L_shape and blamed the basis, when the same basis reaches 15.7 digits at n=64 once the search
+# is allowed to continue --
 #
 #     n_basis                 64     160     240
-#     ltol=1e-8 (default)   10.7    12.0     9.3     <- degrades with n
+#     ltol=1e-8 (default)   10.7    12.0     9.3     <- scatter from stopping early, not a trend
 #     polished to 1e-14     15.7    14.5    14.6
 #
 # -- and the reference tables in lappy.reference were themselves produced with the tighter

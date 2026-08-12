@@ -3202,3 +3202,20 @@ stands. Everything quantitative about convergence does not.
 **Separately**: Hayden's own 14-digits-lost was a third thing again -- a notebook that had not
 passed the column-normalized basis to the solver. Three different ways to read a good basis as
 a bad one, in one evening, none of them a regression.
+
+### Addendum: what `ltol` actually is
+
+The retraction above describes `ltol_default = 1e-8` as capping measurable accuracy near 10
+digits. That is the right conclusion from the wrong mechanism, and Hayden corrected it.
+
+`ltol` is a RELATIVE stopping criterion on the lambda axis, not a bound. `minimize_on_bracket`
+turns it into an absolute tolerance against the bracket -- `tol = ltol*lam`, commented in
+`opt.py` as "get absolute tolerance from relative" -- and the minimizer quits once the bracket
+is narrower than that, or the parabolic step stops moving by more than that. So it roughly sets
+how many SIGNIFICANT digits of lam the search will work for before calling it good enough.
+
+Two things follow that the "cap" framing got wrong. There is no ceiling: the answer lands
+wherever the early stop leaves it, which can be better or worse than the tolerance suggests.
+And the 10.7 / 12.0 / 9.3 sequence is therefore scatter, not a trend -- the annotation
+"degrades with n" on that row was over-read. Nothing about the retraction's conclusion changes;
+the search was still the limit, and 1e-14 is still what ground-truth measurement needs.
