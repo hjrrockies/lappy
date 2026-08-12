@@ -243,11 +243,21 @@ def probe(domain, spec, colloc, lam_star, lam_off=(), probe_grid=(), lam_max=Non
 
         best = min(sig_grid) if len(sig_grid) else (sig_star[0] if len(sig_star)
                                                     else float('nan'))
+        # sigma is NOT collocation-invariant: it is ||A_B x|| / ||A_I x|| over discrete point
+        # sets, so the numerator grows with boundary samples and the denominator with interior
+        # ones, giving sigma a sqrt(n_bdry/n_int) factor that has nothing to do with the basis.
+        # Measured: across a 4x boundary by 5x interior grid, log10 sigma* moved 0.662 decades
+        # on both square and disk -- and sqrt(4*5) = 4.5, i.e. 0.65 decades, the whole effect.
+        # Dividing it out collapses the spread to 0.012 (square) and 0.028 (disk). `sigma_hat`
+        # is therefore the comparable quantity across collocation settings, and the raw value is
+        # kept beside it because it is what the solver actually reports.
+        scale = np.sqrt(n_int/max(np.sum(n_per_seg), 1))
         rec.update(
             lam_star=[float(l) for l in lam_star], sigma_at_lamstar=sig_star,
             lam_off=[float(l) for l in lam_off], sigma_off=sig_off,
             probe_grid=[float(l) for l in probe_grid], sigma_grid=sig_grid,
-            sigma_star=best,
+            sigma_star=best, sigma_hat=float(best*scale), colloc_scale=float(scale),
+            sigma_hat_at_lamstar=[float(x*scale) for x in sig_star],
             sigma_eig_median=float(np.median(sig_star)) if len(sig_star) else None,
             sigma_eig_max=float(np.max(sig_star)) if len(sig_star) else None,
             sigma_off_median=float(np.median(sig_off)) if len(sig_off) else None,

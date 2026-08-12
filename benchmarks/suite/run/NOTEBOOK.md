@@ -3399,3 +3399,52 @@ would be read as the basis running out of approximation power. Pinning must be r
 LARGEST n in the ladder -- fix `n_bdry` at a safe multiple of `n_max` and hold it there -- so
 the ratio stays clear of the threshold at every point. The knob study's collocation control (C3)
 was meant to find this; it turned up before C3 ran.
+
+## S0 controls, and a collocation-invariant objective
+
+Running the per-domain controls turned up two things worth more than the controls themselves.
+
+**Controls run at saturation measure the floor, not the knob.** The first S0 pass used a
+hardcoded pair of basis sizes (48, 96) and reported every knob "insensitive" on the square --
+because at n>=48 the square sits at 3-6e-16 and nothing can move there. `informative_sizes` now
+picks the sizes from the domain's own curve, keeping only those whose `sigma*` is at least 1e3
+above the censor level. On square that is n = 12 and 32; on disk, 16 and 64.
+
+**C6 justified itself on the first two domains.** Off-eigenvalues are midpoints between
+consecutive reference eigenvalues, and the check is whether sigma at the midpoint is flat
+against `lam*(1 +- 1e-3)`. Square: 1 of 4 dropped -- the midpoint sat on 49.348 = 5 pi^2, a real
+eigenvalue not in the slice being used, showing 3.70e-16 against 1.76e-03 either side. Disk: 2
+of 4 dropped, the disk's closely spaced modes making midpoints land on the spectrum routinely.
+Without the check those would have read as contrast collapses and been blamed on the basis.
+
+### sigma is not collocation-invariant, but sigma * sqrt(n_int / n_bdry) is
+
+C3 came back SENSITIVE on both domains at exactly 0.662 and 0.663 decades, which is too equal to
+be a property of either domain. `sigma` is `||A_B x|| / ||A_I x||` over discrete point sets, so
+the numerator grows with boundary samples and the denominator with interior ones; the C3 grid
+spans 4x in boundary points and 5x in interior, and sqrt(4*5) = 4.5, i.e. 0.65 decades. The
+whole "sensitivity" is that factor.
+
+Dividing it out:
+
+    log10 spread across the C3 grid    raw sigma*   sigma * sqrt(n_int/n_bdry)   contrast
+    square n=12                             0.662                        0.012      0.021
+    square n=32                             0.662                        0.012      0.022
+    disk   n=16                             0.663                        0.028      0.007
+    disk   n=64                             0.663                        0.028      0.268
+
+Direct check on one basis, square n=32: raw sigma* runs 2.67e-12 to 1.23e-11 across the grid
+(4.6x), `sigma_hat` runs 4.88e-12 to 5.00e-12 (2.5%).
+
+So `sigma_hat = sigma * sqrt(n_int / n_bdry)` is the comparable quantity, and it changes the
+program's posture on collocation: it is not a confound that must be pinned to a magic value, it
+is a known scaling that can be divided out. Pinning is still done -- it keeps rows honest and
+avoids crossing the boundary-to-column ceiling -- but results are now comparable ACROSS
+collocation settings, including against production runs whose point counts differ. Contrast is
+independently invariant (the factor cancels in a ratio of two sigmas at the same collocation),
+with one exception worth watching: disk at n=64 spread 0.268, near the floor.
+
+**C4 (rng) and C5 (rtol) are insensitive on both domains** -- iqr 0.01 across five seeds, and
+0.00 across rtol from 1e-14 to 1e-10 with `n_reg` moving only at the last digit. Per the "full
+once, light thereafter" decision, both drop to spot-checks on later domains; C3 is replaced by
+recording `sigma_hat`, and C6 stays mandatory since it has already fired twice.
