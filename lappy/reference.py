@@ -387,7 +387,27 @@ def ellipse_eigs(k, a=2.0, b=1.0):
     pipeline (a re-check run was killed after 5+ minutes without
     finishing, unusually slow compared to a=2's ~1-2 minutes) -- their
     values are from the earlier, less careful pass: accurate to at least
-    7 digits, worst case ~6.7 digits at a=3."""
+    7 digits, worst case ~6.7 digits at a=3.
+
+    **DISPUTED: the a=2 FIRST eigenvalue is contradicted by an independent
+    solve and the 13.3-digit claim does not hold for it.** Value NOT changed
+    here -- that is a deliberate decision, since a reference value feeds
+    certified results elsewhere. Measured 2026-08-12:
+
+        table                        3.566726599853406
+        solve_domain_v2 n_basis=160  3.566726602928859   tension 4.8e-15
+        solve_domain_v2 n_basis=240  3.566726602928862   tension 3.5e-15
+        solve_domain_v2 n_basis=320  3.566726602928861   tension 3.7e-15
+
+    The three in-house values agree with each other to 7.5e-16 and all differ
+    from the table by 8.62e-10 relative. lambda_2..4 agree with the table to
+    2.7e-13 - 4.4e-12, so it is this one entry, not the pipeline.
+
+    Independently corroborated: MPS tension at the tabulated lambda_1 sits at
+    8.46e-10 for EVERY basis tried (offsets, multipole orders, spacings, and
+    64 to 192 columns -- identical to three figures), which is the signature
+    of a displaced reference rather than a basis limit, and matches the 8.62e-10
+    discrepancy. See benchmarks/suite/run/NOTEBOOK.md."""
     if k > 10:
         raise ValueError("Only the first 10 eigenvalues are available")
     if a == 2.0 and b == 1.0:

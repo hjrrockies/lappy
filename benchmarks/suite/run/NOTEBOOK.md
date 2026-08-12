@@ -3488,3 +3488,46 @@ worth three orders at a BAD offset (legendre 3.8e-13 against even 2.0e-10 at d/h
 at a good one -- i.e. better spacing partly compensates for a mis-placed source ring, which is
 a hint that the two knobs are not independent and the (d, spacing) pair deserves the factorial
 treatment that (d, order) got.
+
+## The ellipse a=2 reference's first eigenvalue is wrong, and it was masquerading as a basis limit
+
+Chasing the disk-vs-ellipse disagreement from the entry above turned up a defect in
+`lappy.reference`, and the way it presented is worth recording as much as the defect.
+
+**Symptom.** On `ellipse(2,1)`, `sigma_hat` sat at 8.46e-10 for every basis tried -- d/h of 2 and
+4, multipole orders 1, 2, 3, both spacings, and 64, 128 and 192 columns. Identical to three
+significant figures across all of them. A limit that does not move when the basis changes is not
+a property of the basis.
+
+**Discriminator.** Basis-independence alone cannot separate "the reference is displaced" from
+"the boundary parametrization is displaced" -- both are common-mode across bases. The designed
+check (C2) settles it by computing the eigenvalue independently:
+
+    table                        3.566726599853406
+    solve_domain_v2 n_basis=160  3.566726602928859   tension 4.8e-15
+    solve_domain_v2 n_basis=240  3.566726602928862   tension 3.5e-15
+    solve_domain_v2 n_basis=320  3.566726602928861   tension 3.7e-15
+
+The three in-house values agree with each other to 7.5e-16 and all differ from the table by
+8.62e-10 -- which is the 8.46e-10 plateau, so the plateau WAS the reference error.
+`lambda_2..4` agree with the table to 2.7e-13 through 4.4e-12, so this is one bad entry and not
+the pipeline that produced the table.
+
+The docstring claims "a=2,b=1: 13.3-14.4 digits (n_basis=240, re-verified with the corrected
+pipeline)". For `lambda_1` that is wrong by about four orders. The value is flagged in the
+docstring and **deliberately not changed**: a reference value feeds certified results elsewhere,
+so replacing it is the sort of edit that should be decided rather than slipped in. Nothing in
+`tests/` depends on it; `benchmarks/reference/audit.py` and `run_sym.py` do.
+
+**What this invalidates.** The bucket-2 study's "ellipse_a2 wants d/h = 0.88", one of the eight
+points behind the wavelength rule in `docs/basis_heuristics.md`, was measured against this
+entry. Above d/h ~ 1 every offset hits the 8.5e-10 reference floor and looks equally good, so the
+recorded optimum is wherever noise landed. That resolves the disk-vs-ellipse tension flagged in
+the previous entry: the two measurements never disagreed, one of them was taken in a regime where
+the knob does not matter.
+
+**Generalize the lesson, because this is the fourth variant of it in this notebook.** A quantity
+that refuses to move when you change the thing it is supposed to depend on is measuring something
+else. The previous three were mpmath.quad as truth, the monkeypatched before/after, and the
+lam=1 order optimum. The tell here was cheap and available immediately: three significant figures
+of agreement across six genuinely different bases is not physics.

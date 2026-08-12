@@ -63,6 +63,17 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       ninth positional). Two names for the lambda-axis tolerance, neither of them obviously that.
       Rename or alias.
 
+## Reference values
+- [ ] **DECIDE: `ellipse_eigs(a=2)[0]` is wrong at the 9th digit.** Table 3.566726599853406;
+      three independent solves (n_basis 160/240/320, tension ~4e-15) agree with each other to
+      7.5e-16 on 3.566726602928861, a relative difference of 8.62e-10. lambda_2..4 are fine.
+      Flagged in the docstring, value NOT changed -- replacing a reference feeds certified
+      results elsewhere, so it needs a decision. See NOTEBOOK.
+- [ ] Re-verify the other unverified reference entries with the corrected pipeline before using
+      them for knob conclusions: ellipse a=3/a=4 (~6.7 digits), chevron pairs other than (1,2),
+      cut_square r=0.25, H_shape, iso_tri h=16/20. The ellipse a=2 case shows a documented
+      accuracy claim can be four orders optimistic.
+
 ## Quadrature / eigenfunction integrals
 - [ ] The near-slit ceiling has no lever. `cornerinterp` tops out near 1e-10 for `nu <~ 0.6` on
       a dense corner family, and more order makes it worse past the optimum. Candidates: panel
