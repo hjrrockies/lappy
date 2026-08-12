@@ -3531,3 +3531,58 @@ that refuses to move when you change the thing it is supposed to depend on is me
 else. The previous three were mpmath.quad as truth, the monkeypatched before/after, and the
 lam=1 order optimum. The tell here was cheap and available immediately: three significant figures
 of agreement across six genuinely different bases is not physics.
+
+## fs_frac is the dominant knob and its optimum inverts between geometries
+
+Two coarse screens with collocation decoupled and `sigma_hat` as the objective. They disagree
+about the most important knob as strongly as it is possible to disagree.
+
+    L_shape  (1 singular corner, REENTRANT nu=2/3)      n=48
+      fb centre        7.3e-11   <- only admitted config, at either size
+      mixed  frac=0.25 8.6e-09     fb+bdry 0.25  8.8e-09
+      mixed  frac=0.5  1.0e-06     fb+bdry 0.5   3.2e-07
+      mixed  frac=0.75 4.6e-06     fb+bdry 0.75  1.8e-06
+
+    iso_tri(h=8)  (3 singular corners, all CONVEX, thin domain)   n=128
+      fb centre        5.4e-05   <- worst, off-pace by seven orders
+      mixed  frac=0.25 1.8e-11     fb+bdry 0.25  1.7e-08
+      mixed  frac=0.5  5.8e-12     fb+bdry 0.5   8.1e-12
+      mixed  frac=0.75 3.4e-12     fb+bdry 0.75  3.2e-12
+
+Optimal `fs_frac` is 0 on one and ~0.75 on the other, and the penalty for getting it wrong is
+five to seven orders either way. Every other knob measured so far -- offset, multipole order,
+spacing, C, sigma, FB re-allocation -- moves things by less than this one does.
+
+**Corner COUNT is not the discriminator.** L_shape has one singular corner, iso_tri has three,
+and that is the wrong axis: the current constructor branches on exactly this and would send
+iso_tri to the blend for having several singular corners, which happens to be right, and L_shape
+to pure FB for having one, also right -- but chevron(1,2) has four by the same test and wants
+something else again. The physical difference here is corner TYPE: L_shape's singular corner is
+reentrant (nu = 2/3, a genuine r^(2/3) singularity that corner Fourier-Bessel represents
+exactly), while iso_tri's are sharp convex (nu up to 12.6 at the apex -- nearly analytic, nothing
+for FB to capture) on a thin elongated domain that fundamental solutions suit.
+
+**Placement matters only while FS is a minority.** On iso_tri at frac=0.25, lightning corner FS
+beats boundary FS by a thousand times (1.8e-11 against 1.7e-08); by frac=0.75 they are tied
+(3.4e-12 against 3.2e-12). So "corner FS is essential here" is true at low fraction and becomes
+"any FS placement will do" at high fraction. Worth knowing before a branch predicate is written
+around placement.
+
+**The separation is invisible at small n.** At n=24 on iso_tri every blend sits within a factor
+of 20 (3.1e-04 to 5.5e-03) and `fb centre` looks competitive. The seven-order gap only opens by
+n=128. A coarse screen run at a convenient small size would have concluded the knob does not
+matter -- the same failure mode as running controls at saturation, in the other direction.
+
+### A methodological fix this exposed: the censor cannot come from one basis
+
+`build_card` originally took `sigma_censor` from a single reference build, which is pure
+Fourier-Bessel wherever the domain has corners. On iso_tri(h=8), where pure FB is the WORST
+family, that produced a censor of 4.65e-04 and marked every genuinely good configuration "below
+the reference floor" -- 0 of 90 admitted. A censor derived from one arbitrary basis measures that
+basis.
+
+`detect_floor` now builds several diverse families and censors only if the best two AGREE within
+3x, on the reasoning that a reference floor is common to all bases -- which is exactly how the
+wrong ellipse a=2 eigenvalue announced itself. On iso_tri the two best disagree (mixed 8.5e-11,
+fb+bdry 1.2e-09), so no floor is detected and nothing is censored, which is correct: the basis is
+still the limit there.

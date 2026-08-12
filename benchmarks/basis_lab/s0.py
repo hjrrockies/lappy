@@ -89,6 +89,46 @@ def c6_off_points(domain, lam_off, lam_star, spec, colloc, lam_max, rtol=1e-12):
     return keep, dropped
 
 
+def detect_floor(domain, lam_star, lam_off, lam_max, colloc, n_max, agree=3.0):
+    """The level below which sigma is measuring the REFERENCE, not the basis.
+
+    Detected, not assumed, and not taken from one basis. If the reference is the binding limit
+    then every good basis bottoms out at the SAME value -- that is exactly how the wrong
+    ellipse a=2 eigenvalue announced itself (8.46e-10 for six unrelated configurations,
+    identical to three figures). So: build several diverse families at a large size, and if the
+    best two agree within `agree`, that common value is the floor. If they disagree, no floor
+    has been reached and nothing is censored.
+
+    The first version took the censor from a single `_ref_basis` build, which is pure Fourier-
+    Bessel on any domain with corners. On iso_tri(h=8) -- a thin triangle where pure FB is known
+    to be the worst family -- that produced a censor of 4.65e-04, marking every genuinely good
+    config "below the reference floor" and admitting 0 of 90. A censor derived from one
+    arbitrary basis is a measurement of that basis.
+    """
+    fams = []
+    if len(domain.corners):
+        fams += [('pure_fb', {}), ('mixed', {'fs_frac': 0.5}),
+                 ('fb_plus_bdry_fs', {'fs_frac': 0.5, 'fs_d_over_h': 2.0})]
+    fams += [('pure_fs_bdry', {'fs_d_over_h': 2.0})]
+    vals = []
+    for fam, over in fams:
+        try:
+            r = probe(domain, default_spec(fam, n_max//2, lam_max, **over), colloc,
+                      lam_star, lam_off, lam_max=lam_max, diagnostics=False)
+        except Exception:
+            continue
+        if r['ok'] and np.isfinite(r['sigma_eig_median']) and r['sigma_eig_median'] > 0:
+            vals.append((float(r['sigma_eig_median']), fam))
+    vals.sort()
+    if len(vals) < 2:
+        return 0.0, 'fewer than two families built; nothing censored'
+    (v0, f0), (v1, f1) = vals[0], vals[1]
+    if v1 <= agree*v0:
+        return float(np.sqrt(v0*v1)), f'{f0} and {f1} agree ({v0:.2e}, {v1:.2e}) -> common floor'
+    return 0.0, (f'best two disagree ({f0} {v0:.2e} vs {f1} {v1:.2e}); '
+                 'no common floor, nothing censored')
+
+
 def build_card(domain_key, domain, eigs, ref_digits, provenance, n_eig=4, n_max=128):
     """C2 + C2b + C6 -> the frozen domain card everything downstream references."""
     e = np.sort(np.asarray(eigs, dtype=float))[:n_eig + 1]
@@ -101,8 +141,8 @@ def build_card(domain_key, domain, eigs, ref_digits, provenance, n_eig=4, n_max=
     print(f"  C6 off-points: kept {len(keep)} of {len(lam_off)}"
           + (f"; dropped {dropped}" if dropped else ""))
 
-    r = probe(domain, spec, colloc, lam_star, keep, lam_max=lam_max, diagnostics=False)
-    censor = float(r['sigma_eig_median']) if r['ok'] else None
+    censor, why = detect_floor(domain, lam_star, keep, lam_max, colloc, n_max)
+    print(f"  C2 censor: {censor:.2e} ({why})")
     card = dict(domain_key=domain_key, lam_star=lam_star, lam_off=keep,
                 lam_star_provenance=provenance, ref_floor_digits=float(ref_digits),
                 probe_grid=probe_grid_for(lam_star[0], ref_digits), lam_max=lam_max,
@@ -214,10 +254,23 @@ def c5_rtol(domain_key, domain, card, ns, rtols=(1e-14, 1e-12, 1e-10)):
     return out
 
 
+# (builder, eigenvalue table, documented digits, provenance). The digit figure is what gates
+# censoring, so it is the DOCUMENTED claim -- and ellipse a=2 lambda_1 is a standing reminder
+# that a documented claim can be four orders optimistic, which is why C2 exists.
 DOMAINS = {
-    'square':  (lambda: G.rect(1.0, 1.0), lambda k: ref.rect_eigs(k, 1.0, 1.0), 15.0, 'analytic'),
-    'disk':    (lambda: G.disk(1.0), lambda k: ref.disk_eigs(k, 1.0), 15.0, 'analytic'),
-    'L_shape': (G.L_shape, ref.L_shape_eigs, 14.0, 'reference_table'),
+    'square':      (lambda: G.rect(1.0, 1.0), lambda k: ref.rect_eigs(k, 1.0, 1.0),
+                    15.0, 'analytic'),
+    'disk':        (lambda: G.disk(1.0), lambda k: ref.disk_eigs(k, 1.0), 15.0, 'analytic'),
+    'iso_right_tri': (lambda: G.iso_right_tri(1.0), lambda k: ref.iso_right_tri_eigs(k, 1.0),
+                      15.0, 'analytic'),
+    'L_shape':     (G.L_shape, ref.L_shape_eigs, 14.0, 'reference_table'),
+    'iso_tri_h1':  (lambda: G.iso_tri(1.0), lambda k: ref.iso_tri_eigs(k, 1.0),
+                    13.0, 'reference_table'),
+    'iso_tri_h8':  (lambda: G.iso_tri(8.0), lambda k: ref.iso_tri_eigs(k, 8.0),
+                    11.3, 'reference_table'),
+    'chevron_1_2': (lambda: G.chevron(1.0, 2.0), lambda k: ref.chevron_eigs(k, 1.0, 2.0),
+                    12.0, 'reference_table'),
+    'H_shape':     (G.H_shape, ref.H_shape_eigs, 7.8, 'reference_table'),
 }
 
 
