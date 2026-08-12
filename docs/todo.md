@@ -74,11 +74,13 @@ kept 21 terms instead of 128), not evidence against FB.
       constructor uses) separates nothing; sharpest convex corner is refuted (iso_tri h=0.5 and
       h=4 are equally sharp with opposite pure-FB verdicts); bbox aspect is refuted (h=0.5 is
       4:1 and fine, h=2 is 1:1 and fails). See NOTEBOOK retraction.
-- [ ] Q3 ANSWERED: L_shape's pure-FB win survives a fair retest (corrected d/h=2 offset,
-      budget framing) -- augmentation at m=32 gives 4.2e-10 against pure FB's 9.1e-16. But the
-      benefit of augmentation is monotone in ELONGATION: ~1x at aspect 1, 16x at 2:1, 34x at
-      3:1. So the design wants a continuous fs_frac driven by an elongation measure, not a
-      branch. See NOTEBOOK.
+- [ ] Q3 ANSWERED (partly): L_shape's pure-FB win survives a fair retest -- augmentation at
+      m=32 gives 4.2e-10 against pure FB's 9.1e-16, even at the corrected d/h=2 offset. The
+      follow-on elongation claim was WITHIN-FAMILY and is retracted: bbox aspect 4.0 occurs
+      twice inside iso_tri with benefits 7 orders apart. See NOTEBOOK correction.
+- [ ] SIXTH failed predicate (elongation). Before hunting a seventh, decide Q4: a self-certifying
+      constructor (size, measure sigma_hat and contrast, escalate) does not need a predicate and
+      degrades gracefully. The evidence increasingly favours it.
 - [ ] `detect_floor` computes the censor at `n_max//2`, so L_shape's censor came out at 2.84e-14
       while pure FB at n=128 reaches 9.1e-16 -- thirty times below its own "floor". Derive the
       censor from the reference's documented accuracy, or from the largest size in the ladder.

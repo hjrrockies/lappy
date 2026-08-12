@@ -3883,3 +3883,45 @@ A censor derived at one basis size is not a property of the reference. It should
 reference's documented accuracy, or from the best build at the LARGEST size in the ladder. The
 comparison above is unaffected (pure FB beats augmentation by four orders, far outside any
 censor question), but the flag is wrong and would mislead on a closer call.
+
+### Immediate correction: the elongation claim was within-family
+
+The entry above concluded that the benefit of augmentation is monotone in elongation, from four
+points. Hayden pointed out that all four are L-shapes -- `asym_L` IS the L-shape family -- so the
+axis was varied inside a single shape family and reported as general. Checking the other family
+kills it:
+
+    domain           family param   bbox aspect   pure FB   best aug    benefit
+    iso_tri h=0.5            0.25           4.0   2.1e-14    1.6e-14      1.3
+    iso_tri h=1              0.50           2.0   2.7e-15    2.6e-15      1.0
+    iso_tri h=2              1.00           1.0   5.1e-08    1.2e-14    4.2e+06
+    iso_tri h=4              2.00           2.0   1.4e-05    1.6e-13    8.8e+07
+    iso_tri h=8              4.00           4.0   5.4e-05    3.4e-12    1.6e+07
+    L_shape                  1.00           1.0   9.1e-16    2.0e-14      0.05
+    asym_L 1:1               1.00           1.0   1.1e-14    6.5e-15      1.7
+    asym_L 2:1               2.00           2.0   3.1e-09    1.9e-10       16
+    asym_L 3:1               3.00           3.0   2.8e-07    8.1e-09       35
+
+**Bounding-box aspect 4.0 appears twice inside the iso_tri family with benefits seven orders
+apart** (1.3 at h=0.5, 1.6e+07 at h=8). The only shared geometric measure fails within one
+family, let alone across two. Each family is monotone in its OWN parameter, but `h` and "leg
+ratio" are not the same quantity, and the effect sizes do not share a scale either -- L-shapes
+span 1 to 35, triangles span 1 to 9e7.
+
+So "elongation predicts the need for augmentation" is NOT established. What is established is
+two within-family regularities with no common measure, which is a much weaker statement and
+does not support a continuous `fs_frac = f(elongation)` in the constructor.
+
+**This is the fifth correction of the same shape in this notebook**, and the pattern is now
+clear enough to name: find a monotone trend inside one family, call it an axis, discover the
+second family measures something else. The previous four were mpmath.quad as truth, the
+monkeypatched before/after, the lam=1 order optimum, and the sharpest-convex-corner predicate.
+The tell each time was available before the claim: ask what is being HELD FIXED across the points
+supporting it. Here, shape family was held fixed across all four.
+
+**Where that leaves the design.** Six predicates have now failed: corner count, sharpest convex
+corner, bbox aspect, FB budget concentration, non-integer pi/alpha at a convex corner, and
+elongation. The accumulating evidence is not that the seventh will work -- it is that a
+geometry-only predicate may not exist at the fidelity needed, which argues for the
+self-certifying architecture (size, measure `sigma_hat` and contrast, escalate on failure) over
+a predictive one. That is Q4, and it should probably be decided before any more predicate hunting.
