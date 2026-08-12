@@ -63,6 +63,15 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       ninth positional). Two names for the lambda-axis tolerance, neither of them obviously that.
       Rename or alias.
 
+- [ ] Branch predicate: the sharpest CONVEX corner (not corner count, not reentrancy) is what
+      predicts fs_frac across square/disk/L_shape/iso_tri_h8/chevron_1_2. chevron is the
+      discriminator -- reentrant like L_shape, but wants 75% FS where L_shape wants 0%.
+- [ ] Deconfound "sharp convex corner" from "thin domain": both current FS-hungry cases are
+      both. Sweep iso_tri h in {0.5,1,2,4,8} (all have references), and find a sharply cornered
+      domain that is NOT thin.
+- [ ] Deliverable tables must be "columns to reach precision p", never "sigma at fixed n" --
+      the square comparison inverts across the saturation crossing.
+
 ## Reference values
 - [ ] **DECIDE: `ellipse_eigs(a=2)[0]` is wrong at the 9th digit.** Table 3.566726599853406;
       three independent solves (n_basis 160/240/320, tension ~4e-15) agree with each other to

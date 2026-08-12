@@ -3586,3 +3586,49 @@ basis.
 wrong ellipse a=2 eigenvalue announced itself. On iso_tri the two best disagree (mixed 8.5e-11,
 fb+bdry 1.2e-09), so no floor is detected and nothing is censored, which is correct: the basis is
 still the limit there.
+
+## Five domains screened: what actually predicts the right basis
+
+S0 + S1 complete on square, disk, L_shape, iso_tri(h=8) and chevron(1,2), all with collocation
+decoupled and `sigma_hat` as the objective.
+
+    domain        corner character                   best admitted        pure FB, same size
+    square        all REGULAR (nu=2)                 blend, saturates     ties at the floor
+                                                     ~20% sooner
+    disk          no corners                         pure bdry FS,        n/a
+                                                     d/h ~ 2-4
+    L_shape       1 REENTRANT (nu=2/3)               fb centre 7.3e-11    IS the best
+    iso_tri h=8   3 sharp CONVEX (nu<=12.6), thin    frac 0.75  3.2e-12   5.4e-05, 1.7e7 x worse
+    chevron 1,2   1 reentrant + 3 sharp convex       frac 0.75  3.5e-11   1.9e-08, 532 x worse
+
+**The predicate that fits is the SHARPEST CONVEX CORNER, and it overrides the reentrant one.**
+chevron is the discriminating case: it has a reentrant corner exactly like L_shape, and L_shape
+wants no fundamental solutions at all while chevron wants 75%. What chevron has that L_shape does
+not is corners of 0.102pi (18 degrees). iso_tri(h=8), with no reentrant corner at all but an
+apex of 0.079pi, wants the same 75%. So a sharp convex corner demands FS regardless of whether a
+reentrant corner is also present, while corner COUNT -- which is what `make_default_basis`
+branches on -- separates none of these correctly.
+
+**Square, read honestly.** The screen first reported pure FB as 1394x worse than the best blend
+at n=32, which is an artifact of comparing across a saturation crossing -- the same mistake as
+reading the ellipse plateau. At matched REALIZED column counts:
+
+    realized 32 columns   pure_fb 4.91e-12   mixed frac=0.25 2.29e-15
+    realized 40 columns   pure_fb 3.33e-16   mixed frac=0.25 2.28e-15   (tied at the floor)
+
+Both reach machine precision; the blend gets there in about 20% fewer columns. That is a real
+but modest saving, not an order-of-magnitude quality difference, and it is the sort of claim that
+inverts depending on which size you look at. Any deliverable table must therefore be "columns to
+reach precision p", never "sigma at fixed n".
+
+**Contrast keeps earning its place.** On chevron the single best raw number at n=128 was
+`C=2.0,sigma=2.0` at 9.66e-12 -- better than the admitted winner's 3.53e-11 -- with contrast
+0.95. No eigenvalue signal; rejected. Raw sigma alone would have crowned it.
+
+### Open
+
+The predicate is a hypothesis from five domains, three of which are the interesting ones. It
+needs the thin/elongated axis separated from the sharp-angle axis, which iso_tri(h) sweeps
+directly (h = 0.5, 1, 2, 4, 8 all have references), and it needs a domain with a sharp convex
+corner that is NOT thin. Until then "sharp convex corner" and "thin domain" are confounded --
+both of iso_tri(h=8) and chevron(1,2) are thin AND sharply cornered.
