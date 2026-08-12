@@ -81,6 +81,12 @@ kept 21 terms instead of 128), not evidence against FB.
 - [ ] Elongated L-shapes (asym_L 5:1) cannot be certified by ANY basis tried -- two good bases
       disagree by more than their own tension. Either a harder domain than it looks, or a gap
       in the whole approach. Worth a look before it becomes a blind spot.
+- [ ] `fb_corner_fraction`/`fs_corner_fraction` give regular corners weight ZERO, so on a
+      domain with one singular corner the default stacks both families there and leaves every
+      other corner bare. Measured cost on asym_L: the default is the worst of six constructions
+      tried, 16x behind FB@singular + boundary FS. Allocation is the fix, not a new family.
+- [ ] Singular corner needs ~a quarter of the budget, not all of it: m=0 fails categorically,
+      m=16-64 of 128 is a broad optimum, m=128 (today's default) is ~10x worse than m=64.
 - [ ] fs_frac=0.25 as a robust default: never worse than 1.8e-11 across the whole iso_tri
       family where pure FB spans eleven orders. Costs 100x on L_shape though.
 - [ ] Deliverable tables must be "columns to reach precision p", never "sigma at fixed n" --

@@ -3769,3 +3769,62 @@ and frac=0.25 gives 8.6e-09. So a small FS admixture is a defensible DEFAULT, wi
 for the one structure where it is known to win -- a domain whose only non-right-angle corner is
 reentrant. That is a rule fitted to the evidence rather than a mechanism, and it should be
 labelled as such wherever it lands in code.
+
+## Augmenting a corner-FB basis: the singular corner needs a quarter of the budget, not all of it
+
+Design constraint from Hayden: a singular corner ALWAYS needs corner Fourier-Bessel terms, so the
+question is never FB-versus-FS but how to AUGMENT a corner-FB basis. Two augmentations to try:
+fundamental solutions along the boundary, or clustered at corners.
+
+On the asymmetric L both `fb_corner_fraction` and `fs_corner_fraction` return weight 1 for the
+lone reentrant corner and 0 for all five regular ones, so the default blend stacks BOTH families
+on one corner and leaves five corners bare. That makes three untried directions.
+
+**All three help; the shipped default is the worst thing tested.** asym_L 2:1, matched column
+counts 124-135, lam* trusted by cross-basis agreement (9.8e-12):
+
+    baseline: FB all on the reentrant corner                 3.06e-09     --
+    FB spread, angle-weighted                                2.00e-09    1.5x
+    FB uniform over all corners                              4.13e-10    7.4x
+    FB@reentrant + boundary FS d/h=2, frac 0.5               1.85e-10   16.5x   <- best
+    FB@reentrant + FS clustered at regular corners, 0.5      1.02e-09    3.0x
+    default blend (FB and FS both on the reentrant corner)   1.54e-09    2.0x
+
+At 3:1 the ordering holds and widens: baseline 2.75e-07 against 8.10e-09 for boundary FS, 34x.
+
+**The combination is evidence FOR the constraint.** FB-uniform PLUS boundary FS is worse than
+boundary FS alone (2.48e-09 against 1.85e-10). Uniform allocation leaves the singular corner ~21
+terms; give half the remainder to FS and it drops to ~10, and the result degrades. Dilute the
+singular corner far enough and you lose it.
+
+### How much FB does the singular corner actually need
+
+Hold m terms at the singular corner, spend the remaining 128-m three ways:
+
+    m      surplus->FB@regular   surplus->boundary FS   surplus->clustered FS
+    0            6.1e-02 *             (won't build)          (won't build)
+    4            3.1e-04               2.6e-04                1.9e-04
+    8            1.5e-07               1.1e-07                3.7e-07
+    16           4.3e-10               1.9e-09                3.4e-07
+    32           1.4e-09               7.3e-10                2.7e-07
+    64           2.7e-10               1.8e-10                9.5e-10
+    128          3.1e-09               3.1e-09                3.1e-09  (= today's default)
+                                                     * contrast below the broken band
+
+**m=0 fails categorically** -- 6.1e-02 with no eigenvalue signal at all, and the FS-only variants
+do not even build. The constraint is not approximately right, it is absolute.
+
+**The default overshoots.** Six orders of improvement from m=4 to m=16, a broad optimum over
+m ~ 16-64, and m=128 -- everything on the singular corner, which is what ships -- is about ten
+times worse than m=64. The singularity needs on the order of a QUARTER of the budget; spending
+the rest there is waste, and spending it on augmentation is worth an order.
+
+**Clustered corner FS is the weakest of the three augmentations**, by two to three orders at
+m=16-32 (3.4e-07 against 4.3e-10), catching up only at m=64. Boundary FS and FB-at-regular-corners
+are comparable, boundary FS slightly ahead at larger m.
+
+Caveat on the fine rankings: `budget.py` still computes its trust figure as
+`max(tensions, disagreement)`, the over-conservative form corrected in `asym_l.py`, so its
+below-trust flags are over-marked and the distinctions among 1.8e-10 / 2.7e-10 / 4.3e-10 may not
+be resolvable. The structure -- m=0 fails, m=8 at 1e-07, m=16-64 at ~1e-09, m=128 at 3.1e-09 --
+sits far above any plausible trust level.
