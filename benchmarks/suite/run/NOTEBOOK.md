@@ -3270,3 +3270,61 @@ concluding anything about the basis; the instrument is now clean enough to separ
 A caution on the fitted rate labels: over 6-8 points, exponential and root-exponential are not
 reliably distinguishable, and the classifier's choice between them should not be quoted as a
 result. The curves themselves and the `n(precision)` read-off are the findings.
+
+## Tension contrast: the instrument that catches a basis with no eigenvalue signal left
+
+Hayden's design for the experiment, and the piece I did not have: score
+`sigma(off-eigenvalue) / sigma(at eigenvalue)`, not `sigma` alone. A basis that has gone
+ill-conditioned drives the tension down EVERYWHERE, and 1e-10 at an eigenvalue means nothing if
+it is 1e-10 halfway between two. Reference NON-eigenvalues are the midpoints between consecutive
+reference eigenvalues -- reproducible, and far enough from the spectrum that they cannot read as
+spurious minima.
+
+It earns its place immediately. `fs_corners` (pure lightning FS) on L_shape:
+
+    n     sig@eig   sig@off   contrast
+    96   2.40e-04  2.56e-04     1.1
+   128   1.27e-06  1.10e-06     0.9
+   192   5.43e-07  5.00e-07     0.9
+
+`sigma` alone falls three orders and looks like convergence. The contrast says there is no
+eigenvalue signal at all -- the tension is simply collapsing everywhere. `fs_corners` is
+degenerate on every corner domain tried (contrast 0.8-1.7 throughout on L_shape, chevron and
+H_shape), and it is HALF of what `make_default_basis` currently builds for a multi-singular-
+corner domain. The same instrument catches L_shape `mixed` at n=192, where the background falls
+to 1.0e-08 and the contrast collapses from 1.1e11 to 7.2e06.
+
+### Best construction per case, at n=192
+
+    domain                    pure_fb      mixed   fs_corners   fb+bdry_fs
+    rect(2,1)   0 singular    8.9e-16    3.3e-15      7.6e-13      5.1e-15
+    L_shape     1 singular    1.3e-15    1.4e-15      5.4e-07      2.4e-15
+    chevron     4 singular    4.4e-08    2.4e-09      1.1e-02      3.1e-11
+    H_shape     4 singular    3.3e-09    1.2e-07      9.9e-02      5.3e-10
+
+**The branch choices hold for 0 and 1 singular corners.** `pure_fb` reaches the machine floor on
+rect by n=64 and on L_shape by n=96, and nothing beats it.
+
+**They do not hold for several singular corners, and the winner is a construction with no
+branch.** `fb + boundary-offset FS` is best on BOTH multi-corner domains -- 3.1e-11 against the
+current `mixed` branch's 2.4e-09 on chevron, and 5.3e-10 against 1.2e-07 on H_shape. It wins on
+H_shape while HANDICAPPED: `by_boundary` at a wavelength-scaled offset drops 25% of its sources
+for landing inside the nonconvex domain (12 of 48 at n=96), so an offset that tapered near
+reentrant corners should do better still. This is the first real evidence for Hayden's "maybe
+boundary FS terms will help here", and against the lightning-FS half of the current mixed branch.
+
+### Read nothing past the reference's own resolution
+
+The published ceilings differ by orders and the tables say so: L_shape 14 digits, chevron(1,2)
+12, H_shape "at least 7.8". `sigma` at a reference value cannot go below roughly the reference's
+own error, so H_shape comparisons below ~1.2e-07 (7.8 digits at lam_1 = 7.73) and chevron below
+~4e-11 are not trustworthy. That does not touch the chevron ranking, which is decided at 1e-09
+where the reference is solid; it does mean the H_shape numbers should be re-run against a better
+reference before being quoted.
+
+**A displaced tension minimum is NOT proof the reference is wrong.** `sigma_floor_at` reports the
+local minimum near the reference, and on rect(2,1) -- whose reference is analytic -- the minimum
+sits below `sigma(lam_ref)` at n=32 and n=48. With an exact reference that can only be the finite
+basis's own minimum sitting off the true eigenvalue, i.e. the eigenvalue error. The flag was
+originally worded "lam_ref is the limit" and is now worded for both causes; distinguishing them
+takes the reference's provenance, not one measurement.

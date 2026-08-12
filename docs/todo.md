@@ -12,6 +12,14 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       heuristics.md` is *a* theory with partial evidence (the FS offset scaling with wavelength
       is the empirically grounded part), not a spec. Approach is open-ended: gather evidence for
       what works, taking the current implementation's ideas as inspiration rather than law.
+- [ ] `fb + boundary-offset FS` beats the current `mixed` branch on BOTH multi-singular-corner
+      domains (chevron 3.1e-11 vs 2.4e-09; H_shape 5.3e-10 vs 1.2e-07) and has no branch at all.
+      Its offset should taper near reentrant corners -- it currently drops 25% of its sources on
+      H_shape for landing inside the domain, and wins anyway.
+- [ ] `fs_corners` (lightning FS alone) is DEGENERATE on every corner domain tried: contrast
+      0.8-1.7, i.e. no eigenvalue signal. It is half of the current multi-corner branch.
+- [ ] H_shape's reference is only "at least 7.8 digits", which is above where the interesting
+      comparisons happen. Needs a better reference before its rankings can be quoted.
 - [ ] Size model must carry geometry: the same target precision costs n~48 on L_shape and
       >192 on chevron/H_shape. No geometry-independent `precision -> n` rule can work.
 - [ ] Corner COUNT does not pick the construction: `mixed` beats `pure_fb` on chevron and loses

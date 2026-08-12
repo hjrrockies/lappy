@@ -353,3 +353,100 @@ def tension_at(domain, build_basis, lam_true, ns, rng=7, bdry_mult=None, **kw):
 def report_tension(name, rows):
     curve = '  '.join(f'{n}:{s:.1e}' if np.isfinite(s) else f'{n}:--' for n, _, s, _, _ in rows)
     print(f"  {name:22} {curve}")
+
+
+# ── Contrast: tension AT eigenvalues against tension AWAY from them ──────────────────────────
+#
+# sigma(lam_true) alone can be fooled. A basis that has become ill-conditioned drives the
+# tension down EVERYWHERE, and 1e-10 at an eigenvalue is not interesting if it is also 1e-10
+# halfway between two of them -- there is no minimum left to find, and the eigenvalue search has
+# nothing to lock onto. So the figure of merit is the ratio
+#
+#     contrast = median sigma(off-eigenvalue) / median sigma(at eigenvalue)
+#
+# large is good. This is the same quantity `preflight.background_suspect` checks against
+# Moler--Payne, measured directly rather than inferred from a scan.
+#
+# THE REFERENCE IS ALSO A LIMIT. sigma near an eigenvalue grows with distance from it, so
+# standing at a reference value that is itself only good to d digits measures the reference's
+# error, not the basis: sigma bottoms out around C*|lam_ref - lam_true| and stalls there. The
+# published ceilings differ by orders -- L_shape 14 digits, chevron(1,2) 12, H_shape "at least
+# 7.8" -- so a curve must be read against its own domain's ceiling. `sigma_floor_at` reports
+# both sigma(lam_ref) and the local minimum of sigma near it: when the minimum is well below the
+# value at the reference, the reference is what is being measured.
+
+def sigma_floor_at(solver, lam_ref, rel_window=1e-6, n_probe=41):
+    """(sigma at lam_ref, min sigma near it, argmin of sigma).
+
+    A minimum below `sigma(lam_ref)` means this basis's tension minimum is DISPLACED from the
+    reference value. Two causes, and they are not distinguishable from one measurement: the
+    reference may be inexact, or the finite basis's minimum may genuinely sit off the true
+    eigenvalue (which is the eigenvalue error, and shrinks as the basis improves). On rect(2,1),
+    whose reference is analytic, it can only be the second -- so displacement must not be read as
+    "the reference is the limit" without checking the reference's own provenance first.
+    """
+    lams = lam_ref*(1.0 + np.linspace(-rel_window, rel_window, n_probe))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        sig = np.array([float(np.atleast_1d(solver.sigma(float(l)))[0]) for l in lams])
+    i = int(np.argmin(sig))
+    at_ref = float(np.atleast_1d(solver.sigma(float(lam_ref)))[0])
+    return at_ref, float(sig[i]), float(lams[i])
+
+
+def off_eigenvalue_points(eigs_ref, pad_frac=0.5):
+    """Reference NON-eigenvalues: midpoints between consecutive reference eigenvalues.
+
+    Midpoints rather than random draws so the points are reproducible and are genuinely far
+    from the spectrum -- a random lam in the window can land arbitrarily close to an eigenvalue
+    and read as a spurious minimum.
+    """
+    e = np.sort(np.asarray(eigs_ref, dtype=float))
+    return 0.5*(e[:-1] + e[1:])
+
+
+def tension_contrast(domain, build_basis, eigs_ref, ns, rng=7, n_eig_pts=4, **kw):
+    """Per basis size: median sigma at eigenvalues, median sigma off them, and the ratio.
+
+    Returns rows of (n, n_basis, sig_eig, sig_off, contrast, sig_floor, seconds), where
+    `sig_floor` is the best sigma found in a small window around the first reference eigenvalue
+    -- if it sits well below `sig_eig`, the reference value is the limit, not the basis.
+    """
+    eigs = np.asarray(eigs_ref, dtype=float)[:n_eig_pts]
+    offs = off_eigenvalue_points(np.asarray(eigs_ref, dtype=float)[:n_eig_pts + 1])
+    rows = []
+    for n in ns:
+        t0 = time.time()
+        try:
+            lam_max = 2.0*float(np.max(eigs))
+            basis = build_basis(domain, lam_max, n=n, **kw)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                solver = MPSEigensolver.from_domain(domain, basis=basis, rng=rng, prec=1e-14)
+                se = np.array([float(np.atleast_1d(solver.sigma(float(l)))[0]) for l in eigs])
+                so = np.array([float(np.atleast_1d(solver.sigma(float(l)))[0]) for l in offs])
+                _, floor, _ = sigma_floor_at(solver, float(eigs[0]))
+            sig_e, sig_o = float(np.median(se)), float(np.median(so))
+            rows.append((n, len(basis), sig_e, sig_o, sig_o/max(sig_e, 1e-300), floor,
+                         time.time() - t0))
+        except Exception:
+            rows.append((n, None, float('nan'), float('nan'), float('nan'), float('nan'),
+                         time.time() - t0))
+    return rows
+
+
+def report_contrast(name, rows, ref_digits=None, lam1=None):
+    """Print the contrast table. `ref_digits`/`lam1` mark where the reference stops being able
+    to resolve, so curves are not read past it."""
+    lim = None
+    if ref_digits is not None and lam1 is not None:
+        lim = lam1*10**(-ref_digits)
+    print(f"  {name}")
+    print(f"    {'n':>5} {'sig@eig':>10} {'sig@off':>10} {'contrast':>10} {'floor':>10}")
+    for n, nb, se, so, c, fl, _ in rows:
+        mark = ''
+        if lim is not None and np.isfinite(se) and se < lim:
+            mark = '  <- past reference resolution'
+        elif np.isfinite(fl) and np.isfinite(se) and fl < se/10:
+            mark = '  <- tension min displaced from lam_ref (inexact ref, or eigenvalue error)'
+        print(f"    {n:>5} {se:10.2e} {so:10.2e} {c:10.1e} {fl:10.2e}{mark}")
