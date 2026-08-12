@@ -3677,3 +3677,44 @@ FB being at its strongest when its whole budget sits on a genuine r^(2/3) singul
 regular corners, where it is doing ordinary approximation and a few fundamental solutions help.
 That is a hypothesis, not a finding; it needs a second reentrant-only domain to test, and
 chevron is not one because it also has 18-degree corners.
+
+## The reference pipeline cannot certify a domain whose default basis is weak
+
+Hayden's suggestion -- an asymmetric L, one leg longer than the other -- is the controlled
+version of the experiment the `iso_tri` family could only approximate. Legs `a` and `b` about a
+corner of thickness `t` give one reentrant corner at 3pi/2 and five at pi/2 FOR EVERY a, b, so
+sweeping the leg ratio moves proportion with the entire corner structure held fixed. Verified
+across ratios 1 to 5: six corners, one reentrant, sharpest convex exactly 0.5pi throughout.
+Non-integer legs keep it off the polyomino grid, so there is no accidental product-form
+eigenfunction.
+
+It also disposes of the candidates I had suggested, all of which fail on inspection:
+`cut_square` has NO reentrant corner (five corners, all pi/2 -- its concavity is a smooth arc,
+which I asserted without checking); `plus_shape` is a polyomino and carries the Leg 2 trap;
+`mushroom` is curved; `H_shape`'s reference is 7.8 digits; GWW has 45-degree corners.
+
+**The first run of it was uninterpretable, and why is the finding.** `lam*` came from
+`escalate_and_solve_v2`, and its tensions were:
+
+    leg ratio    1.0        2.0        3.0        5.0
+    tension    1.5e-14    1.8e-08    1.6e-06    1.0e-05
+
+It escalated to n_basis=320 and still could not converge past 1e-08 at 2:1. The cause is
+structural: `escalate_and_solve_v2` builds its solver through `make_default_basis`, which sends
+a domain with exactly one singular corner to pure Fourier-Bessel -- the family under test. So
+the reference is only ever as good as the default basis, and **a domain whose default basis is
+weak cannot be certified by the pipeline that generates references.** Every sigma measured
+against such a `lam*` is measuring the reference, which is the ellipse a=2 failure appearing in
+a new place: at 2:1 the measured sigma_hat values were 1.0e-08, 5.2e-09, 8.2e-10 against a lam*
+good to 1.8e-08.
+
+That is worth stating beyond this experiment, because it plausibly explains the reference tables
+that are documented as poor. `chevron(1,1.5)/(2,3)/(2,4)` at 3-7 digits, `H_shape` at 7.8,
+`cut_square(0.25)` at 6.4 -- all are domains where the default branch is likely the wrong basis,
+and the recorded remedy in each case was "needs more basis than is practical", which is what a
+weak basis looks like from inside a pipeline that cannot change basis.
+
+The fix is to pass the basis explicitly and cross-check two genuinely different good bases
+against each other, since certifying a blend comparison with a single blend would move the
+circularity rather than remove it. `asym_l.verify_lam_star` does that; the sweep is re-running
+against it.
