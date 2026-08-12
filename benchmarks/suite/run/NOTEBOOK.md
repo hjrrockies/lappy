@@ -3718,3 +3718,54 @@ The fix is to pass the basis explicitly and cross-check two genuinely different 
 against each other, since certifying a blend comparison with a single blend would move the
 circularity rather than remove it. `asym_l.verify_lam_star` does that; the sweep is re-running
 against it.
+
+## The predicate hunt: four candidates tested, four dead, one robust default
+
+The asymmetric L delivered the controlled comparison, and the answer is negative.
+
+**Elongation at fixed corner structure does not explain it.** lam* from two independent good
+bases, with the disagreement between them reported as the trust evidence:
+
+    a:b        lam1         max tension   A-vs-B    frac=0    0.25     0.5     0.75
+    1.0   28.4769418722       3.8e-14    4.9e-15   1.1e-14  6.5e-15  1.7e-11  2.8e-09
+    2.0   26.6128179689       4.7e-10    3.0e-11   1.0e-08  5.2e-09  8.1e-10  5.0e-07
+    3.0   26.4881297761       9.3e-08    1.8e-09   1.2e-06  2.1e-07  1.0e-07  3.0e-06
+    5.0   26.4705815231       8.7e-06    1.5e-05   2.2e-05  1.8e-05  1.8e-05  2.4e-05
+
+At 5:1 the two good bases disagree by MORE than their own tension (1.5e-05 against 8.7e-06), so
+lam* is not certified and that row is excluded rather than read -- elongated L-shapes appear to
+be hard for every basis tried, which is itself worth knowing. Across the interpretable rows pure
+Fourier-Bessel stays within about 12x of the best blend at every ratio. Nothing resembling the
+seven-order collapse on iso_tri(h=8). Stretching a domain while holding its corner structure
+fixed does not turn an FB domain into an FS domain.
+
+**FB budget concentration correlates but does not cause.** The fraction of the FB budget landing
+on a genuine reentrant corner tracks the pure-FB verdict across four domains:
+
+    L_shape 1.00 (best)   asym_L 3:1 1.00 (competitive)   chevron 0.74 (fails)   iso_tri 0.00 (fails)
+
+which looked like a mechanism. Forcing chevron's entire budget onto its reentrant corner tests
+it directly, and does not rescue anything:
+
+    n=64    default [4,46,4,10] 1.58e-06     all-on-reentrant 1.63e-07
+    n=128   default [7,94,7,19] 4.18e-08     all-on-reentrant 4.18e-08
+    n=192   default [11,142,..] 3.14e-08     all-on-reentrant 4.29e-08
+
+Concentration buys a factor of ten at n=64 and nothing at n=128 and above; pure FB plateaus near
+3e-08 on chevron whatever the allocation, against the blend's 3.5e-11. Consistent with the older
+finding that FB re-allocation is nearly inert, and a reminder that a correlation across four
+domains survives exactly until someone intervenes on it.
+
+**Standing tally.** Four predicates for when a domain needs fundamental solutions, all dead:
+corner COUNT (what `make_default_basis` branches on), sharpest CONVEX corner, bounding-box
+ASPECT, and FB budget CONCENTRATION. A fifth -- "has a convex corner with non-integer pi/alpha"
+-- already has a counterexample in iso_tri(h=0.5), whose convex corners are nu = 1.42 and 6.78,
+both non-integer, and where pure FB is perfectly fine at 2.1e-14.
+
+**What to build on instead.** `fs_frac = 0.25` is the best or tied-best configuration on every
+iso_tri member, on asym_L at 1:1 and 3:1, and on square, and it never leaves the floor by more
+than a couple of orders anywhere. Its one real cost is L_shape, where pure FB reaches 7.3e-11
+and frac=0.25 gives 8.6e-09. So a small FS admixture is a defensible DEFAULT, with pure FB kept
+for the one structure where it is known to win -- a domain whose only non-right-angle corner is
+reentrant. That is a rule fitted to the evidence rather than a mechanism, and it should be
+labelled as such wherever it lands in code.

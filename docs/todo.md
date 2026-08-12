@@ -67,10 +67,13 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       constructor uses) separates nothing; sharpest convex corner is refuted (iso_tri h=0.5 and
       h=4 are equally sharp with opposite pure-FB verdicts); bbox aspect is refuted (h=0.5 is
       4:1 and fine, h=2 is 1:1 and fails). See NOTEBOOK retraction.
-- [ ] Test the "FB is strong only when its whole budget sits on a genuine singularity"
-      hypothesis -- it explains L_shape but needs a second reentrant-ONLY domain (chevron does
-      not qualify, it has 18-degree corners too). Candidates: cut_square, a single-notch
-      polygon.
+- [ ] Predicate hunt: FOUR candidates dead (corner count, sharpest convex corner, bbox aspect,
+      FB budget concentration -- the last refuted by intervention, not just correlation). A
+      fifth, "non-integer pi/alpha at a convex corner", already fails on iso_tri h=0.5. Consider
+      stopping the hunt and shipping the fitted rule below.
+- [ ] Elongated L-shapes (asym_L 5:1) cannot be certified by ANY basis tried -- two good bases
+      disagree by more than their own tension. Either a harder domain than it looks, or a gap
+      in the whole approach. Worth a look before it becomes a blind spot.
 - [ ] fs_frac=0.25 as a robust default: never worse than 1.8e-11 across the whole iso_tri
       family where pure FB spans eleven orders. Costs 100x on L_shape though.
 - [ ] Deliverable tables must be "columns to reach precision p", never "sigma at fixed n" --
