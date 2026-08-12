@@ -3448,3 +3448,43 @@ with one exception worth watching: disk at n=64 spread 0.268, near the floor.
 0.00 across rtol from 1e-14 to 1e-10 with `n_reg` moving only at the last digit. Per the "full
 once, light thereafter" decision, both drop to spot-checks on later domains; C3 is replaced by
 recording `sigma_hat`, and C6 stays mandatory since it has already fired twice.
+
+## S1 on the disk: the wavelength rule is the right parameterization with the wrong constant
+
+First coarse screen. The disk is corner-free, so only boundary fundamental solutions apply and
+the offset, multipole order and spacing get a reading with no corner effects and exact truth.
+Objective is `sigma_hat`; 7 of 40 configs were admitted.
+
+**The offset optimum is d/h ~ 2-4, not d/h ~ 1.** At n=64:
+
+    d/h       0.05      0.15       0.5       1.0       2.0       4.0
+    sigma_hat 6.9e-03   6.5e-04   8.0e-07   2.0e-10   4.3e-14   7.0e-15
+
+`d = h`, the value `docs/basis_heuristics.md` proposes and `make_default_basis` effectively uses,
+is FOUR ORDERS short of the floor on this domain.
+
+**Pushed further it stops paying and starts wasting columns.** Out to d/h = 128 the tension stays
+at the floor (2.9e-15 to 1.4e-14) while `n_reg` collapses from 64 of 64 columns at d/h=1 to 33 at
+d/h=8 and beyond. So the accuracy optimum is a broad plateau and the EFFICIENT choice is the
+smallest offset that reaches it. Note the direction: at d/h=1 every column survives
+regularization and the answer is poor; at d/h=4 a third of them are discarded and the answer is
+at the floor. Another instance of `n_reg/n` being a diagnostic and not an objective.
+
+**The wavelength parameterization itself is confirmed.** Whether `d` should scale with `h` at all
+was untested; running two spectral windows on the same domain settles it. Low window
+(modes 1-4, h=0.8651) reaches the floor at d=1.730; high window (modes 13-16, h=0.5065) reaches
+it at d=1.013. The ratio is 1.71, and h_low/h_high = 1.71 exactly. So the threshold tracks the
+wavelength, at d/h ~ 2 in both windows -- the parameterization is right and the constant is
+about double what was proposed.
+
+Not a universal constant yet: the bucket-2 study measured `ellipse_a2`, also corner-free, wanting
+d/h = 0.88. Either the two disagree or the ellipse was limited by its parametrization rather than
+its offset (its arclength map is the documented bottleneck at high eccentricity). That is the
+next thing to settle, and it is what a per-domain program is for.
+
+Secondary readings from the same screen, both weaker: multipole `order` is nearly inert at the
+good offset (5.3e-15 at order 2 against 7.0e-15 at order 1, inside the noise), and `spacing` is
+worth three orders at a BAD offset (legendre 3.8e-13 against even 2.0e-10 at d/h=1) but nothing
+at a good one -- i.e. better spacing partly compensates for a mis-placed source ring, which is
+a hint that the two knobs are not independent and the (d, spacing) pair deserves the factorial
+treatment that (d, order) got.
