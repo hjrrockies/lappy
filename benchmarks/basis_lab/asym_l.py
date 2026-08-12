@@ -86,6 +86,15 @@ def verify_lam_star(domain, n_eigs=4, n_basis=320):
     Returns (lam_star, tensions, max relative disagreement). A blend and a boundary-FS blend are
     genuinely different constructions, so agreement between them is evidence rather than a
     restatement of one basis's opinion.
+
+    USE THE DISAGREEMENT, NOT THE WORSE TENSION, as the trust figure. The first version took
+    `max(tensions, disagreement)`, which is over-conservative and cost a whole ranking: at leg
+    ratio 2:1 the two bases had tensions 1.8e-11 and 3.9e-10 while agreeing to 9.8e-12, and
+    taking 3.9e-10 marked every good configuration "below lam* trust" and unreadable. A high
+    tension says that BASIS is less accurate; it says nothing about lam* once a second,
+    independent construction lands in the same place. The tensions remain worth reporting -- if
+    both are poor, agreement could be two bases sharing a defect -- but the disagreement is the
+    estimator.
     """
     from benchmarks.basis_lab.probe import build_basis, default_spec, wavelength
     common = _common()
