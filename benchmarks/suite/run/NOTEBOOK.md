@@ -3828,3 +3828,58 @@ Caveat on the fine rankings: `budget.py` still computes its trust figure as
 below-trust flags are over-marked and the distinctions among 1.8e-10 / 2.7e-10 / 4.3e-10 may not
 be resolvable. The structure -- m=0 fails, m=8 at 1e-07, m=16-64 at ~1e-09, m=128 at 3.1e-09 --
 sits far above any plausible trust level.
+
+## Q3: L_shape's pure-FB win survives a fair retest, and elongation comes back as the axis
+
+The "if singular corner: pure Fourier-Bessel" branch rested entirely on L_shape, and its
+augmentation had only ever been tried at `d/h = 1.0` -- four orders short of optimal on the disk
+-- with the clustered variant placing sources on the reentrant corner, later shown to be the
+worst placement. So the comparison that established the branch was possibly unfair. Redone with
+the corrected offset and the budget framing:
+
+    L_shape n=128       m@singular   FB@regular   boundary FS   clustered FS
+                            16          1.0e-12      4.9e-11       2.7e-08
+                            32          5.4e-12      1.9e-11       6.6e-09
+                            64          2.0e-14      2.3e-14       2.0e-14
+                           128          9.1e-16      9.1e-16       9.1e-16   <- default, best
+
+    offset sweep at m=32   d/h    0.25     0.50     1.00     2.00     4.00     8.00
+                      sigma_hat  2.6e-08  2.1e-08  1.2e-09  4.2e-10  7.9e-09  2.6e-08
+
+The offset suspicion was correct -- d/h=2 is L_shape's optimum too, three times better than the
+d/h=1 originally used -- and it changes nothing. Even at the right offset, augmentation at m=32
+gives 4.2e-10 against pure FB's 9.1e-16. On L_shape more FB at the singular corner is
+monotonically better all the way to m=n. **The branch survives a fair test.**
+
+### But that is the opposite of asym_L, and the difference is elongation
+
+On asym_L at 2:1 and 3:1, m=128 was about ten times WORSE than m=64. Putting the benefit of
+augmentation against leg ratio, at matched column counts:
+
+    domain                leg ratio    pure FB   best augmented   benefit
+    L_shape (n=128)             1.0    9.1e-16          2.0e-14   augmentation HURTS
+    asym_L 1:1 (n=128)          1.0    1.1e-14          6.5e-15   1.7x
+    asym_L 2:1 (n=128)          2.0    3.1e-09          1.9e-10   16x
+    asym_L 3:1 (n=128)          3.0    2.8e-07          8.1e-09   34x
+
+Monotone, and it partly rehabilitates an axis retracted earlier. The earlier retraction measured
+whether elongation changes the ABSOLUTE quality of pure FB and concluded "within 12x, so not the
+discriminator". Measured instead on the BENEFIT OF AUGMENTATION -- which is the quantity a
+constructor actually has to decide -- elongation is exactly the axis: negligible at aspect 1,
+16x by 2:1, 34x by 3:1. Same data, different question, opposite conclusion. Worth remembering
+that "does X predict Y" depends on which Y, and the useful Y here is the decision the code makes.
+
+**Consequence for the design.** The rule is not "singular corner implies pure FB". It is
+"singular corner implies pure FB WHEN THE DOMAIN IS COMPACT, with augmentation worth more as it
+elongates". A single branch does not express that; a continuous `fs_frac` driven by an
+elongation measure does, and it degrades gracefully if the measure is imperfect -- which matters,
+because no predicate has survived contact yet.
+
+### A defect this exposed in the censor
+
+`detect_floor` computes `sigma_censor` from the best two families at `n_max//2`, so on L_shape it
+returned 2.84e-14 -- while pure FB at n=128 reaches 9.1e-16, thirty times below its own "floor".
+A censor derived at one basis size is not a property of the reference. It should come from the
+reference's documented accuracy, or from the best build at the LARGEST size in the ladder. The
+comparison above is unaffected (pure FB beats augmentation by four orders, far outside any
+censor question), but the flag is wrong and would mislead on a closer call.
