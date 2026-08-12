@@ -78,6 +78,17 @@ kept 21 terms instead of 128), not evidence against FB.
       m=32 gives 4.2e-10 against pure FB's 9.1e-16, even at the corrected d/h=2 offset. The
       follow-on elongation claim was WITHIN-FAMILY and is retracted: bbox aspect 4.0 occurs
       twice inside iso_tri with benefits 7 orders apart. See NOTEBOOK correction.
+- [ ] BASELINE CORRECTION: make_default_basis takes the BLEND branch on iso_tri and chevron
+      (3-4 singular corners), not pure FB. Measured properly it is optimal or near-optimal on
+      9 of 12 domains; "corner count separates none of these correctly" was WRONG. Two narrow
+      failures remain: chevron 217x (blend branch, wrong FS placement/offset) and asym_L 2:1/3:1
+      16-35x (pure-FB branch on an elongating domain).
+- [ ] CHEAPEST WIN, no new branching: swap lightning corner FS for boundary FS at d=2h inside
+      the existing multi-singular blend branch, and test against all 12 domains. Fixes chevron
+      (217x -> 1x) and iso_tri h=8 (9x -> 1x) in the recipe test; needs checking it does not
+      regress the iso_tri members where the current blend is already optimal.
+- [ ] A single fixed recipe is NOT the answer: FB@singular+boundary FS at half budget fixes
+      chevron and iso_tri h8 but regresses square (9x) and L_shape (25x).
 - [ ] SIXTH failed predicate (elongation). Before hunting a seventh, decide Q4: a self-certifying
       constructor (size, measure sigma_hat and contrast, escalate) does not need a predicate and
       degrades gracefully. The evidence increasingly favours it.

@@ -3925,3 +3925,63 @@ elongation. The accumulating evidence is not that the seventh will work -- it is
 geometry-only predicate may not exist at the fidelity needed, which argues for the
 self-certifying architecture (size, measure `sigma_hat` and contrast, escalate on failure) over
 a predictive one. That is Q4, and it should probably be decided before any more predicate hunting.
+
+## Correction: today's constructor is far better than this notebook has been saying
+
+Q4 is settled by the application: self-certification is too costly for a shape-optimization
+inner loop, so the constructor must be predictive. Measuring what a single fixed recipe would
+cost against the per-domain best turned up a mistake in the baseline this whole study has been
+comparing to.
+
+**`make_default_basis` does NOT take the pure-FB branch on iso_tri or chevron.** Both have three
+or four corners with non-integer `pi/alpha`, so both take the 50/50 FB + lightning-FS branch:
+
+    square        all regular          -> pure FB
+    disk          no corners           -> pure boundary FS
+    L_shape       one singular         -> pure FB
+    asym_L        one singular         -> pure FB
+    iso_tri (all h)  3 singular        -> 50/50 FB + lightning FS
+    chevron 1,2      4 singular        -> 50/50 FB + lightning FS
+
+The S1 screens compared a construction called `pure_fb`, which I built, against blends -- and
+then the write-ups described `pure_fb` as the shipped behaviour. On iso_tri that is simply wrong:
+the default there is the blend, scoring 4.3e-12, not the 5.4e-05 that `pure_fb` scores.
+
+**Today's default, measured properly at n=128:**
+
+    domain          default    best known   ratio
+    square          6.9e-16     6.9e-16        1
+    disk            4.0e-16     4.0e-16        1
+    L_shape         9.1e-16     9.1e-16        1
+    iso_tri h=0.5   3.5e-13     3.5e-13        1
+    iso_tri h=1     3.6e-15     3.6e-15        1
+    iso_tri h=2     2.8e-13     2.8e-13        1
+    iso_tri h=4     6.0e-13     5.1e-13        1
+    iso_tri h=8     4.3e-12     4.8e-13        9
+    chevron 1,2     5.0e-07     2.3e-09      217
+    asym_L 1:1      6.0e-15     6.5e-15        1
+    asym_L 2:1      3.1e-09     1.9e-10       16
+    asym_L 3:1      2.8e-07     8.1e-09       35
+
+Optimal or near-optimal on nine of twelve. **The claim in the five-domain entry that corner count
+"separates none of these correctly" is wrong** -- it separates most of them correctly. What is
+left is two specific, narrow failures:
+
+* `chevron`, 217x. The blend branch is the right KIND; the FS is placed and offset badly
+  (lightning at corners rather than along the boundary, which the augmentation work showed is
+  two to three orders worse as surplus).
+* `asym_L` at 2:1 and 3:1, 16x and 35x. The pure-FB branch is right at aspect 1 and increasingly
+  wrong as the legs lengthen.
+
+**A single fixed recipe is not the answer either.** FB-at-singular-corners with half the budget
+plus boundary FS at d=2h fixes chevron (217x -> 1x) and iso_tri h=8 (9x -> 1x), and REGRESSES
+square (1x -> 9x) and L_shape (1x -> 25x). Neither the current branch nor one uniform rule
+dominates.
+
+**Which makes the remaining problem much smaller than this notebook has been treating it.** The
+question is not "find a geometric predicate for the basis", six attempts at which have failed.
+It is "find something cheap that flags the two known failure modes": a blend branch using the
+wrong FS placement, and a pure-FB branch on an elongating domain. That is a far better-posed
+target, and it is worth noting that the first of the two may not need a predicate at all --
+swapping lightning FS for boundary FS at d=2h inside the existing blend branch is a change of
+constants, testable against every domain here, with no new branching.
