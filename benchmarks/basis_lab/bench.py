@@ -26,6 +26,24 @@ effects read as placement effects.
 
 REPRODUCIBILITY. `rng` is threaded to the interior draw. Without it two builds of the same
 domain differ in every coefficient and no A/B comparison means anything.
+
+THE SEARCH MUST NOT BE THE LIMIT, and it was. The first version of this harness called
+`solver.solve_interval`, whose per-bracket minimizer converges to `ltol_default = 1e-8`. That
+caps the measurable accuracy around 10 digits no matter how good the basis is, so every curve
+it produced was a picture of the eigenvalue search and not of the basis. It manufactured a
+"~10 digit plateau" on L_shape and plus_shape, and non-monotone bouncing everywhere, both of
+which were reported as basis findings before the check below was run:
+
+    L_shape, pure_fb, TRUE digits against lappy.reference
+
+        n_basis                 64     160     240
+        solve_interval        10.7    12.0     9.3
+        manual_solve+polish   15.7    14.5    14.6
+
+Fifteen digits at n=64, where the coarse path reads 10.7 and falls to 9.3 by n=240. So this
+harness uses the polished path (`benchmarks/reference/common.solve_domain_v2`: `manual_solve`
+with `minimize_tol=1e-12`, then `polish_eigs` at `ltol=1e-14`), which is also what produced the
+reference tables in `lappy.reference`.
 """
 import time
 import traceback
@@ -37,6 +55,32 @@ from lappy import bases, bounds
 from lappy.bases import (FourierBesselBasis, FundamentalBasis, fb_corner_orders,
                          fs_bdry_sps, fs_corner_orders)
 from lappy.mps import MPSEigensolver, weyl_est
+
+
+def _polished_solve(solver, domain, n_eigs, n_pts_per_eig=11, bracket_xtol=1e-5,
+                    minimize_tol=1e-12, ttol=1e-3, n_workers=4):
+    """`manual_solve` + `polish_eigs`, i.e. `solve_domain_v2`'s search, on a prebuilt solver.
+
+    Not `solve_interval`: its per-bracket minimizer stops at `ltol_default = 1e-8`, which caps
+    measurable accuracy near 10 digits and would make this harness a measurement of the search.
+    Imported from `benchmarks/reference/common.py`, which uses flat imports, hence the path
+    insertion -- the alternative is duplicating the pipeline that produced `lappy.reference`,
+    which would be worse.
+    """
+    import os
+    import sys
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'reference')
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from common import manual_solve, polish_eigs, lambda_window
+
+    a, b = lambda_window(domain, n_eigs)
+    n_pts = max(n_pts_per_eig*n_eigs, 50)
+    eigs, mults, _ = manual_solve(solver, a, b, n_pts, bracket_xtol=bracket_xtol,
+                                  minimize_tol=minimize_tol, ttol=ttol, n_workers=n_workers)
+    eigs, tensions = polish_eigs(solver, eigs, ltol=1e-14, bracket_rel_width=1e-9)
+    return eigs, mults, tensions
 
 
 def evaluate(domain, build_basis, n_eigs=4, rng=7, mp_kwargs=None, truth_fn=None,
@@ -60,8 +104,9 @@ def evaluate(domain, build_basis, n_eigs=4, rng=7, mp_kwargs=None, truth_fn=None
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             solver = MPSEigensolver.from_domain(domain, basis=basis, rng=rng)
-            res = solver.solve_interval(bounds.faber_krahn(domain), lam_max, 20)
-        eigs = np.atleast_1d(np.asarray(res[0] if isinstance(res, tuple) else res)).ravel()
+            eigs, _mults, tensions = _polished_solve(solver, domain, n_eigs)
+        eigs = np.atleast_1d(np.asarray(eigs)).ravel()
+        out['tensions'] = list(np.atleast_1d(tensions)[:n_eigs])
         out.update(n_basis=len(basis), n_found=len(eigs), eigs=eigs[:n_eigs], lam_max=lam_max)
 
         digits = []

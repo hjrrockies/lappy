@@ -12,11 +12,17 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       heuristics.md` is *a* theory with partial evidence (the FS offset scaling with wavelength
       is the empirically grounded part), not a spec. Approach is open-ended: gather evidence for
       what works, taking the current implementation's ideas as inspiration rather than law.
-- [ ] Resolve the ~10-digit plateau. `pure_fb` stops there on both L_shape and plus_shape while
-      Moler-Payne is good to 14, so it is real and it caps every construction measured. Separate
-      collocation ratio (`mult=2`), regularization tolerance, interior-point count, and a
-      genuine basis limit by varying each with the basis fixed. Until this is settled no fitted
-      convergence rate means much. See NOTEBOOK, first basis measurements entry.
+- [ ] Re-run the convergence study. The first one measured `solve_interval`'s `ltol=1e-8`
+      bracket tolerance, not the basis, so its "~10 digit plateau" and every fitted rate are
+      void (retracted in NOTEBOOK). `bench.py` now uses `manual_solve`+`polish_eigs` and gets
+      14.6 digits at n=64 on L_shape where the old path read 10.7.
+- [ ] `solve_interval`'s `ltol_default=1e-8` caps accuracy near 10 digits, and it is what
+      `Eigenproblem.solve` uses -- so the documented headline path is the coarse one while the
+      reference tables come from `benchmarks/reference/common.solve_domain_v2`. Either the
+      polished pipeline belongs in `lappy`, or the default tolerance is too loose. Also affects
+      anything that trusted `solve_interval` accuracy, which included this session's
+      `certified_quadrature` measurements (probably benign -- verify_gram compares two
+      quadratures at the SAME lam, so the error is common-mode -- but unverified).
 - [ ] Find an exact-truth domain that actually exercises a corner singularity. Sectors are
       degenerate (FB about the apex spans the exact eigenfunctions) and polyominoes are
       degenerate the other way (closed-form eigenfunctions are smooth at reentrant corners).

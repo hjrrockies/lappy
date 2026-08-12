@@ -3153,3 +3153,52 @@ The plateau is the question, because it caps every construction measured so far 
 claim survives it. Candidates: collocation ratio (`mult=2` default), regularization tolerance,
 interior-point count, or a genuine basis limit. It is cheap to separate -- vary each with the
 basis held fixed.
+
+## Retraction: the "~10 digit plateau" was the eigenvalue search, not the basis
+
+The entry above reported that `pure_fb` plateaus near 10 digits on L_shape and plus_shape, said
+the plateau was real because Moler--Payne is good to 14, and made it the top open question.
+**All of that is wrong.** No plateau exists, nothing regressed, and the basis was never the
+limit. Prompted by Hayden pointing out that L_shape used to give 14 digits on lambda_1.
+
+`benchmarks/basis_lab/bench.py` called `solver.solve_interval`, whose per-bracket minimizer
+converges to `ltol_default = 1e-8`. That caps measurable accuracy around 10 digits however good
+the basis is. `lappy.reference`'s own tables were produced by a different path --
+`common.solve_domain_v2`: `manual_solve` at `minimize_tol=1e-12` then `polish_eigs` at
+`ltol=1e-14` -- and `solve_domain_v2`'s docstring says outright that this was worth 7-11 digits
+to 13-14 on `ellipse(2,1)` "with no basis change at all". L_shape, `pure_fb`, TRUE digits
+against the reference table:
+
+    n_basis                 64     160     240
+    solve_interval        10.7    12.0     9.3
+    manual_solve+polish   15.7    14.5    14.6
+
+Fifteen digits at n=64, where the coarse path reads 10.7 and DEGRADES to 9.3 by n=240. So the
+plateau, the non-monotone bouncing, and every convergence rate fitted in the previous entry
+(L_shape "algebraic r2=0.977", chevron "root-exp r2=1.000", plus_shape) are all pictures of the
+search's tolerance. They are void as statements about bases. The harness now uses the polished
+path and reaches 14.6 at n=64.
+
+**The instrument check that was supposed to prevent this did run, and it passed for the wrong
+reason.** Moler--Payne was compared against exact truth on the SECTOR and agreed to within 0.4
+digits, so the bound was cleared and the plateau blamed on the basis. But the sector comparison
+only reached ~14 digits at its top end and mostly sat near 10, which is precisely where the
+search's cap sits -- both methods were being limited by the same thing, so they agreed. On
+L_shape at n=64 the gap is much larger:
+
+    true digits 14.6    MP digits 11.9
+
+MP is conservative by 2.7 digits there, not 0.4. Clearing an instrument on one domain at one
+accuracy level says nothing about another domain at a higher one -- which is the fourth
+appearance of "measured in a regime that is not the operating regime" in this notebook, and the
+first where the earlier method note did not prevent it.
+
+**What survives from the previous entry.** `fb_corner_orders` putting every term at singular
+corners is code inspection and stands. The sector being a degenerate exemplar stands as
+mathematics (FB about a circular sector's apex spans its exact eigenfunctions) though its
+numbers were coarse-search numbers. The `chevron(1,2)` four-singular-corners name collision
+stands. Everything quantitative about convergence does not.
+
+**Separately**: Hayden's own 14-digits-lost was a third thing again -- a notebook that had not
+passed the column-normalized basis to the solver. Three different ways to read a good basis as
+a bad one, in one evening, none of them a regression.

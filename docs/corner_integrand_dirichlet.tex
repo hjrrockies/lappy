@@ -1,0 +1,454 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\newcommand{\dd}{\,\mathrm{d}}
+\newcommand{\Om}{\Omega}
+\newcommand{\pd}[2]{\frac{\partial #1}{\partial #2}}
+\newcommand{\pdn}[1]{\frac{\partial #1}{\partial n}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{The Corner Integrand for Rellich/Hadamard Boundary Integrals\\
+\large A termwise Fourier--Bessel derivation, pure Dirichlet case}
+\author{lappy development notes}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+We derive, term by term, the integrand that a corner contributes to the Rellich normalization
+integral and to the Hadamard shape-derivative integral, for a pure Dirichlet eigenfunction. The
+derivation starts from the standard local-polar Fourier--Bessel expansion, expands the Bessel
+factor as its defining power series, and carries the expansion all the way to an explicit double
+series in powers of $r$ --- the singular corner exponents together with the smooth (``Bessel'')
+exponents that the existing derivation in \code{docs/corner\_quadrature.tex} leaves in the
+abstract form $A_\mu(\lambda r^2)$. We then show how \code{lappy}'s node-placement and
+exactness substitutions act on this series, and why the Hadamard case needs a different
+substitution exponent than the Rellich case even though the two integrals share the same
+kernel $(\partial_n u)^2$.
+\end{abstract}
+
+\tableofcontents
+
+\section{The two identities, specialized to pure Dirichlet}\label{sec:setup}
+
+For $-\Delta u = \lambda u$ in $\Om\subset\R^2$ with a Zaremba boundary condition, the master
+Rellich--Pohozaev identity (proved by multiplying the PDE by $r\cdot\nabla u$ and integrating by
+parts; see \code{docs/boundary\_quadrature\_primer.tex} \S2 for the full proof) is
+\[
+  \int_\Om u\,v \dd A = \frac{1}{2\lambda}\oint_{\partial\Om}(r\cdot N)
+  \Big[\partial_N u\,\partial_N v - \partial_T u\,\partial_T v + \lambda u v\Big]\dd s
+  + \frac{1}{2\lambda}\oint_{\partial\Om}(r\cdot T)\Big[\partial_T u\,\partial_N v + \partial_N u\,\partial_T v\Big]\dd s,
+\]
+with $r = x-x_0$ for an arbitrary reference point $x_0$. On a \emph{pure Dirichlet} domain,
+$u=v=0$ on all of $\partial\Om$, so every term carrying a bare $u$ or $v$ (rather than a normal
+derivative) vanishes, and so does every tangential derivative $\partial_T u,\partial_T v$ (the
+boundary values are identically zero, hence constant, along the boundary). What survives is a
+single term, and setting $v=u$,
+\begin{equation}\label{eq:rellich}
+  \|u\|^2_{L^2(\Om)} \;=\; \frac{1}{2\lambda}\oint_{\partial\Om} r_N \Big(\pdn{u}\Big)^{\!2}\dd s,
+  \qquad r_N := (x-x_0)\cdot N.
+\end{equation}
+This is the identity of \code{docs/corner\_quadrature.tex} eq.~(1) and \code{docs/rellich.md}'s
+$I_1$ term alone ($I_2=I_3=0$ under pure Dirichlet, since both live on a Neumann arc that here
+does not exist). It holds for \emph{every} $x_0\in\R^2$; the choice of $x_0$ changes only how
+hard the boundary integral is to evaluate, not its value.
+
+The companion identity is the Hadamard shape derivative of a simple Dirichlet eigenvalue under a
+boundary perturbation with normal velocity $V\cdot n$:
+\begin{equation}\label{eq:hadamard}
+  \frac{\dd\lambda}{\dd\varepsilon} \;=\; -\oint_{\partial\Om}\Big(\pdn{u}\Big)^{\!2}(V\cdot n)\dd s,
+\end{equation}
+for $u$ normalized in $L^2(\Om)$ (\code{docs/orientation.tex} eq.~2, and the ``Hadamard
+contract'' promised to downstream code in \code{tests/test\_shape\_derivative.py}). Comparing
+\eqref{eq:rellich} and \eqref{eq:hadamard}: both are integrals of the \emph{same} boundary
+quantity $(\partial_n u)^2$ against a weight that is linear in position relative to some
+reference. Taking $V = x-x_0$ (a uniform dilation of the boundary about $x_0$) turns
+\eqref{eq:hadamard} into $\dd\lambda/\dd\varepsilon = -\oint r_N(\partial_n u)^2\dd s = -2\lambda\|u\|^2_{L^2(\Om)} = -2\lambda$,
+recovering \eqref{eq:rellich} exactly (this is also the closed-form check $\lambda(\varepsilon) =
+\lambda/(1+\varepsilon)^2$ for uniform scaling). So \eqref{eq:rellich} is the special case of
+\eqref{eq:hadamard} with weight $V\cdot n = r_N$, and everything below that is derived for the
+kernel $(\partial_n u)^2$ applies to both; only the weight differs. This is why a single
+derivation of the corner integrand for $(\partial_n u)^2$ serves both formulas, and why
+\S\ref{sec:integrand} treats the weight as a free parameter.
+
+\section{The local Fourier--Bessel expansion}\label{sec:expansion}
+
+Place a corner of interior angle $\alpha$ at the origin, with its two edges along $\theta=0$ and
+$\theta=\alpha$, and set
+\[
+  \nu := \frac{\pi}{\alpha}, \qquad \nu_k := k\nu, \quad k=1,2,\dots
+\]
+Every Dirichlet eigenfunction admits, in a neighborhood of the corner, the local expansion
+\begin{equation}\label{eq:u}
+  u(r,\theta) \;=\; \sum_{k\ge1} c_k\, J_{\nu_k}\!\big(\sqrt\lambda\,r\big)\sin(\nu_k\theta),
+\end{equation}
+which vanishes identically on both edges by construction ($\sin(\nu_k\cdot 0)=0$ and
+$\sin(\nu_k\alpha)=\sin(k\pi)=0$). This is exactly \code{lappy}'s
+\code{FourierBesselBasis} convention in \code{lappy/bases.py}: a Dirichlet
+(\code{kind='sin'}) basis column evaluates as \code{jv(alphak\_vec, sqrt(lam)*r) * sin(...)},
+i.e.\ $J_{k\nu}(\sqrt\lambda r)\sin(k\nu\theta)$ termwise, with \code{alphak\_vec} holding the
+sequence $k\nu$ for $k=1,\dots,\text{order}$.
+
+\begin{remark}[A naming collision between this document and the code]
+The code's local variable \code{alpha} is the sequence $\nu_k=k\nu$ used to call \code{jv}, not
+the interior angle. The interior angle is the code's \code{phi}. In symbols:
+$\code{phi} \leftrightarrow \alpha$ (this document) and $\code{alpha} \leftrightarrow \nu_k$ (this
+document). We use the convention of \code{docs/corner\_quadrature.tex} throughout: $\alpha$ is
+the interior angle, $\nu=\pi/\alpha$.
+\end{remark}
+
+On the edge $\theta=0$ the outward normal is $n=-e_\theta$, so, since $u\equiv0$ along that edge,
+the only surviving derivative is the angular one:
+\begin{equation}\label{eq:dudn-raw}
+  \pdn{u}\bigg|_{\theta=0} = -\frac1r\pd{u}{\theta}\bigg|_{\theta=0}
+  = -\sum_{k\ge1} c_k\,\nu_k\,\frac{J_{\nu_k}(\sqrt\lambda\,r)}{r}.
+\end{equation}
+The identical computation on $\theta=\alpha$ (where $n=+e_\theta/$ appropriately signed, since the
+corner sits at the wedge's vertex and $\theta=\alpha$ is its other edge) gives the same series
+with $\cos(\nu_k\alpha)=(-1)^k$ in place of $1$; we carry $\theta=0$ throughout and note that the
+$\theta=\alpha$ edge differs only by that sign pattern, which does not affect any exponent or
+convergence statement below.
+
+\section{Expanding the Bessel factor termwise}\label{sec:bessel}
+
+This is the step that \code{docs/corner\_quadrature.tex} leaves abstract (its eq.~(4)--(5) invoke
+$J_\mu(z)=(z/2)^\mu A_\mu(z^2)$ with $A_\mu$ ``entire,'' without writing $A_\mu$ out). We now do
+so, to see explicitly which powers of $r$ appear and with what coefficients.
+
+\subsection{The Bessel series}
+
+The Bessel function of the first kind has the convergent power series
+\begin{equation}\label{eq:jseries}
+  J_\mu(z) \;=\; \sum_{m\ge0} \frac{(-1)^m}{m!\,\Gamma(\mu+m+1)}\Big(\frac z2\Big)^{\mu+2m}
+  \;=\; \Big(\frac z2\Big)^{\!\mu} A_\mu(z^2), \qquad
+  A_\mu(w) := \sum_{m\ge0} \frac{(-1)^m}{4^m\,m!\,\Gamma(\mu+m+1)}\,w^m.
+\end{equation}
+$A_\mu$ is an entire function of $w$ (its radius of convergence is infinite, since the $m!$ in the
+denominator dominates any fixed growth in $\Gamma(\mu+m+1)$), and $A_\mu(0)=1/\Gamma(\mu+1)\neq0$
+for $\mu>-1$, in particular for every $\mu=\nu_k>0$ used here. Substituting $z=\sqrt\lambda\,r$
+and $\mu=\nu_k$,
+\begin{equation}\label{eq:jk}
+  J_{\nu_k}(\sqrt\lambda\,r) \;=\; \Big(\frac{\sqrt\lambda\,r}{2}\Big)^{\!\nu_k} A_{\nu_k}(\lambda r^2)
+  \;=\; \Big(\frac{\sqrt\lambda}{2}\Big)^{\!\nu_k} r^{\nu_k}
+        \sum_{m\ge0} a_{k,m}\,(\lambda r^2)^m,
+  \qquad a_{k,m} := \frac{(-1)^m}{4^m\,m!\,\Gamma(\nu_k+m+1)}.
+\end{equation}
+
+\subsection{The normal derivative as an explicit double series}
+
+Insert \eqref{eq:jk} into \eqref{eq:dudn-raw}. Each term contributes $r^{\nu_k-1}$ times a power
+series in $r^2$, so
+\begin{equation}\label{eq:dudn-double}
+  \pdn{u}\bigg|_{\theta=0}
+  = -\sum_{k\ge1}\sum_{m\ge0} c_k\,\nu_k\Big(\frac{\sqrt\lambda}2\Big)^{\!\nu_k} a_{k,m}\,\lambda^m\;
+    r^{\nu_k-1+2m}.
+\end{equation}
+Factor out the overall leading power $r^{\nu-1}$ (recall $\nu_k=k\nu$, so $\nu_k-1 = (\nu-1)+(k-1)\nu$):
+\begin{equation}\label{eq:dudn-final}
+  \pdn{u}\bigg|_{\theta=0} = r^{\nu-1} F(r), \qquad
+  F(r) = \sum_{k\ge1}\sum_{m\ge0} b_{k,m}\, r^{(k-1)\nu+2m},
+  \qquad
+  b_{k,m} := -c_k\,\nu_k\Big(\frac{\sqrt\lambda}2\Big)^{\!\nu_k}\!a_{k,m}.
+\end{equation}
+Two exponent families are visible directly in \eqref{eq:dudn-final}: the \emph{corner} family
+$(k-1)\nu$, indexed by which radial mode $k$ contributes, and the \emph{smooth} (or ``Bessel'')
+family $2m$, indexed by which term of the entire factor $A_{\nu_k}$ contributes. Every exponent in
+$F$ is a nonnegative combination $j\nu+2m$ with $j=k-1\ge0$ an integer and $m\ge0$ an integer ---
+$F$ is \emph{not} a power series in $r$ alone unless $\nu$ is rational, but it is always a power
+series in the two formal variables $r^\nu$ and $r^2$.
+
+\subsection{The squared normal derivative}
+
+Both \eqref{eq:rellich} and \eqref{eq:hadamard} need $(\partial_n u)^2 = r^{2\nu-2}F(r)^2$. Write
+$G(r) := F(r)^2$; this is a Cauchy product of \eqref{eq:dudn-final} with itself. Re-index the sum
+by the pair $(p,q)$ where $p$ collects all ways two corner-indices $j_1,j_2\ge0$ sum to $p$
+($j_1+j_2=p$) and $q$ collects all ways two smooth-indices $m_1,m_2\ge0$ sum to $q$
+($m_1+m_2=q$):
+\begin{equation}\label{eq:G}
+  \big(\pdn u\big)^{\!2}\bigg|_{\theta=0} = r^{2\nu-2}\,G(r),
+  \qquad
+  G(r) = \sum_{p\ge0}\sum_{q\ge0} g_{pq}\, r^{p\nu+2q},
+  \qquad
+  g_{pq} = \sum_{\substack{j_1+j_2=p\\ m_1+m_2=q}} b_{j_1+1,m_1}\,b_{j_2+1,m_2}.
+\end{equation}
+This is the explicit, finite-sum version of \code{docs/corner\_quadrature.tex} eq.~(6); each
+$g_{pq}$ is a finite double sum (there are $p+1$ choices of $(j_1,j_2)$ and $q+1$ choices of
+$(m_1,m_2)$, so $(p+1)(q+1)$ terms), each term an explicit product of two $b_{k,m}$'s, each of
+those an explicit product of a mode coefficient $c_k$, an elementary power of $\sqrt\lambda/2$,
+and a reciprocal-Gamma coefficient $a_{k,m}$ from \eqref{eq:jk}. Nothing in $g_{pq}$ is left
+abstract.
+
+\subsection{The first few terms, worked out}
+
+To make \eqref{eq:G} concrete, write out the low-order terms of $g_{pq}$ directly.
+
+\paragraph{$(p,q)=(0,0)$.} Only $j_1=j_2=0$ ($k=1$ on both factors) and $m_1=m_2=0$ contribute:
+\[
+  g_{00} = b_{1,0}^2 = c_1^2\,\nu^2\Big(\frac{\sqrt\lambda}2\Big)^{2\nu}\!\frac{1}{\Gamma(\nu+1)^2}.
+\]
+This is the coefficient of the leading singular term $r^{2\nu-2}$ itself and depends only on the
+first mode's amplitude $c_1$.
+
+\paragraph{$(p,q)=(0,1)$.} Still $j_1=j_2=0$ (only $k=1$), but now $(m_1,m_2)\in\{(0,1),(1,0)\}$:
+\[
+  g_{01} = 2\,b_{1,0}\,b_{1,1}
+  = -2\,c_1^2\,\nu^2\lambda\Big(\frac{\sqrt\lambda}2\Big)^{2\nu}\!
+    \frac{1}{4\,\Gamma(\nu+1)\Gamma(\nu+2)}.
+\]
+This is purely a smooth-family term ($p=0$): it comes entirely from the next term of the entire
+factor $A_\nu(\lambda r^2)$ for the \emph{same} mode $k=1$, and contributes exponent $r^{2\nu}$
+(i.e.\ $r^{2\nu-2}\cdot r^2$) to $(\partial_n u)^2$ --- an even integer power of $r$ times the
+overall singular prefactor.
+
+\paragraph{$(p,q)=(1,0)$.} Now $(j_1,j_2)\in\{(0,1),(1,0)\}$, i.e.\ one factor from $k=1$ and one
+from $k=2$, both at $m=0$:
+\[
+  g_{10} = 2\,b_{1,0}\,b_{2,0}
+  = -2\,c_1 c_2\,\nu\cdot2\nu\Big(\frac{\sqrt\lambda}2\Big)^{\nu+2\nu}\!
+    \frac{1}{\Gamma(\nu+1)\Gamma(2\nu+1)}.
+\]
+This is purely a corner-family term ($q=0$): it is the leading cross-term between modes $k=1$ and
+$k=2$, and it is the term that carries the \emph{non-integer} exponent $r^\nu$ (on top of the
+$r^{2\nu-2}$ prefactor) whenever $\nu$ is irrational or has a large denominator --- this is the
+term responsible for $G$ failing to be analytic in $r$, and is exactly the obstruction that
+\S\ref{sec:sub} exists to remove.
+
+\begin{remark}[Single-mode collapse]\label{rmk:single-mode}
+If only one mode is present ($c_k=0$ for $k\ge2$), then $F(r)=b_{1,\cdot}$-series only, i.e.\
+$F(r) = \big(\text{const}\big)\cdot A_\nu(\lambda r^2)$ up to the constant absorbed in
+\eqref{eq:dudn-final}, and every corner-family index $p$ in \eqref{eq:G} beyond $p=0$ vanishes:
+$G(r)=b_{1,\cdot}\text{-series squared} = \text{const}\cdot A_\nu(\lambda r^2)^2$, an analytic
+function of $r^2$ alone. This recovers exactly the special case noted in
+\code{docs/corner\_quadrature.tex} \S3.1: for a single mode, $G$ is analytic and the corner
+integral is spectrally convergent under plain Gauss--Jacobi quadrature in $r$, with no
+substitution needed. The multi-mode cross-terms such as $g_{10}$ above are precisely what breaks
+this for a general eigenfunction.
+\end{remark}
+
+\section{The full boundary integrand, Rellich and Hadamard together}\label{sec:integrand}
+
+On the straight edge $\theta=0$, write the weight as a formal series in integer powers of $r$,
+\begin{equation}\label{eq:weight}
+  W(r) = \sum_{m\ge0} w_m\, r^m,
+\end{equation}
+which covers both cases of interest:
+
+\begin{itemize}
+\item \textbf{Rellich.} $W(r) = r_N = (x-x_0)\cdot n$. On a straight edge this is an affine
+function of arclength; with $x_0$ placed anywhere, $r_N$ restricted to $\theta=0$ is the
+projection of $r e^{i0}-x_0$ onto $n=-e_\theta$, a degree-1 polynomial in $r$, so $w_0,w_1$ may be
+nonzero and $w_m=0$ for $m\ge2$. If $x_0$ is placed exactly at the corner, Proposition
+\ref{prop:escape} below shows $W\equiv0$ identically, collapsing the whole integrand to zero.
+\item \textbf{Hadamard.} $W(r) = V\cdot n$ for the perturbation's normal velocity. A perturbation
+that leaves the corner fixed and only deforms the edge away from it typically vanishes to some
+even order at $r=0$ ($w_0=w_1=0$, generically $w_2\neq0$); a perturbation that \emph{moves the
+corner itself} has $V\cdot n = O(r)$ with $w_1\neq0$, contributing an \emph{odd} leading power.
+\end{itemize}
+
+\begin{proposition}[Geometric escape at the corner]\label{prop:escape}
+If $x_0$ is placed at the corner (the origin), then $r_N\equiv0$ on both straight edges
+emanating from it.
+\end{proposition}
+\begin{proof}
+On $\theta=0$, $x-x_0 = r\,e^{i0}$ is parallel to the edge, while $n=-e_\theta$ is perpendicular
+to it, so $(x-x_0)\cdot n=0$ pointwise; likewise on $\theta=\alpha$.
+\end{proof}
+
+Combining \eqref{eq:G} and \eqref{eq:weight}, the full edge integrand is
+\begin{equation}\label{eq:full-integrand}
+  W(r)\Big(\pdn u\Big)^{\!2}\bigg|_{\theta=0}
+  = r^{2\nu-2}\,\underbrace{\Big(\sum_{m\ge0} w_m r^m\Big)\Big(\sum_{p,q\ge0} g_{pq}\,r^{p\nu+2q}\Big)}_{=:H(r)}
+  = r^{2\nu-2}\sum_{p,q,m\ge0} w_m\,g_{pq}\, r^{p\nu+2q+m},
+\end{equation}
+and the edge contribution to \eqref{eq:rellich} or \eqref{eq:hadamard} is
+\begin{equation}\label{eq:Iedge}
+  I_{\mathrm{edge}} = \int_0^R r^{2\nu-2} H(r)\dd r
+  = \sum_{p,q,m} w_m\,g_{pq} \int_0^R r^{2\nu-2+p\nu+2q+m}\dd r,
+\end{equation}
+convergent termwise for $\nu>1/2$. Equation \eqref{eq:full-integrand} makes explicit what
+\code{docs/orientation.tex} \S3.2 states in table form: the integrand is always
+$r^{2\nu-2}$ times a series whose exponents are $p\nu+(2q+m)$ --- the corner family $p\nu$ from
+the eigenfunction (unavoidable, fixed by the geometry) shifted by the \emph{combined} smooth
+exponent $2q+m$, itself the sum of the eigenfunction's own even smooth family $2q$ and the
+weight's family $m$. For Rellich and most Hadamard weights $m\in\{0,2,4,\dots\}$ is even, so
+$2q+m$ stays even and the combined smooth family is unchanged from $G$ alone; for a
+corner-moving Hadamard weight $m=1,3,\dots$ is odd, and $2q+m$ becomes \emph{odd}, introducing an
+exponent family that $G$ alone never has. This distinction is the entire content of
+\S\ref{sec:sub2}.
+
+\section{Rationalizing the integrand: the substitution}\label{sec:sub}
+
+Equation \eqref{eq:Iedge} is a sum of pure powers of $r$, but as a target for a fixed-order
+quadrature rule it is not directly tractable: the exponent set $\{p\nu+2q+m\}$ is generically
+dense and irrational-stepped, so no polynomial rule is exact on it and Gauss--Legendre in $r$
+converges only algebraically. \code{lappy} evaluates $I_{\mathrm{edge}}$ (equivalently, the
+Cauchy data version of \eqref{eq:G}, formed numerically rather than from the coefficients above)
+by a change of variables that turns the corner exponents into integers.
+
+\subsection{The naive substitution $t=r^\nu$}\label{sec:sub1}
+
+\begin{proposition}[Rationalizing substitution]\label{prop:sub}
+Under $t=r^\nu$ (equivalently $r=t^{1/\nu}$),
+\begin{equation}\label{eq:sub}
+  \int_0^R r^{\gamma}\,r^{p\nu+2q}\dd r
+  = \frac1\nu\int_0^{R^\nu} t^{(\gamma+1)/\nu - 1}\, t^{p}\, t^{2q/\nu}\dd t,
+  \qquad \gamma := 2\nu-2.
+\end{equation}
+\end{proposition}
+\begin{proof}
+$\dd r = \frac1\nu t^{1/\nu-1}\dd t$ and $r^\gamma = t^{\gamma/\nu}$, so
+$r^\gamma\,r^{p\nu+2q}\dd r = \frac1\nu\, t^{\gamma/\nu + p + 2q/\nu + 1/\nu - 1}\dd t$; collecting
+the exponent not multiplying $p$ or $2q/\nu$ gives $\gamma/\nu+1/\nu-1 = (\gamma+1)/\nu-1$.
+\end{proof}
+The corner-family exponent $p\nu$ becomes the \emph{integer} $p$; the outer singular prefactor
+$r^\gamma$ becomes a Jacobi weight $t^{\beta}$ with $\beta=(\gamma+1)/\nu-1=1-1/\nu$, admissible
+($\beta>-1$) exactly for $\nu>1/2$; but the smooth-family exponent $2q$ becomes $2q/\nu$, an
+integer only when $2/\nu\in\mathbb Z$. This is the caveat already present in
+\code{docs/corner\_quadrature.tex} \S3.1: among reentrant angles ($\nu<1$), $2/\nu\in\mathbb Z$
+happens only at $\alpha=3\pi/2$ ($\nu=2/3$, $2/\nu=3$). For every other $\alpha$, $t=r^\nu$
+rationalizes the corner family completely but leaves the smooth family fractional --- \emph{high
+order} fractional (leading residual exponent $2/\nu>2$), so Gauss--Jacobi quadrature in $t$
+converges at a high algebraic rate rather than spectrally, which is good enough in practice
+(machine precision by $n\approx32$) but not exact at any finite order.
+
+\subsection{What lappy actually does: nodes from $t=r^\nu$, exactness from the weights}\label{sec:sub2}
+
+A further substitution $t=r^{1/q}$ (for $\nu=p/q$ in lowest terms) would rationalize the
+\emph{full} exponent family $\{p\nu+m\}$ --- including odd $m$, needed for a curved edge or a
+corner-moving Hadamard weight, see \S\ref{sec:integrand} --- to integers $\{p\cdot p'+m q\}$
+exactly, for any integer $m$. It is unusable as a node-placement substitution, however: writing
+$\tau=t^q$, the innermost quadrature node collapses as $\tau_{\min}\sim t_{\min}^q$, and for
+$q\ge4$ this pushes nodes below \code{lappy}'s coordinate-collapse floor
+(\code{quad.\_KRESS\_TAU\_FLOOR}$=10^{-9}$), where they round onto the corner itself once mapped
+through a segment's parametrization --- fatal, since the basis functions carry $1/r$-type terms
+there.
+
+\code{lappy}'s resolution (\code{lappy/quad.py}, \code{corner\_rule\_spec} /
+\code{cached\_cornerjacgauss} / \code{cached\_cornerinterpgauss}) separates the two jobs that a
+substitution was being asked to do:
+
+\begin{itemize}
+\item \textbf{Node placement} always uses the mild substitution $t=r^\nu$ (or more generally
+$t=\tau^{1/\mathrm{sub}}$ for a chosen exponent $\mathrm{sub}$, worked out below), whose crowding
+stays at $\tau_{\min}\sim10^{-5}$--$10^{-7}$ at the orders used in practice --- far above the
+floor.
+\item \textbf{Exactness} is obtained instead from the \emph{weights}. The exponent set
+$\{\gamma+j\nu+m\}$ appearing in \eqref{eq:Iedge} (relative to $R=1$) is known in closed form, so
+every moment $\int_0^1 \tau^{e}\dd\tau=(e+1)^{-1}$ is known exactly; a quadrature rule with
+$\mathrm{sub}=\nu$-placed nodes $\tau_i$ and free weights $w_i$ is made exact on that exponent set
+by solving the linear system
+\begin{equation}\label{eq:weightsolve}
+  \sum_i w_i\,\tau_i^{\,e} = \frac{1}{e+1}, \qquad e \in \{\gamma+j\nu+m : 0\le j\le j_{\max},\ 0\le m\le m_{\max}\},
+\end{equation}
+using \emph{fewer} exponents than nodes (a minimum-norm least-squares solve), which keeps
+$\sum_i|w_i|\approx1$ and avoids the ill-conditioning ($\mathrm{cond}\sim10^{13}$--$10^{19}$) of
+the square system. This is \code{cached\_cornerinterpgauss}, and it is exact on the full family
+$\{\gamma+j\nu+m\}$ including odd $m$, without requiring $\nu$ to be rational at all.
+\end{itemize}
+
+\subsection{The general substituted Gauss--Jacobi rule}\label{sec:sub3}
+
+The rule underlying both \code{cornerjac} and the node placement of \code{cornerinterp} is a
+direct generalization of Proposition~\ref{prop:sub} to an arbitrary substitution exponent
+$\mathrm{sub}$, matching \code{lappy.quad.cached\_cornerjacgauss}. For an integrand
+$\tau^{\gamma}\times(\text{series in }\tau^{\mathrm{sub}})$ on $[0,1]$, substitute
+$\tau=t^{1/\mathrm{sub}}$:
+\[
+  \dd\tau = \frac1{\mathrm{sub}}\,t^{1/\mathrm{sub}-1}\dd t, \qquad
+  \tau^\gamma = t^{\gamma/\mathrm{sub}},
+\]
+so
+\begin{equation}\label{eq:general-sub}
+  \int_0^1 \tau^\gamma f(\tau)\dd\tau
+  = \int_0^1 t^{\beta}\,\widetilde f(t)\dd t, \qquad
+  \beta = \frac{\gamma+1}{\mathrm{sub}} - 1,
+\end{equation}
+where $\widetilde f(t):=\frac1{\mathrm{sub}}\,t^{1/\mathrm{sub}-1}f(t^{1/\mathrm{sub}})$ absorbs
+the Jacobian; a Gauss--Jacobi rule $(t_i,W_i)$ for weight $t^\beta$ on $[0,1]$ then gives nodes
+and weights
+\begin{equation}\label{eq:jacgauss}
+  \tau_i = t_i^{\,1/\mathrm{sub}}, \qquad
+  w_i = \frac{W_i}{\mathrm{sub}}\, t_i^{\,1/\mathrm{sub}-1},
+\end{equation}
+exact whenever $f$ is a polynomial in $\tau^{\mathrm{sub}}$ of degree $\le2n-1$ (in $t$). Setting
+$\mathrm{sub}=\nu$ and $\gamma=2\nu-2$ recovers exactly \eqref{eq:sub}--Proposition~\ref{prop:sub}
+above ($\beta=1-1/\nu$); \code{cached\_cornerjacgauss} implements \eqref{eq:jacgauss} for general
+$\mathrm{sub}$, and this is the same formula used for the alternate substitution below.
+
+\subsection{Why the Hadamard corner-moving weight needs $\mathrm{sub}=1/2$}\label{sec:sub4}
+
+Take $\mathrm{sub}=\nu$ (the default, exact for the eigenfunction's own corner family) and
+consider a Hadamard weight term $w_m r^m$ with $m$ a fixed positive integer (\S\ref{sec:integrand}:
+$m=1$ for a corner-moving perturbation). By \eqref{eq:general-sub}, $r^m\mapsto t^{m/\nu}$: since
+$\mathrm{sub}=\nu$ is chosen to rationalize the eigenfunction's exponents $p\nu\mapsto p$, it does
+the \emph{opposite} to an externally-imposed integer power $m$ --- it sends an already-integer
+exponent to a fractional one, $m/\nu$, and worse, a \emph{small} one (since $\nu\in(1/2,\infty)$
+generically makes $m/\nu$ close to $m$ but not equal to it). The residual fractional part is
+what the rule cannot integrate exactly, and Gauss--Jacobi's convergence rate on a term with
+residual order $\delta$ near the endpoint is only algebraic, $n^{-(2\delta+2)}$ — so a small
+residual is the \emph{worst} case, not a negligible one. Measured on a $1.5\pi$ sector against
+40-digit truth (\code{docs/orientation.tex} \S3.2), the weight $r^1$ term alone costs four digits
+at order 32 relative to $r^0$ or $r^2$:
+\[
+\begin{array}{lcccc}
+ & p=0 & p=1 & p=2 & p=3\\ \hline
+\mathrm{sub}=\nu,\ \text{order }32 & 2.9\times10^{-14} & 4.6\times10^{-7} & 8.5\times10^{-14} & 4.0\times10^{-14}
+\end{array}
+\]
+Switching to $\mathrm{sub}=1/2$ reverses which exponents land on integers: by
+\eqref{eq:general-sub}, $r^m\mapsto t^{2m}$ (exact, an integer for \emph{every} integer $m$,
+independent of $\nu$), while the eigenfunction's own corner family $r^{p\nu}\mapsto t^{2p\nu}$
+becomes fractional in general --- but its exponents now grow by $2\nu$ per term, spaced widely
+enough (unlike the $\mathrm{sub}=\nu$ residual above, which is a small offset from an integer)
+that Gauss resolves the resulting smooth tail at once. The same table under $\mathrm{sub}=1/2$
+at order 16:
+\[
+\begin{array}{lcccc}
+ & p=0 & p=1 & p=2 & p=3\\ \hline
+\mathrm{sub}=1/2,\ \text{order }16 & 4.7\times10^{-15} & 1.2\times10^{-14} & 1.1\times10^{-14} & 1.0\times10^{-14}
+\end{array}
+\]
+--- uniformly at machine precision, at half the order, and with \emph{no} assumption that $\nu$ is
+rational (verified in \code{lappy} at $\nu=1/1.37$ and $\nu=1/\varphi$ to $10^{-15}$). This is
+\code{lappy}'s \code{boundary\_quadrature(..., weight\_family='integer')} (implemented in
+\code{lappy/eigfun\_integrals.py}, forcing \code{kind='cornerjac'}, $\mathrm{sub}=1/2$ at every
+singular corner): it exists specifically because the weight in \eqref{eq:hadamard} is, for a
+corner-moving shape perturbation, of a different exponent family than the weight $r_N$ in
+\eqref{eq:rellich} ever is on a straight edge, even though both integrals share the identical
+kernel $r^{2\nu-2}G(r)$ derived in \S\ref{sec:bessel}. The default remains
+$\mathrm{sub}=\nu$ (\code{weight\_family='even'}) because it is equally accurate and cheaper for
+every weight \code{lappy} evaluates internally, all of which are even in $m$.
+
+\section{Summary}\label{sec:summary}
+
+\begin{center}\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+weight $W(r)$ & exponent family $m$ & combined family & $\mathrm{sub}$ & rule\\
+\midrule
+Rellich, straight edge, $x_0$ at corner & --- & $W\equiv0$, no integral & --- & (none needed)\\
+Rellich, straight edge, general $x_0$ & $\{0,1\}$ & $p\nu+2q+\{0,1\}$ & $\nu$ & \code{cornerjac}/\code{cornerinterp}\\
+Hadamard, corner-fixed velocity & even & $p\nu+2q+2q'$ & $\nu$ & \code{cornerjac}/\code{cornerinterp}\\
+Hadamard, corner-moving velocity & odd (from $r^1$) & $p\nu+2q+\{1,3,\dots\}$ & $1/2$ & \code{cornerjac}, \code{weight\_family='integer'}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+In every row the singular kernel is the same object, $(\partial_n u)^2 = r^{2\nu-2}G(r)$ derived
+termwise in \eqref{eq:G}; only the weight's own exponent parity determines which substitution
+exponent $\mathrm{sub}$ rationalizes the product, and hence which \code{lappy} rule is selected.
+
+\end{document}
