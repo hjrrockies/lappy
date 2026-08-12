@@ -308,3 +308,48 @@ def report_convergence(name, rows, floor_digits=13.0):
         tail = f"{cls['model']:12} r2={cls['r2']:.3f} slope={cls['slope']:.3f}"
     print(f"  {name:22} {tail}   {curve}")
     return cls
+
+
+# ── Tension at a KNOWN eigenvalue: what the basis can support, with no search in the way ─────
+#
+# The design this work feeds: `Eigenproblem(domain, precision=p)` builds a basis that should
+# bring the tension to ~p near the true eigenvalue, and sets `ltol = p` so the minimization is
+# solved to matching depth. One dial, the same meaning at both stages, and a reasonable hope
+# rather than a guarantee.
+#
+# That makes `sigma(lam_true)` the natural objective here, and it is a better instrument than
+# certified eigenvalue digits for three reasons. It is what the basis directly controls, so it
+# does not mix in the search. It needs no minimization at all -- evaluate at the reference
+# eigenvalue -- so `ltol` cannot confound it, which is exactly the trap that voided the first
+# convergence study. And it is what the precision parameter will be specified in terms of, so
+# the study measures the thing the API promises.
+#
+# Certified digits stay as the CHECK on whether the hope is realized. Tension is a heuristic
+# proxy for accuracy, not a bound, and this is the one place both are cheap to have.
+
+def tension_at(domain, build_basis, lam_true, ns, rng=7, bdry_mult=None, **kw):
+    """sigma(lam_true) versus basis size. Returns rows of (n, n_basis, sigma, n_reg, seconds).
+
+    `lam_true` must be an accurate eigenvalue (a reference value, or the output of a polished
+    solve) -- the whole point is to stand exactly at the eigenvalue and ask how small this basis
+    can make the tension there.
+    """
+    rows = []
+    for n in ns:
+        t0 = time.time()
+        try:
+            lam_max = max(2.0*lam_true, 1.0)
+            basis = build_basis(domain, lam_max, n=n, **kw)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                solver = MPSEigensolver.from_domain(domain, basis=basis, rng=rng, prec=1e-14)
+                sig = float(np.atleast_1d(solver.sigma(lam_true))[0])
+            rows.append((n, len(basis), sig, None, time.time() - t0))
+        except Exception as e:
+            rows.append((n, None, float('nan'), None, time.time() - t0))
+    return rows
+
+
+def report_tension(name, rows):
+    curve = '  '.join(f'{n}:{s:.1e}' if np.isfinite(s) else f'{n}:--' for n, _, s, _, _ in rows)
+    print(f"  {name:22} {curve}")

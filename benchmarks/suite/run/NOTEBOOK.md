@@ -3219,3 +3219,54 @@ wherever the early stop leaves it, which can be better or worse than the toleran
 And the 10.7 / 12.0 / 9.3 sequence is therefore scatter, not a trend -- the annotation
 "degrades with n" on that row was over-read. Nothing about the retraction's conclusion changes;
 the search was still the limit, and 1e-14 is still what ground-truth measurement needs.
+
+## Tension at the true eigenvalue: the right objective, and the first real basis curves
+
+The design this feeds: `Eigenproblem(domain, precision=p)` builds a basis that should bring the
+tension to ~p near the true eigenvalue, and sets `ltol = p` so the minimization is solved to
+matching depth -- one dial with the same meaning at both stages, a reasonable hope rather than a
+guarantee. That makes `sigma(lam_true)` the objective for this study, and it is a better
+instrument than certified eigenvalue digits on three counts: it is what the basis directly
+controls, it needs no minimization at all (stand at the reference eigenvalue), so `ltol` cannot
+confound it -- the exact trap that voided the first study -- and it is the quantity the
+precision parameter will be specified in terms of. Certified digits stay as the CHECK on whether
+the hope is realized, since tension is a proxy and not a bound.
+
+The curves are immediately clean -- monotone, no scatter, saturating at the machine floor.
+`sigma` at the reference `lam_1`, no search anywhere:
+
+    L_shape   1 singular corner
+      pure_fb   8:3.7e-02  16:5.5e-04  32:2.0e-07  48:1.2e-10  64:9.2e-13  96:1.4e-15  192:1.3e-15
+      mixed     8:7.3e-01  16:1.2e-02  32:2.3e-05  48:1.3e-06  64:1.3e-07  96:8.8e-11  192:1.6e-15
+
+    H_shape   4 singular corners
+      pure_fb   8:4.1e-01  16:1.7e-01  32:4.0e-02  48:1.1e-03  64:2.2e-04  96:1.3e-06  192:1.1e-09
+      mixed     8:3.3e-01  16:1.7e-01  32:1.5e-01  48:5.3e-04  64:5.2e-06  96:2.5e-06  192:2.4e-07
+
+    chevron(1,2)  4 singular corners
+      pure_fb   8:1.3e-01  16:7.4e-02  32:9.5e-04  48:2.2e-05  64:1.4e-06  96:7.0e-08  192:2.0e-08
+      mixed     8:4.3e-02  16:4.4e-02  32:6.0e-04  48:3.2e-05  64:1.6e-05  96:8.0e-06  192:2.6e-09
+
+**One singular corner is a different regime, as predicted.** `pure_fb` on L_shape reaches the
+machine floor at n=96 and is at 1.2e-10 by n=48. No multi-corner domain here gets past 1e-9 at
+n=192. That is the qualitative split, and it is what a size model has to respect.
+
+**The curve inverts into exactly what `make_default_basis` needs.** For a target precision, read
+off n: L_shape wants n~48 for 1e-10 and n~64 for 1e-13, with nothing to gain past n~96. The
+same read on chevron gives n~192 for 1e-8, and on H_shape n~192 for 1e-9. **So there is no
+geometry-independent size model** -- the same target costs 48 columns on one domain and more
+than 192 on another. Any `precision -> n` rule has to carry geometry, which is the first hard
+constraint this study has produced.
+
+**The multi-corner branch choice is not settled by this.** `mixed` beats `pure_fb` on chevron at
+large n (2.6e-09 against 2.0e-08) and LOSES to it on H_shape (2.4e-07 against 1.1e-09), and both
+domains have four singular corners, so corner count alone does not predict which construction
+wins. The current constructor uses `mixed` for both.
+
+**Two curves stall rather than reaching the floor** -- chevron `pure_fb` flattens near 2e-08
+from n=96, H_shape `mixed` near 2.4e-07. Worth suspecting `rtol=1e-12` pencil truncation before
+concluding anything about the basis; the instrument is now clean enough to separate them.
+
+A caution on the fitted rate labels: over 6-8 points, exponential and root-exponential are not
+reliably distinguishable, and the classifier's choice between them should not be quoted as a
+result. The curves themselves and the `n(precision)` read-off are the findings.

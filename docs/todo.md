@@ -12,6 +12,12 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       heuristics.md` is *a* theory with partial evidence (the FS offset scaling with wavelength
       is the empirically grounded part), not a spec. Approach is open-ended: gather evidence for
       what works, taking the current implementation's ideas as inspiration rather than law.
+- [ ] Size model must carry geometry: the same target precision costs n~48 on L_shape and
+      >192 on chevron/H_shape. No geometry-independent `precision -> n` rule can work.
+- [ ] Corner COUNT does not pick the construction: `mixed` beats `pure_fb` on chevron and loses
+      to it on H_shape, both with four singular corners. Find what does predict it.
+- [ ] Two tension curves stall (chevron `pure_fb` ~2e-08, H_shape `mixed` ~2.4e-07). Check
+      `rtol=1e-12` pencil truncation before blaming the basis.
 - [ ] Re-run the convergence study. The first one measured `solve_interval`'s `ltol=1e-8`
       bracket tolerance, not the basis, so its "~10 digit plateau" and every fitted rate are
       void (retracted in NOTEBOOK). `bench.py` now uses `manual_solve`+`polish_eigs` and gets
