@@ -7,6 +7,13 @@ knowing what is open, not for explaining it. An item leaves when it is done or a
 finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
 
 ## Bases
+
+**Design constraint (Hayden, 2026-08-12):** a SINGULAR corner always needs corner Fourier-Bessel
+terms; any basis lacking FB at a singular corner should be expected to fail. So the open question
+is never FB-versus-FS, it is how to AUGMENT a corner-FB basis -- with fundamental solutions along
+the boundary, or clustered at corners, those being the two methods tried. Read every result
+below through that: "FB uniform beat FB-all-on-reentrant" is a BUDGET result (the singular corner
+kept 21 terms instead of 128), not evidence against FB.
 - [ ] `make_default_basis(domain, lam_max, precision)` -- the current signature asks the caller
       for `n_basis`, the one quantity they have no principled way to choose. `docs/basis_
       heuristics.md` is *a* theory with partial evidence (the FS offset scaling with wavelength

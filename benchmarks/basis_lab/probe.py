@@ -182,6 +182,34 @@ def _dropped_from_warnings(caught):
 
 # ── the primitive ────────────────────────────────────────────────────────────────────────────
 
+def evaluate_basis(domain, basis, colloc, lam_star, lam_off=(), rtol=1e-12, ttol=1e-3,
+                   seed=0, diagnostics=False):
+    """Measure an ALREADY-BUILT basis, identically to `probe`.
+
+    `probe` builds from a knob dict, which covers the families the constructor has. Some
+    questions need a construction outside that vocabulary -- Fourier-Bessel deliberately placed
+    at REGULAR corners, fundamental solutions clustered at regular corners, custom per-corner
+    allocations. This takes the basis directly so those are measured on the same footing rather
+    than in a separate script with its own conventions.
+
+    Returns (sigma_hat, contrast, n_cols, raw sigma at the eigenvalues).
+    """
+    lam_star = [float(x) for x in np.atleast_1d(lam_star)]
+    lam_off = [float(x) for x in np.atleast_1d(lam_off)] if len(np.atleast_1d(lam_off)) else []
+    n_per_seg, n_int = collocation(domain, basis, colloc)
+    bdry_pts = domain.bdry_pts(np.asarray(n_per_seg, dtype=int))
+    int_pts = domain.int_pts(method='random', npts_rand=n_int, rng=seed)
+    nb = basis.to_normalized((bdry_pts, int_pts))
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        solver = MPSEigensolver(nb, bdry_pts, int_pts, rtol=rtol, ttol=ttol)
+        se = [float(solver.sigma(l)) for l in lam_star]
+        so = [float(solver.sigma(l)) for l in lam_off]
+    scale = np.sqrt(n_int/max(np.sum(n_per_seg), 1))
+    contrast = float(np.median(so)/max(np.median(se), 1e-300)) if len(so) else float('nan')
+    return float(np.median(se)*scale), contrast, len(nb), se
+
+
 def probe(domain, spec, colloc, lam_star, lam_off=(), probe_grid=(), lam_max=None,
           rtol=1e-12, ttol=1e-3, seed=0, diagnostics=True):
     """One basis build, sigma everywhere asked for, one flat record.
