@@ -44,6 +44,10 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       size: 1.9e4 nodes on a unit disk against ~50 from a random draw. Works, deterministic,
       probably not what an MPS solve wants.
 
+- [ ] `from_domain`'s `prec=` parameter IS `ltol` (passed straight through to the constructor's
+      ninth positional). Two names for the lambda-axis tolerance, neither of them obviously that.
+      Rename or alias.
+
 ## Quadrature / eigenfunction integrals
 - [ ] The near-slit ceiling has no lever. `cornerinterp` tops out near 1e-10 for `nu <~ 0.6` on
       a dense corner family, and more order makes it worse past the optimum. Candidates: panel

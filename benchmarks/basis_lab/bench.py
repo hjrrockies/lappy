@@ -103,7 +103,10 @@ def evaluate(domain, build_basis, n_eigs=4, rng=7, mp_kwargs=None, truth_fn=None
         basis = build_basis(domain, lam_max)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            solver = MPSEigensolver.from_domain(domain, basis=basis, rng=rng)
+            # prec= IS ltol, the lambda-axis precision tolerance (from_domain passes it
+            # straight through). 1e-14, not the 1e-8 default: this harness measures best-case
+            # basis performance, and the default would cap every reading near 10 digits.
+            solver = MPSEigensolver.from_domain(domain, basis=basis, rng=rng, prec=1e-14)
             eigs, _mults, tensions = _polished_solve(solver, domain, n_eigs)
         eigs = np.atleast_1d(np.asarray(eigs)).ravel()
         out['tensions'] = list(np.atleast_1d(tensions)[:n_eigs])
