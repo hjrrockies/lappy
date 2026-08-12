@@ -3328,3 +3328,74 @@ sits below `sigma(lam_ref)` at n=32 and n=48. With an exact reference that can o
 basis's own minimum sitting off the true eigenvalue, i.e. the eigenvalue error. The flag was
 originally worded "lam_ref is the limit" and is now worded for both causes; distinguishing them
 takes the reference's provenance, not one measurement.
+
+## The knob program's foundations: a decoupled primitive, two gates, and a ceiling in n
+
+Building the evidence program for `make_default_basis(domain, lam_max, precision)`. Three
+pieces landed and both gates passed; one finding changes the design.
+
+**`probe.py`, because `from_domain` cannot measure a basis.** It derives BOTH collocation axes
+from the basis -- `mps.py:348` hardwires `pts_per_seg(domain, basis)` at `mult=2` with no
+pass-through, `mps.py:353` sets `npts_rand=len(basis)` -- so a comparison across families or
+sizes moves boundary count, boundary DISTRIBUTION (the rule differs for FB and FS) and interior
+count at once. Verified decoupled: basis 32 -> 96 columns with `n_bdry` fixed at 160 and `n_int`
+at 200. It also stops discarding two signals `bench.py` threw away: dropped sources (captured
+from the warning text; 24 of 96 on H_shape at `d=h`, and zero at both 0.25h and 2h, where they
+clear the notch entirely) and `rtol`, which is live in every sigma evaluation and which the two
+prior harnesses set differently without recording.
+
+**C0 passes: tension ranks like error.** Same pinned solver the study uses, eigenvalue error
+obtained by minimizing sigma near the analytic value so no reference is involved.
+
+    square         offset spread 1.4 digits (median 1.0)   pass
+    iso_right_tri  offset spread 1.2 digits (median 2.0)   pass
+    L_shape        offset spread 2.0 digits (median 2.4)   supporting, reference-limited
+
+Tension is 1-2.5 digits PESSIMISTIC against true error with a stable offset, so a target of
+`sigma ~ 1e-p` implies roughly p to p+2.5 digits. The precision dial errs safe.
+
+The gate's first version failed the sector, wrongly: FB about a sector apex spans that sector's
+exact eigenfunctions, so sigma sits at 1.5e-16 from n=4 with error exactly zero -- consistent,
+but no ladder. Recorded above as degenerate, and used as the singular-corner control anyway.
+Since EVERY analytic singular-corner domain is a sector, that case cannot be positively
+controlled with exact truth at all; it rests on L_shape against a 14-digit reference.
+
+**C1 passes: contrast catches a basis whose sigma looks good and means nothing.** The
+dangerous quadrant, H_shape with interior sources kept:
+
+    interior d=h  n=240   sigma@eig 2.66e-04   contrast 1.0
+    interior d=2h n=240   sigma@eig 5.04e-05   contrast 0.99
+    overcomplete          sigma@eig 0.00e+00   contrast 0.0
+
+Raw sigma falls 1.8e-02 -> 5.0e-05 as n and d grow, which reads as convergence. Contrast says
+there is no eigenvalue signal. Calibration for the coarse screen: broken band tops out at 3.7,
+good bases sit at 2.5e+04 and above, so admit at contrast >= 4e+02.
+
+C1's first version also mislabelled two WEAK bases as healthy and called the metric broken.
+Contrast ~1 means "no eigenvalue signal", which is the correct reading for a weak basis as well
+as an ill-conditioned one; only the small-sigma-low-contrast quadrant tests the metric.
+
+### The finding that changes the design: n has a ceiling set by the collocation ratio
+
+`pure_fb` on L_shape with boundary points PINNED at 144:
+
+    n     cols  n_reg   sigma@eig   sigma@off  contrast   bdry/cols
+    64      64     64    1.19e-14    1.16e-01   9.7e+12        2.25
+    96      96     96    1.30e-16    6.55e-12   5.0e+04        1.50
+    128    128    128    3.64e-20    4.11e-20   1.1e+00        1.13
+    160    160    160    0.00e+00    0.00e+00   0.0e+00        0.90
+    240    240    185    0.00e+00    0.00e+00   0.0e+00        0.60
+
+The basis does not degrade gracefully; it collapses between n=96 and n=128 and is identically
+zero beyond. `n_reg = n` until 160, so this is not the regularizer pruning columns -- the pencil
+simply acquires null directions at every lambda once the columns approach the number of boundary
+constraints, and a rule that is satisfiable everywhere locates nothing. This is the ~1.5
+boundary-to-column threshold `docs/basis_heuristics.md` records, reproduced cleanly, and
+contrast detects it while raw sigma reads 3.6e-20 and looks like a triumph.
+
+**Consequence: "pinned collocation" cannot mean one fixed value across an n-ladder.** A size
+sweep at fixed collocation crosses the ratio threshold and destroys the basis partway up, which
+would be read as the basis running out of approximation power. Pinning must be relative to the
+LARGEST n in the ladder -- fix `n_bdry` at a safe multiple of `n_max` and hold it there -- so
+the ratio stays clear of the threshold at every point. The knob study's collocation control (C3)
+was meant to find this; it turned up before C3 ran.

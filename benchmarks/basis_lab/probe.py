@@ -194,6 +194,15 @@ def probe(domain, spec, colloc, lam_star, lam_off=(), probe_grid=(), lam_max=Non
     Never raises for a bad build -- returns `ok=False` with the traceback, so one broken cell
     does not abandon a sweep.
     """
+    # Normalize to plain lists FIRST. Callers naturally pass numpy slices of a reference table,
+    # and `if lam_star:` on an ndarray raises "truth value of an array is ambiguous" -- the same
+    # bug that left `make_default_int_pts(kind='mesh')` dead for its whole life. Truth-testing a
+    # possibly-array argument is banned in this file; test `len(...)`.
+    lam_star = [float(x) for x in np.atleast_1d(lam_star)]
+    lam_off = [float(x) for x in np.atleast_1d(lam_off)] if len(np.atleast_1d(lam_off)) else []
+    probe_grid = ([float(x) for x in np.atleast_1d(probe_grid)]
+                  if len(np.atleast_1d(probe_grid)) else [])
+
     rec = {k: spec.get(k) for k in KNOB_FIELDS}
     rec.update(ok=False, error_type=None, error_msg=None, traceback=None, warnings=[],
                seconds_build=None, seconds_sigma=None)
@@ -232,22 +241,23 @@ def probe(domain, spec, colloc, lam_star, lam_off=(), probe_grid=(), lam_max=Non
         sig_grid = [float(solver.sigma(float(l))) for l in probe_grid]
         rec['seconds_sigma'] = time.time() - t1
 
-        best = min(sig_grid) if sig_grid else (sig_star[0] if sig_star else float('nan'))
+        best = min(sig_grid) if len(sig_grid) else (sig_star[0] if len(sig_star)
+                                                    else float('nan'))
         rec.update(
             lam_star=[float(l) for l in lam_star], sigma_at_lamstar=sig_star,
             lam_off=[float(l) for l in lam_off], sigma_off=sig_off,
             probe_grid=[float(l) for l in probe_grid], sigma_grid=sig_grid,
             sigma_star=best,
-            sigma_eig_median=float(np.median(sig_star)) if sig_star else None,
-            sigma_eig_max=float(np.max(sig_star)) if sig_star else None,
-            sigma_off_median=float(np.median(sig_off)) if sig_off else None,
+            sigma_eig_median=float(np.median(sig_star)) if len(sig_star) else None,
+            sigma_eig_max=float(np.max(sig_star)) if len(sig_star) else None,
+            sigma_off_median=float(np.median(sig_off)) if len(sig_off) else None,
         )
-        if sig_star and sig_off:
+        if len(sig_star) and len(sig_off):
             rec['contrast'] = float(np.median(sig_off)/max(np.median(sig_star), 1e-300))
         else:
             rec['contrast'] = None
 
-        if diagnostics and lam_star:
+        if diagnostics and len(lam_star):
             d = solver._tension_diagnostics(float(lam_star[0]))
             rec.update(n_reg=int(d['n_reg']), n_cols=int(d['n']), x_norm=float(d['x_norm']),
                        sigma_cond=float(d['sigma_cond']),
