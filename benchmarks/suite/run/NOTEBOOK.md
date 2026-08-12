@@ -3632,3 +3632,48 @@ needs the thin/elongated axis separated from the sharp-angle axis, which iso_tri
 directly (h = 0.5, 1, 2, 4, 8 all have references), and it needs a domain with a sharp convex
 corner that is NOT thin. Until then "sharp convex corner" and "thin domain" are confounded --
 both of iso_tri(h=8) and chevron(1,2) are thin AND sharply cornered.
+
+## Retraction: "the sharpest convex corner predicts fs_frac" is refuted
+
+The previous entry concluded that the sharpest CONVEX corner drives the fundamental-solution
+fraction and overrides reentrancy, from five domains. The deconfounding experiment it called for
+was run immediately and refutes it.
+
+The `iso_tri(h)` family separates the two candidate axes for free, because the minimum interior
+angle is NON-monotonic in h (largest at h=2) while the height-to-base ratio is monotonic. That
+makes h=0.5 and h=4 a matched pair on sharpness that differ eightfold in proportion.
+
+    h     height/base  bbox aspect  max nu    frac=0     0.25      0.5     0.75      1.0
+    0.5          0.25         4.00     6.8   2.1e-14  1.6e-14  3.9e-14  2.2e-08  3.0e-04
+    1            0.50         2.00     4.0   2.7e-15  2.6e-15  3.1e-14  4.3e-14  9.1e-14
+    2            1.00         1.00     3.4   5.1e-08  1.2e-14  1.8e-14  7.2e-14  6.1e-07
+    4            2.00         2.00     6.4   1.4e-05  1.6e-13  2.0e-13  5.2e-13  2.2e-06
+    8            4.00         4.00    12.6   5.4e-05  1.8e-11  5.8e-12  3.4e-12  1.8e-06
+
+**Sharpness is not it.** h=0.5 (nu=6.8) and h=4 (nu=6.4) are equally sharp; pure Fourier-Bessel
+gives 2.1e-14 on the first and 1.4e-05 on the second. And h=2, the BLUNTEST member of the family
+at nu=3.4, is already a pure-FB failure at 5.1e-08.
+
+**Elongation is not it either.** By bounding box, h=0.5 is 4:1 (wide and flat) and pure FB is
+fine; h=2 is 1:1 and pure FB fails. The pure-FB verdict runs fine, fine, fail, fail, fail as h
+increases, which is monotone in h -- a family parameter -- and in no symmetric shape measure
+tried. Whatever h is standing in for, it is not "sharp" and it is not "thin".
+
+So the branch predicate is unsolved. Three candidates are now dead: corner COUNT (what
+`make_default_basis` uses -- it separates none of these correctly), sharpest convex corner
+(this entry), and bounding-box aspect (this entry). Recording that plainly is worth more than
+another guess from the same five points.
+
+**What IS actionable.** `fs_frac = 0.25` is robust across the entire family -- 1.6e-14, 2.6e-15,
+1.2e-14, 1.6e-13, 1.8e-11 -- never worse than 1.8e-11 and usually at the floor, while pure FB
+spans eleven orders across the same domains and pure FS is bad everywhere (3e-04 to 9e-14). A
+small FS admixture is cheap insurance against a geometry whose FB behaviour we cannot yet
+predict.
+
+The exception is the one domain with a reentrant corner and no sharp convex ones: on L_shape
+pure FB is best at 7.3e-11 and frac=0.25 costs a hundredfold (8.6e-09). That is consistent with
+FB being at its strongest when its whole budget sits on a genuine r^(2/3) singularity --
+`fb_corner_fraction` gives a lone reentrant corner every column -- and weakest when spread over
+regular corners, where it is doing ordinary approximation and a few fundamental solutions help.
+That is a hypothesis, not a finding; it needs a second reentrant-only domain to test, and
+chevron is not one because it also has 18-degree corners.

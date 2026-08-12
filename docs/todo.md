@@ -63,12 +63,16 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
       ninth positional). Two names for the lambda-axis tolerance, neither of them obviously that.
       Rename or alias.
 
-- [ ] Branch predicate: the sharpest CONVEX corner (not corner count, not reentrancy) is what
-      predicts fs_frac across square/disk/L_shape/iso_tri_h8/chevron_1_2. chevron is the
-      discriminator -- reentrant like L_shape, but wants 75% FS where L_shape wants 0%.
-- [ ] Deconfound "sharp convex corner" from "thin domain": both current FS-hungry cases are
-      both. Sweep iso_tri h in {0.5,1,2,4,8} (all have references), and find a sharply cornered
-      domain that is NOT thin.
+- [ ] Branch predicate is UNSOLVED; three candidates are dead. Corner count (what the
+      constructor uses) separates nothing; sharpest convex corner is refuted (iso_tri h=0.5 and
+      h=4 are equally sharp with opposite pure-FB verdicts); bbox aspect is refuted (h=0.5 is
+      4:1 and fine, h=2 is 1:1 and fails). See NOTEBOOK retraction.
+- [ ] Test the "FB is strong only when its whole budget sits on a genuine singularity"
+      hypothesis -- it explains L_shape but needs a second reentrant-ONLY domain (chevron does
+      not qualify, it has 18-degree corners too). Candidates: cut_square, a single-notch
+      polygon.
+- [ ] fs_frac=0.25 as a robust default: never worse than 1.8e-11 across the whole iso_tri
+      family where pure FB spans eleven orders. Costs 100x on L_shape though.
 - [ ] Deliverable tables must be "columns to reach precision p", never "sigma at fixed n" --
       the square comparison inverts across the saturation crossing.
 
