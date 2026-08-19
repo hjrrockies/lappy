@@ -1,4 +1,5 @@
 from .core import BaseEigenproblem, BaseEigensolver
+from . import mps
 from .mps import MPSEigensolver
 from .utils import complex_form
 from .bounds import faber_krahn as _faber_krahn
@@ -69,9 +70,26 @@ def _find_deficient_gaps(eigs_for_check, a, b, domain, thresh=1):
 
 # eigenproblem class
 class Eigenproblem(BaseEigenproblem):
-    """Class for planar dirichlet laplacian eigenproblems."""
-    def __init__(self, domain, eval_solver=None, evec_solver=None):
+    """Class for planar dirichlet laplacian eigenproblems.
+
+    `precision` is one dial with the same meaning at both stages: it sizes the basis (through
+    `basis_plan`, which derives the whole construction from geometry, `lam_max` and that target)
+    AND becomes the eigenvalue search's `ltol`, so the minimization is solved to matching depth.
+    Asking for a basis good to `p` and then stopping the search at `1e-8` -- the old default --
+    wasted the basis; asking the search for more than the basis can support wasted the search.
+
+    Leaving `precision` as None falls back to `mps.ltol_default`. Either way no solver is built
+    until a solve needs one, so constructing an `Eigenproblem` stays cheap.
+
+    Note what `precision` is not: a guarantee. Measured over 75 cells, the achieved certified
+    accuracy runs a median ~1 digit *better* than requested, but the sharp-cornered domains
+    (chevrons, thin isoceles triangles) fall short of it -- see
+    `benchmarks/basis_lab/PLAN_LAB.md`. `plan.capped` and `plan.shortfall` say so when the planner
+    knows it cannot deliver; there is no mechanism yet that certifies the request was met.
+    """
+    def __init__(self, domain, eval_solver=None, evec_solver=None, precision=None):
         super().__init__(domain)
+        self.precision = precision
         self.eval_solver = eval_solver
         self.evec_solver = evec_solver
 
@@ -113,24 +131,95 @@ class Eigenproblem(BaseEigenproblem):
         del self._evec_solver
 
     def _get_eval_solver(self, solver):
+        """Resolve the solver, building a default one on demand if none was supplied.
+
+        Lazy rather than built in `__init__`, because constructing a solver costs a basis, a
+        collocation set and a boundary quadrature, and an `Eigenproblem` is cheap to make for
+        reasons that never reach a solve. Once built it is cached, so two `solve` calls share it.
+
+        This is what makes CLAUDE.md principle 1's three lines run: before, `from_domain` raised
+        `NotImplementedError` for `basis=None`, so `Eigenproblem(domain).solve(n)` could not work
+        and every caller hand-built a solver.
+        """
         if solver is not None:
             if not isinstance(solver, BaseEigensolver):
                 raise TypeError("'solver' must be a valid Eigensolver")
-        elif self.eval_solver is not None:
-            solver = self.eval_solver
-        else:
-            raise ValueError("eigenproblem has no eval_solver")
-        return solver
+            return solver
+        if self.eval_solver is None:
+            prec = self.precision if self.precision is not None else mps.ltol_default
+            self.eval_solver = MPSEigensolver.from_domain(self.domain, prec=prec)
+        return self.eval_solver
 
     def _get_evec_solver(self, solver):
+        """As `_get_eval_solver`, but falls back to the eval solver rather than building a second
+        one. `MPSEigensolver` already returns eigenfunctions -- the separate `evec_solver` slot
+        exists for the case where eigenvalues and eigenfunctions want different configurations
+        (e.g. an FEM sweep for the values), not because one solver cannot do both."""
         if solver is not None:
             if not isinstance(solver, BaseEigensolver):
                 raise TypeError("'solver' must be a valid Eigensolver")
-        elif self.evec_solver is not None:
-            solver = self.evec_solver
-        else:
-            raise ValueError("eigenproblem has no evec_solver")
-        return solver
+            return solver
+        if self.evec_solver is not None:
+            return self.evec_solver
+        return self._get_eval_solver(None)
+
+    def check_precision(self, eigs, solver=None):
+        """Was the requested `precision` actually achieved at `eigs`? Measured, not predicted.
+
+        Returns a dict with `target`, `achieved` (the worst block's contribution to the
+        Moler--Payne relative bound), `digits`, `met`, and the per-block breakdown so a caller can
+        see *where* it fell short.
+
+        This exists because nothing else answers the question. `plan.capped`/`plan.shortfall` report
+        only what the planner knew in advance; a request that quietly falls short -- which happens
+        on the sharp-cornered domains -- was silent. The quantity here is the same one
+        `refine_plan` optimizes, and it agrees with a full Moler--Payne certification to 0.16 digits
+        across 150 measured cells (`benchmarks/basis_lab/PLAN_LAB.md`) at roughly 1% of the cost,
+        because `||u||_L2 = 1` by construction for orthonormalized coefficients and the boundary sup
+        is one basis evaluation per arc.
+
+        Returns `None` if this problem's basis did not come from `basis_plan` (a hand-built basis
+        has no per-arc structure to attribute a residual to).
+        """
+        from . import basis_plan
+        solver = self._get_eval_solver(solver)
+        plan = basis_plan.plan_of(getattr(solver, 'basis', None))
+        if plan is None:
+            return None
+        arc, cor = basis_plan.residual_by_arc(plan, self.domain, solver, eigs)
+        achieved = float(max(arc.max(initial=0.0), cor.max(initial=0.0)))
+        target = plan.target
+        return dict(target=target, achieved=achieved,
+                    digits=(-np.log10(achieved) if achieved > 0 else np.inf),
+                    met=achieved <= target,
+                    arc_residuals=arc, corner_residuals=cor,
+                    n_basis=len(solver.basis), capped=plan.capped,
+                    shortfall=plan.shortfall or None)
+
+    def refine_basis(self, eigs, verbose=0):
+        """Grow the basis where `check_precision` says it falls short, and rebuild the solver.
+
+        Costs a second solve on the caller's part (the eigenvalues move slightly once the basis
+        changes), which is why it is opt-in rather than folded into `solve`. In a shape-optimization
+        loop this is paid once and amortized over every iterate afterwards; for a one-off solve it
+        roughly doubles the work.
+
+        Returns the refined `BasisPlan`, or None if the basis did not come from `basis_plan`.
+        """
+        from . import basis_plan
+        solver = self._get_eval_solver(None)
+        plan = basis_plan.plan_of(getattr(solver, 'basis', None))
+        if plan is None:
+            return None
+        prec = self.precision if self.precision is not None else mps.ltol_default
+
+        def factory(basis):
+            return MPSEigensolver.from_domain(self.domain, basis=basis, prec=prec)
+
+        refined = basis_plan.refine_plan(plan, self.domain, factory, eigs, verbose=verbose)
+        if refined.n_total != plan.n_total:
+            self.eval_solver = factory(basis_plan.realize(refined, self.domain))
+        return refined
 
     def solve(self, k, ppl=5, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
         """Solve for the first k eigenvalues (counting multiplicity).

@@ -329,10 +329,12 @@ class MPSEigensolver(BaseEigensolver):
         the measurement is short (see `certify_gram`). It is off by default because it costs an
         extra basis evaluation per eigenvalue, and it reports rather than resizes.
 
-        `rng` (int seed or Generator) fixes the interior-point draw, which is random by default
-        and genuinely moves the answer. Two solvers built for the same domain without it are
-        NOT comparable: their coefficients differ in every element. Pass one whenever two builds
-        need to agree, or a result needs to be reproducible."""
+        `rng` (int seed or Generator) fixes the interior-point draw, which genuinely moves the
+        answer. It is now **reproducible by default** (`make_default_int_pts.DEFAULT_INT_SEED`);
+        pass `np.random.default_rng()` for an independent draw, or a specific seed to sweep it.
+        Two solvers built for the same domain and basis therefore now agree element for element,
+        which they did not before -- see `make_default_int_pts` for why that mattered enough to
+        change a default."""
         if not isinstance(domain, BaseDomain):
             raise TypeError("'domain' must be a Domain object")
         if lam_max is None:
@@ -340,7 +342,7 @@ class MPSEigensolver(BaseEigensolver):
 
         # make basis for the domain
         if basis is None:
-            raise NotImplementedError
+            basis = default_basis_for(domain, lam_max, target=prec, rtol=rtol)
         elif not isinstance(basis, ParticularBasis):
             raise TypeError("'basis' must be a ParticularBasis object")
 
@@ -1057,15 +1059,58 @@ def make_default_bdry_data(domain, basis, weights=False, mult=2, min_per_seg=0):
     bc_param = np.concatenate([np.full(n, seg.bc, 'float') for seg, n in zip(domain.bdry.segments, n_per_seg)])
     return bdry_pts, bdry_normals, bc_param
 
+def default_basis_for(domain, lam_max, target=ltol_default, rtol=rtol_default):
+    """The basis `from_domain` builds when the caller does not supply one.
+
+    Polygons go to `basis_plan.polygon_default_basis`, which derives everything from geometry,
+    `lam_max` and `target` -- the signature `docs/todo.md` asks for, since `n_basis` is "the one
+    quantity [callers] have no principled way to choose". `target` is `prec`, i.e. the same dial
+    that sets `ltol`: one number meaning "the accuracy I want" at both the basis and the search
+    stage, which is the design recorded in `benchmarks/basis_lab/bench.py`.
+
+    `rtol` is threaded through because the planner's conditioning ceilings are defined by the
+    solver's own rank truncation, not by machine epsilon (`basis_plan._indep_digits`). Letting the
+    two drift apart would silently mis-size those ceilings, and getting that constant wrong made
+    achieved accuracy non-monotone in the target (`benchmarks/basis_lab/PLAN_LAB.md`, S2).
+
+    Curved boundaries raise: the planner is polygon-only, and inventing a size for them here would
+    be exactly the unfounded `n_basis` guess this function exists to remove. Pass an explicit
+    `basis=` for those.
+    """
+    from .basis_plan import PlanConfig, polygon_default_basis
+    if not domain.bdry.is_polyline:
+        raise NotImplementedError(
+            'automatic basis selection is implemented for polygons only (lappy.basis_plan). '
+            'For a curved or mixed boundary, build a basis and pass it as basis=... -- see '
+            'bases.make_default_basis, or FundamentalBasis.by_boundary for smooth domains.')
+    return polygon_default_basis(domain, lam_max, target=target,
+                                 cfg=PlanConfig(rtol=rtol))
+
+
+DEFAULT_INT_SEED = 0
+
+
 def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam_max=None,
                          prec=1e-8, rng=None):
     """Interior collocation points for `domain`.
 
-    `rng` (int seed or numpy Generator) makes `kind='random'` reproducible; `None` keeps the
-    global RNG, so callers relying on `np.random.seed` are unaffected. The draw genuinely moves
-    the answer -- `iso_right_tri` spanned 2.5 to 5.8 certified digits across draws -- so
-    anything producing reference values, or any comparison between two solver builds, should
-    pass one. `kind='mesh'` is deterministic and ignores it.
+    `rng` (int seed or numpy Generator) makes `kind='random'` reproducible. `None` now means
+    `DEFAULT_INT_SEED`, i.e. **reproducible by default**; pass `np.random.default_rng()`
+    explicitly for an independent draw. `kind='mesh'` is deterministic and ignores it.
+
+    WHY THE DEFAULT CHANGED. `None` used to mean the global RNG, so two solvers built from the
+    same domain and the same basis disagreed -- `iso_right_tri` spanned 2.5 to 5.8 certified
+    digits across draws, and `docs/scope_and_downstream.md` records 4.9, 4.0 and 2.5 on three runs
+    of identical code. For the shape-optimization inner loop this is not merely irreproducible, it
+    is fatal: an objective that moves when nothing about the shape moved makes a finite-difference
+    gradient meaningless and a line search unfalsifiable. The derivative objective is the more
+    sensitive of the two -- measured seed spreads on a rectangle are up to 1.4 digits in dlambda
+    against 0.5 in the certified eigenvalue bound (`benchmarks/basis_lab/PLAN_LAB.md`, S0b).
+
+    Randomness remains available and is still worth using deliberately: spread across several
+    draws is the signal that a basis is under-determined, so a basis study should sweep the seed
+    rather than trust one. What changed is only which way the default fails -- reproducibly
+    instead of silently.
 
     Curved domains use `Domain.int_pts`, which handles both kinds -- rejection sampling against
     `contains` for 'random', a curvature-adapted spline mesh for 'mesh'. This used to raise a
@@ -1100,6 +1145,8 @@ def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam
     if kind not in ('random', 'mesh'):
         raise ValueError(f"kind must be 'random' or 'mesh', got {kind!r}")
     if kind == 'random':
+        if rng is None:
+            rng = DEFAULT_INT_SEED
         return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand, rng=rng)
     if isinstance(domain, Polygon):
         if lam_max is None:

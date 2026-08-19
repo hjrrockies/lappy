@@ -210,6 +210,18 @@ def fixed_n(n):
     return build
 
 
+def planner(domain, lam_max, target=1e-10, **kw):
+    """`lappy.basis_plan`'s planner: everything derived from geometry, lam_max and a target, with
+    no size knob -- the signature docs/todo.md asks for.
+
+    Replaces `paper_heuristic`, which pointed at docs/mps_heuristics.pdf's recipe. That recipe was
+    measured over 1154 runs (HEURISTICS.md), found to be inert in its `precision` argument and
+    2-6x oversized, and is archived at benchmarks/archive/mps_heuristics_poc/.
+    """
+    from lappy.basis_plan import polygon_default_basis
+    return polygon_default_basis(domain, lam_max, target=target, **kw)
+
+
 # ── Convergence RATE, which is the thing a single size cannot see ────────────────────────────
 #
 # Different geometries should converge differently in kind, not merely in amount: corner-centred

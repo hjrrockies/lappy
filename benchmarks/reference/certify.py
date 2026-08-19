@@ -133,6 +133,18 @@ def boundary_sup(domain, u, n_per_seg=400, grade=3.0, refine=True):
 _MESH_CACHE = {}
 
 
+def clear_mesh_cache():
+    """Drop the cached cubature meshes (and the Domain references pinning them).
+
+    Entries are keyed on `id(domain)` and hold the domain alive so the address cannot be recycled
+    under them -- see the note in `interior_l2`. That means memory grows with the number of
+    distinct domains certified in one process; call this between domains in a long sweep.
+    """
+    n = len(_MESH_CACHE)
+    _MESH_CACHE.clear()
+    return n
+
+
 def interior_l2(domain, u, deg=10, mesh_kwargs=None, fallback_npts=200000,
                 cache_key=None, strict=False):
     """``||u||_{L2(Omega)}`` by cubature, as a *conservative under-estimate*.
@@ -161,16 +173,27 @@ def interior_l2(domain, u, deg=10, mesh_kwargs=None, fallback_npts=200000,
             extra = {k: v for k, v in mesh_kwargs.items() if k in sig}
             if 'mesh_kwargs' in sig and mesh_kwargs and not extra:
                 extra = {'mesh_kwargs': mesh_kwargs}
-            _MESH_CACHE[key] = domain.int_pts(method='mesh', weights=True,
-                                              kind='dunavant', deg=deg, **extra)
+            pts_new = domain.int_pts(method='mesh', weights=True,
+                                     kind='dunavant', deg=deg, **extra)
         except Exception as exc:
             if strict:
                 raise
             print(f'    [interior_l2] mesh cubature unavailable '
                   f'({type(exc).__name__}: {exc}); falling back to Monte Carlo')
-            _MESH_CACHE[key] = None
+            pts_new = None
+        # The value keeps a STRONG REFERENCE to `domain`, which is what makes the default
+        # `id(domain)` key safe. Without it the key is an address that CPython reuses after a
+        # garbage collection, so a sweep that builds one Domain per iteration and drops it can
+        # get a *previous* domain's cubature points back -- silently, since the points are a
+        # valid PointSet either way. Measured: 10 of 150 cells in
+        # `benchmarks/basis_lab/run/plan/s3.jsonl` were wrong before this line existed, by up to
+        # 6.7 digits (chevron_1_2 certified 14.94 where its own boundary residual said 8.23), and
+        # the errors ran in BOTH directions, so they cannot be dismissed as conservative.
+        # Pinning leaks one mesh per distinct domain for the process's life; `clear_mesh_cache()`
+        # releases them, and a correct expensive cache beats a cheap wrong one.
+        _MESH_CACHE[key] = (domain, pts_new)
 
-    pts = _MESH_CACHE[key]
+    pts = _MESH_CACHE[key][1]
     if pts is not None:
         vals = np.abs(u(pts)).ravel() ** 2
         return float(np.sqrt(np.sum(pts.wts * vals))), f'mesh/dunavant{deg}'

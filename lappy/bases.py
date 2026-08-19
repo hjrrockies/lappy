@@ -261,17 +261,57 @@ class NormalizedBasis(ParticularBasis):
         columns than this -- a pre-existing NormalizedBasis edge case, not specific to corner_terms."""
         return self.basis.corner_terms(domain)
 
-    @instance_lru_cache(maxsize=4)
+    @instance_lru_cache(maxsize=8)
+    def _raw_eval(self, lam, pts):
+        """THE evaluation of the wrapped basis at `(lam, pts)`; everything else here goes through
+        it, so a given point set is evaluated once per lambda.
+
+        It did not used to be. `norms(lam)` evaluates every component point set, and `__call__`
+        then evaluated the same points AGAIN in its `wts`-falsy branch -- the default, since
+        `bdry_pts`/`int_pts` carry no weights -- so a fresh lambda cost two boundary evaluations
+        and two interior ones. Measured cost of that: a factor 2.04-2.27 (median 2.10) on the
+        evaluation half of every `sigma`, which is itself 32-70% of a sigma
+        (`benchmarks/basis_lab/PLAN_LAB.md`, S0a). Since per-lambda work in the underlying bases is
+        purely transcendental (`jv`/`yv`; the lambda-independent geometry is cached separately),
+        that factor was pure waste.
+
+        `maxsize=8` holds four lambdas of a two-component build (boundary + interior). The old
+        `maxsize=4` on the weighted variant held two, which `tensions(..., n_workers>2)` thrashes.
+        Memory is `maxsize` arrays of `m x n` doubles -- about 32 MB at the largest size anything
+        in this project builds (n=500, m=1000) -- and `cache.clear_instance_caches` drops them.
+        The cache is keyed on the `PointSet` by identity, which is what makes reuse across
+        `norms`/`__call__` possible at all: the solver hands the same two objects to every call.
+        """
+        return self.basis._eval_pointset(lam, pts)
+
     def _weighted_eval(self, lam, pts):
-        """basis._eval_pointset with row-weighting baked in (if pts has weights)."""
-        A = self.basis._eval_pointset(lam, pts)
+        """`_raw_eval` with row-weighting applied (if pts has weights).
+
+        Deliberately NOT cached: it would hold a second, weighted copy of the same evaluation, and
+        the weighting is one `m x n` multiply against the transcendental cost of the evaluation
+        it reuses.
+        """
+        A = self._raw_eval(lam, pts)
         if hasattr(pts, 'sqrt_wts'):
             return A * pts.sqrt_wts
         return A
 
+    @instance_lru_cache(maxsize=8)
+    def _raw_grad_eval(self, lam, pts):
+        """The gradient twin of `_raw_eval`. Cached for the same reason and sized the same way:
+        a Robin `A_B` asks for values and gradients at the same `(lam, pts)`, and
+        `eigenfunction_eval_extras` asks for gradients at points it has already evaluated.
+
+        Unlike the value path this was never a *double* evaluation -- `norms` evaluates values,
+        not gradients -- so this is the smaller win. It is here for symmetry, and because the
+        comment on the branch below claimed a cache hit that could not happen: `_weighted_grad_eval`
+        carried no cache at all.
+        """
+        return self.basis._grad_pointset(lam, pts)
+
     def _weighted_grad_eval(self, lam, pts):
-        """basis._grad_pointset with row-weighting baked in (if pts has weights)."""
-        Ag = self.basis._grad_pointset(lam, pts)
+        """`_raw_grad_eval` with row-weighting applied (if pts has weights)."""
+        Ag = self._raw_grad_eval(lam, pts)
         if hasattr(pts, 'sqrt_wts'):
             return Ag * pts.sqrt_wts
         return Ag
@@ -295,21 +335,23 @@ class NormalizedBasis(ParticularBasis):
     def _eval_pointset(self, lam, pts, cols=None):
         norms, active = self.norms(lam)
         if cols is None:
-            A = self.basis._eval_pointset(lam, pts)
+            A = self._raw_eval(lam, pts)
             return A[:, active] / norms
         if active.all():
+            # `cols` exists to evaluate FEWER columns, so this stays a direct narrow call rather
+            # than a slice of the cached full evaluation.
             return self.basis._eval_pointset(lam, pts, cols) / norms[cols]
-        A = self.basis._eval_pointset(lam, pts)
+        A = self._raw_eval(lam, pts)
         return (A[:, active] / norms)[:, cols]
 
     def _grad_pointset(self, lam, pts, cols=None):
         norms, active = self.norms(lam)
         if cols is None:
-            Ag = self.basis._grad_pointset(lam, pts)
+            Ag = self._raw_grad_eval(lam, pts)
             return Ag[:, active] / norms
         if active.all():
             return self.basis._grad_pointset(lam, pts, cols) / norms[cols]
-        Ag = self.basis._grad_pointset(lam, pts)
+        Ag = self._raw_grad_eval(lam, pts)
         return (Ag[:, active] / norms)[:, cols]
 
     def __call__(self, lam, pts, wts=False, cols=None):
@@ -320,22 +362,22 @@ class NormalizedBasis(ParticularBasis):
         zero-norm, since `cols` and `active` then index different spaces."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
-        norms, active = self.norms(lam)          # warms _weighted_eval for component_pts
+        norms, active = self.norms(lam)          # warms _raw_eval for component_pts
         if cols is None:
             if wts is True and hasattr(pts, 'wts'):
-                A_w = self._weighted_eval(lam, pts)  # cache HIT if pts is a component
+                A_w = self._weighted_eval(lam, pts)   # reuses the cached _raw_eval
                 return A_w[:, active] / norms
             elif isinstance(wts, np.ndarray):
-                A = self.basis._eval_pointset(lam, pts)
+                A = self._raw_eval(lam, pts)
                 return (A[:, active] / norms) * wts[:, np.newaxis]
             else:
-                A = self.basis._eval_pointset(lam, pts)
+                A = self._raw_eval(lam, pts)
                 return A[:, active] / norms
 
         if active.all():
             A = self.basis._eval_pointset(lam, pts, cols) / norms[cols]
         else:
-            A = self.basis._eval_pointset(lam, pts)
+            A = self._raw_eval(lam, pts)
             A = (A[:, active] / norms)[:, cols]
         if wts is True and hasattr(pts, 'wts'):
             return pts.sqrt_wts*A
@@ -355,20 +397,20 @@ class NormalizedBasis(ParticularBasis):
 
         if cols is None:
             if wts is True and hasattr(pts, 'wts'):
-                Ag_w = self._weighted_grad_eval(lam, pts)  # cache HIT if pts is a component
+                Ag_w = self._weighted_grad_eval(lam, pts)   # reuses the cached _raw_grad_eval
                 Ag = Ag_w[:, active] / norms
             elif isinstance(wts, np.ndarray):
-                Ag_raw = self.basis._grad_pointset(lam, pts)
+                Ag_raw = self._raw_grad_eval(lam, pts)
                 Ag = (Ag_raw[:, active] / norms) * wts[:, np.newaxis]
             else:
-                Ag_raw = self.basis._grad_pointset(lam, pts)
+                Ag_raw = self._raw_grad_eval(lam, pts)
                 Ag = Ag_raw[:, active] / norms
             return Ag.real * vecs.real + Ag.imag * vecs.imag
 
         if active.all():
             Ag = self.basis._grad_pointset(lam, pts, cols) / norms[cols]
         else:
-            Ag_raw = self.basis._grad_pointset(lam, pts)
+            Ag_raw = self._raw_grad_eval(lam, pts)
             Ag = (Ag_raw[:, active] / norms)[:, cols]
         if wts is True and hasattr(pts, 'wts'):
             Ag = pts.sqrt_wts*Ag

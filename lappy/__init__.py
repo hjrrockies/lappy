@@ -15,6 +15,7 @@ from . import bounds
 from . import opt
 from . import convergence_tests
 from . import eigfun_integrals
+from . import basis_plan
 
 # classes and functions available directly from lappy
 from .mps import MPSEigensolver
