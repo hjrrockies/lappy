@@ -223,34 +223,41 @@ class Eigenproblem(BaseEigenproblem):
             self.eval_solver = factory(basis_plan.realize(refined, self.domain))
         return refined
 
-    def solve(self, k, ppl=10, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
+    def solve(self, k, ppl=20, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
         """Solve for the first k eigenvalues (counting multiplicity).
 
         Returns the FIRST k, which is a stronger promise than k of them, and one that was being
-        broken: at the previous default of `ppl=5` (against this docstring, which has always said
-        10) the initial scan stepped over a tension minimum and returned k accurate eigenvalues
-        with one missing from the bottom, silently shifting every index above it. Measured on
-        `right_trapezoid`, which dropped lam_3 = 44.9484877814 at k=10 while being correct at
-        k=9 and k=11, and on `eq_tri` at k=5. Both are fixed at ppl=10 and ppl=20.
+        broken. At the previous default of `ppl=5` the initial scan stepped over a tension
+        minimum and returned k accurate eigenvalues with one missing from the bottom, silently
+        shifting every index above it -- the count right, the values right, no warning. Swept
+        over ten suite polygons x k in 2..10 at precision 1e-10:
 
-        That failure is the reason to be careful with this parameter: it is not a
-        cost/accuracy trade in the usual sense, because the accuracy it buys is not in the
-        digits of the eigenvalues returned -- those were already right -- but in *which*
-        eigenvalues are returned. See `tests/test_mode_completeness.py`, which sweeps k rather
-        than sampling it, since every failing cell sat next to a passing one.
+            ppl=5    9 of 90 cells wrong        ppl=10   2 of 90        ppl=20   0 of 90
 
-        Note there is no cheap audit standing behind this. `_find_deficient_gaps` cannot serve:
-        measured per-gap Weyl expected counts overlap completely between correct and incorrect
-        results (correct cells reach 2.87 expected modes in a single gap, incorrect ones span
-        2.27-2.67), because multiplicity confounds the two-term count at these wavenumbers. Grid
-        resolution is doing the work, and a validated detector is still open (docs/todo.md).
+        `right_trapezoid` dropped lam_3 = 44.9484877814 at k=10 while being correct at k=9 and
+        k=11; `H_shape` dropped lam_5 = 14.30522996 at k=7 and k=9, needing ppl=20 because its
+        sigma well there is narrow (1.5e-10 at the mode, 3.4e-03 just 0.025 away) inside a tight
+        cluster. The cost is +43% on the initial grid, which buys not better digits -- those
+        were already right -- but the right *set*.
+
+        There is no cheap audit standing behind this, and that is a real limitation rather than
+        an oversight. `_find_deficient_gaps` cannot serve: measured per-gap Weyl expected counts
+        overlap completely between correct and incorrect results (correct cells reach 2.87
+        expected modes in one gap, incorrect ones span 2.27-2.67), because multiplicity
+        confounds the two-term count at these wavenumbers. Grid resolution is doing the work,
+        so `ppl=20` is validated rather than proven, and a domain with a tighter cluster than
+        H_shape's could still defeat it. A validated detector is open in docs/todo.md.
+
+        FOR A LOOP, USE `track` INSTEAD. It follows one mode by value from a nearby starting
+        point, which is both ~2.5x faster and immune to this failure mode, since no index is
+        involved. `solve` is the cold start.
 
         Parameters
         ----------
         k : int
             Number of eigenvalues to find.
         ppl : int, optional
-            Grid points per Weyl-level in the initial interval scan (default 10). Lowering it
+            Grid points per Weyl-level in the initial interval scan (default 20). Lowering it
             risks stepping over a bracket; see above.
         solver : BaseEigensolver, optional
             Override the instance's eval_solver for this call.
