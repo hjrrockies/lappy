@@ -1,4 +1,4 @@
-from .core import BaseEigenproblem, BaseEigensolver
+from .core import BaseEigenproblem, BaseEigensolver, EigensolverFailure
 from . import mps
 from .mps import MPSEigensolver
 from .utils import complex_form
@@ -7,9 +7,11 @@ from .bounds import faber_krahn as _faber_krahn
 # Relative slack applied to a sharp lower bound before using it as a search
 # endpoint. Far below any accuracy of interest; costs one extra grid point.
 _WINDOW_PAD = 1e-6
-from .asymp import weyl_est as _weyl_est, weyl_count_check as _weyl_count_check
+from .asymp import (weyl_est as _weyl_est, weyl_count as _weyl_count,
+                    weyl_count_check as _weyl_count_check)
 from .bases import ParticularBasis
 from .geometry import PointSet, Domain
+from .opt import minimize_on_bracket
 
 import numpy as np
 
@@ -221,15 +223,35 @@ class Eigenproblem(BaseEigenproblem):
             self.eval_solver = factory(basis_plan.realize(refined, self.domain))
         return refined
 
-    def solve(self, k, ppl=5, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
+    def solve(self, k, ppl=10, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
         """Solve for the first k eigenvalues (counting multiplicity).
+
+        Returns the FIRST k, which is a stronger promise than k of them, and one that was being
+        broken: at the previous default of `ppl=5` (against this docstring, which has always said
+        10) the initial scan stepped over a tension minimum and returned k accurate eigenvalues
+        with one missing from the bottom, silently shifting every index above it. Measured on
+        `right_trapezoid`, which dropped lam_3 = 44.9484877814 at k=10 while being correct at
+        k=9 and k=11, and on `eq_tri` at k=5. Both are fixed at ppl=10 and ppl=20.
+
+        That failure is the reason to be careful with this parameter: it is not a
+        cost/accuracy trade in the usual sense, because the accuracy it buys is not in the
+        digits of the eigenvalues returned -- those were already right -- but in *which*
+        eigenvalues are returned. See `tests/test_mode_completeness.py`, which sweeps k rather
+        than sampling it, since every failing cell sat next to a passing one.
+
+        Note there is no cheap audit standing behind this. `_find_deficient_gaps` cannot serve:
+        measured per-gap Weyl expected counts overlap completely between correct and incorrect
+        results (correct cells reach 2.87 expected modes in a single gap, incorrect ones span
+        2.27-2.67), because multiplicity confounds the two-term count at these wavenumbers. Grid
+        resolution is doing the work, and a validated detector is still open (docs/todo.md).
 
         Parameters
         ----------
         k : int
             Number of eigenvalues to find.
         ppl : int, optional
-            Grid points per Weyl-level in the initial interval scan (default 10).
+            Grid points per Weyl-level in the initial interval scan (default 10). Lowering it
+            risks stepping over a bracket; see above.
         solver : BaseEigensolver, optional
             Override the instance's eval_solver for this call.
         **solver_kwargs
@@ -331,6 +353,100 @@ class Eigenproblem(BaseEigenproblem):
         """Solves for all eigenvalues in the interval [a,b] using the specified solver."""
         solver = self._get_eval_solver(solver)
         return solver.solve_interval(a, b, n_pts, **solver_kwargs)
+
+    def _mean_spacing(self, lam):
+        """Local mean eigenvalue spacing at `lam`, from the two-term Weyl law.
+
+        Taken as `weyl_est(N+1) - weyl_est(N)` rather than differentiating by hand, so the
+        Dirichlet/Neumann sign convention lives in one place. `N` is clamped away from zero
+        because `weyl_count` goes negative below the first eigenvalue on some domains.
+        """
+        n = max(float(_weyl_count(lam, self.domain)), 0.5)
+        return float(_weyl_est(n + 1, self.domain) - _weyl_est(n, self.domain))
+
+    def track(self, lam_prev, mult=1, solver=None, window=None, n_pts=9, solver_kwargs=None,
+              verbose=0):
+        """Follow ONE eigenvalue from a nearby starting value. No global scan.
+
+        This is the inner-loop call. `solve(k)` re-scans the whole spectrum from the
+        Faber--Krahn bound every time -- 2-8 s for four eigenvalues, against ~10 ms of solver
+        construction -- which a shape-optimization loop does not need, because it already knows
+        where `lambda` was at the previous iterate. Tracking also sidesteps `solve(k)`'s
+        set-selection problem entirely: it follows a mode by VALUE, so it cannot silently hand
+        back a different index (see `tests/test_mode_completeness.py`).
+
+        The intended loop is plan-once / realize-per-iterate:
+
+            plan = basis_plan.plan_basis(dom0, lam_max, target)
+            lam  = Eigenproblem(dom0, precision=p).solve(1)[0]      # cold start, once
+            for dom in family:
+                solver = MPSEigensolver.from_domain(dom, basis=basis_plan.realize(plan, dom))
+                lam = Eigenproblem(dom, eval_solver=solver, precision=p).track(lam)
+
+        `window` is the HALF-width of the scan, defaulting to a third of the local Weyl mean
+        spacing so it cannot reach the neighbouring eigenvalue. Pass a float to override.
+
+        RAISES `EigensolverFailure` if the discrete minimum lands on the edge of the scan
+        window, because then the window -- not the tension -- chose the answer. That guard is not
+        hypothetical: `benchmarks/basis_lab/plan_lab._lam_near` records it catching a fixed
+        +-2e-3 window that the eigenvalue had simply outrun, producing a reference wrong by 16%
+        which then read as every basis being wrong by an identical amount. The same failure
+        appears twice in that directory's notebook. Widen `window`, or step the shape more
+        finely so consecutive iterates stay close.
+
+        Also raises if the tension at the located minimum is above `ttol`: a minimum of sigma is
+        not an eigenvalue unless sigma is actually small there, and a loop that has stepped off
+        its mode should be told, not handed the nearest dip. With `mult > 1` the check is applied
+        to `sigma[mult-1]`, so a cluster that has lost a member is caught too.
+
+        Returns the eigenvalue as a float.
+        """
+        solver = self._get_eval_solver(solver)
+        solver_kwargs = solver_kwargs or {}
+        lam_prev = float(lam_prev)
+        if lam_prev <= 0:
+            raise ValueError(f"'lam_prev' must be positive (got {lam_prev})")
+        if n_pts < 3:
+            raise ValueError(f"'n_pts' must be at least 3 (got {n_pts})")
+
+        h = float(window) if window is not None else self._mean_spacing(lam_prev)/3.0
+        if not (h > 0 and np.isfinite(h)):
+            raise EigensolverFailure(f'could not size a scan window at lam={lam_prev:.9g} '
+                                     f'(got half-width {h}); pass `window` explicitly')
+
+        sig = lambda l: float(np.atleast_1d(solver.sigma(float(l), **solver_kwargs))[0])  # noqa: E731
+        xs = np.linspace(lam_prev - h, lam_prev + h, n_pts)
+        if xs[0] <= 0:
+            xs = np.linspace(lam_prev/2, lam_prev + h, n_pts)
+        ys = np.array([sig(x) for x in xs])
+        i = int(np.argmin(ys))
+        if verbose > 0:
+            print(f'track: window [{xs[0]:.6g}, {xs[-1]:.6g}] about {lam_prev:.9g}, '
+                  f'min at index {i} of {n_pts}')
+        if i == 0 or i == n_pts - 1:
+            raise EigensolverFailure(
+                f'tension minimum is at the edge of the scan window around lam={lam_prev:.9g} '
+                f'(index {i} of {n_pts}, window half-width {h:.4g}). The window, not the basis, '
+                f'would set the answer. Widen `window`, or take smaller steps in the shape so '
+                f'consecutive iterates stay closer.')
+
+        lam, _ = minimize_on_bracket(sig, ((xs[i-1], xs[i], xs[i+1]), (ys[i-1], ys[i], ys[i+1])),
+                                     1e-15)
+        lam = float(lam)
+
+        # `tensions`, not `sigma`: the latter is only the smallest one, so it cannot see whether
+        # a cluster of size `mult` is present.
+        t = np.atleast_1d(solver.tensions(lam, **solver_kwargs))
+        if mult > len(t):
+            raise EigensolverFailure(f'mult={mult} exceeds the {len(t)} tensions the pencil '
+                                     f'returns at lam={lam:.9g}')
+        ttol = getattr(solver, 'ttol', mps.ttol_default)
+        if t[mult-1] > ttol:
+            raise EigensolverFailure(
+                f'tracked a minimum at lam={lam:.9g} but sigma[{mult-1}]={t[mult-1]:.3e} is above '
+                f'ttol={ttol:.1e}, so it is not an eigenvalue of multiplicity {mult}. The loop has '
+                f'probably stepped off the mode it was following, or the cluster has split.')
+        return lam
 
     def eigenfunction(self, eig, mult=1, solver=None, **solver_kwargs):
         solver = self._get_evec_solver(solver)
