@@ -241,16 +241,36 @@ def test_make_default_int_pts_rejects_an_unknown_kind():
 def test_disk_solves_end_to_end_against_exact_bessel_eigenvalues():
     """The acceptance test for the above: a curved domain through the full default pipeline,
     checked against closed-form truth (squared Bessel zeros). This could not run at all before
-    -- from_domain raised NotImplementedError building the interior points."""
+    -- from_domain raised NotImplementedError building the interior points.
+
+    THE LOWER ENDPOINT MUST BE NUDGED, and the disk is the one domain where it matters.
+    Faber--Krahn is sharp, with equality exactly for the disk, so `faber_krahn(disk)` and lam_1
+    agree to ten digits -- 5.7831859629 either way. `opt.discrete_locmin_idx` cannot return a
+    minimum sitting on the edge of its grid, which is why `evp._solve_dir_neu` multiplies the
+    bound by `1 - _WINDOW_PAD` before searching and says so at length. This test used to scan
+    from the raw bound and passed anyway, on roundoff luck: whether lam_1 was found came down to
+    a last-ulp comparison against the ghost point below it, and a 1-ulp change in the Bessel
+    evaluation (the order-0 fast path in `FundamentalBasis._bessel`) flipped it. Nothing about
+    the solver changed -- `Eigenproblem.solve(2)`, which applies the pad itself, returns both
+    modes before and after, and the assertion below now checks that path too.
+    """
     sp = pytest.importorskip('scipy.special')
-    from lappy import bases
+    from lappy import bases, Eigenproblem
+    from lappy.evp import _WINDOW_PAD
     from lappy.mps import MPSEigensolver, weyl_est
     dom = G.disk(1)
+    exact = np.sort(np.concatenate([sp.jn_zeros(m, 3)**2 for m in range(4)]))
+
     solver = MPSEigensolver.from_domain(dom, basis=bases.make_default_basis(dom, 120), rng=7)
-    out = solver.solve_interval(bounds.faber_krahn(dom), weyl_est(2, dom), 20)
+    a = bounds.faber_krahn(dom)*(1.0 - _WINDOW_PAD)
+    out = solver.solve_interval(a, weyl_est(2, dom), 20)
     eigs = np.atleast_1d(np.asarray(out[0] if isinstance(out, tuple) else out)).ravel()
     assert len(eigs) >= 2, eigs
-
-    exact = np.sort(np.concatenate([sp.jn_zeros(m, 3)**2 for m in range(4)]))
     for computed in eigs[:2]:
+        assert np.min(np.abs(exact - computed)/computed) < 1e-6, computed
+
+    # ...and the same thing through the pipeline a caller actually uses, which owns the nudge.
+    through_evp = np.asarray(Eigenproblem(dom, eval_solver=solver).solve(2))
+    assert len(through_evp) == 2, through_evp
+    for computed in through_evp:
         assert np.min(np.abs(exact - computed)/computed) < 1e-6, computed

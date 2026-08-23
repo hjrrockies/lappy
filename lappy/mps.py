@@ -11,6 +11,7 @@ from .eigfun_integrals import (boundary_quadrature, EigfunData, gram as eigfun_g
 
 from .cache import instance_lru_cache
 import numpy as np
+import os
 import scipy.linalg as la
 import warnings
 from gsvd4py import gsvd, gsvdvals
@@ -56,6 +57,22 @@ ttol_default = 1e-3
 # setting (benchmarks/reference/common.solve_domain_v2). See the retraction entry in
 # benchmarks/suite/run/NOTEBOOK.md.
 ltol_default = 1e-8
+
+# Threads used to evaluate the lambda grid. The grid is embarrassingly parallel -- one
+# independent sigma per lambda -- and both halves of a sigma (scipy's Bessel ufuncs, LAPACK via
+# scipy.linalg) release the GIL, so this is a real speedup rather than a Python-level shuffle.
+# Measured with a FRESH solver per timing, because sigma memoizes on lambda and re-solving the
+# same domain otherwise times a dict lookup:
+#
+#     L_shape n=159    5.97 s (1 worker)  ->  2.86 s (4)  ->  2.44 s (8)
+#     H_shape n=364   38.14 s             -> 21.57 s      -> 19.54 s
+#
+# Eigenvalues are identical to every digit at every setting. Capped at 8 because the gain is
+# already flat between 4 and 8 (the pencils are small, so the per-sigma LAPACK calls compete for
+# the same memory bandwidth) and because oversubscribing against a threaded BLAS costs more than
+# the last few percent is worth. Pass n_workers=1 to serialize -- useful when profiling, since
+# thread scheduling smears a profile across workers.
+n_workers_default = min(8, os.cpu_count() or 1)
 
 # MPS functions
 def regularize_pencil(A1, A2, reg_type='svd', rtol=rtol_default):
@@ -777,7 +794,7 @@ class MPSEigensolver(BaseEigensolver):
 
     def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None,
                        ltol=None, minsolver='parabolic', bracket_kwargs={},
-                       n_workers=1, verbose=0):
+                       n_workers=None, verbose=0):
         """solves for all eigenvalues in [a,b] using MPS
 
         ``bracket_kwargs`` is forwarded to ``opt.bracket_mins`` (the
@@ -788,8 +805,13 @@ class MPSEigensolver(BaseEigensolver):
         announces itself: it does not recurse *deeper* than a well-posed one
         with near-repeated eigenvalues, it *branches* wider from spurious
         minima.
+
+        ``n_workers`` defaults to ``mps.n_workers_default``; the lambda grid is embarrassingly
+        parallel and this is worth ~2x. Pass 1 to serialize.
         """
         reg_type, rtol, ttol, ltol = self._get_params(reg_type, rtol, ttol, ltol)
+        if n_workers is None:
+            n_workers = n_workers_default
         return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
                               ltol, ttol, minsolver, bracket_kwargs=bracket_kwargs,
                               n_workers=n_workers, verbose=verbose)

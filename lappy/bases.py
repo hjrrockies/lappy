@@ -4,7 +4,7 @@ from .geometry import PointSet
 from .core import BaseDomain
 
 import numpy as np
-from scipy.special import jv, jvp, yv, yvp
+from scipy.special import jv, jvp, yv, yvp, y0, y1
 from scipy.linalg import norm
 from .cache import instance_cache, instance_lru_cache
 from abc import ABC, abstractmethod
@@ -1171,25 +1171,44 @@ class FundamentalBasis(ParticularBasis):
         """Y_m(√λ · r) for every basis column (or just `cols`, if given -- see
         FourierBesselBasis._bessel; the same restricted-evaluation idea applies here, though
         FundamentalBasis columns are never singular so this mainly matters when a MultiBasis
-        combining FS with a singular FB basis dispatches a corner's cols through both)."""
+        combining FS with a singular FB basis dispatches a corner's cols through both).
+
+        `order=1` -- the default, and what `basis_plan.realize` always builds -- puts every `m`
+        at zero, and scipy's general-order `yv` is 42x slower than `y0` on that case for no
+        gain in accuracy (they agree to ~1 ulp; the two differ only in code path). Measured at
+        1.98 s of a 5.88 s L_shape solve, i.e. a third of the whole thing for 36 of 159 columns.
+        The guard is on the values rather than on `order` so a basis assembled some other way
+        still takes the general path.
+        """
         k = np.sqrt(lam)
         r_cols = self._r_cols(pts)
         m = self._m
         if cols is not None:
             r_cols = r_cols[:, cols]
             m = m[cols]
+        if self._all_order_zero(m):
+            return y0(k * r_cols)
         return yv(m[np.newaxis, :], k * r_cols)
 
 
     def _besselp(self, lam, pts, cols=None):
-        """Y_m'(√λ · r) for every basis column (derivative w.r.t. the argument); see _bessel."""
+        """Y_m'(√λ · r) for every basis column (derivative w.r.t. the argument); see _bessel.
+
+        Y_0' = -Y_1 exactly, and `y1` is 85x faster than `yvp(0, .)`."""
         k = np.sqrt(lam)
         r_cols = self._r_cols(pts)
         m = self._m
         if cols is not None:
             r_cols = r_cols[:, cols]
             m = m[cols]
+        if self._all_order_zero(m):
+            return -y1(k * r_cols)
         return yvp(m[np.newaxis, :], k * r_cols)
+
+    @staticmethod
+    def _all_order_zero(m):
+        """Is every order exactly zero? Cheap enough to re-ask per call (a few hundred ints)."""
+        return m.size > 0 and not m.any()
 
     # ------------------------------------------------------------------ #
     #  Core evaluation methods                                            #

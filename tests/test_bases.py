@@ -454,3 +454,60 @@ def test_all_sources_inside_is_an_error_not_a_warning():
     # a NEGATIVE offset drives every source inward
     with pytest.raises(ValueError, match='every source lies inside'):
         FundamentalBasis.by_boundary(dom, n_per_seg, d=-0.2, order=1)
+
+
+# ── The order-0 fast path in FundamentalBasis ────────────────────────────────────
+# `orders=1` puts every angular order at zero, which is what `basis_plan.realize` always builds.
+# scipy's general-order `yv`/`yvp` are 42x/85x slower than `y0`/`y1` on that case for no gain in
+# accuracy, and in a profile that call was 1.98 s of a 5.88 s L_shape solve. These tests pin the
+# substitution against the general routines it replaces, because a silent divergence there would
+# move every eigenvalue slightly and nothing else in the suite would attribute it here.
+
+def test_order_zero_bessel_matches_the_general_routine():
+    from scipy.special import yv, yvp
+    from lappy.bases import FundamentalBasis
+    from lappy.geometry import PointSet
+
+    fs = FundamentalBasis(np.array([6+6j, -6-5j, 5.5-6j]), orders=1)
+    assert not fs._m.any(), 'orders=1 should put every angular order at zero'
+    pts = PointSet(np.array([0.3+0.2j, -0.4+0.1j, 0.15-0.35j, 0.0+0.0j, 0.9-0.8j]))
+
+    for lam in (1.0, 9.6397238440, 137.5):
+        k = np.sqrt(lam)
+        r = fs._r_cols(pts)
+        assert np.allclose(fs._bessel(lam, pts), yv(fs._m[np.newaxis, :], k*r),
+                           rtol=1e-13, atol=1e-15)
+        assert np.allclose(fs._besselp(lam, pts), yvp(fs._m[np.newaxis, :], k*r),
+                           rtol=1e-13, atol=1e-15)
+
+
+def test_nonzero_orders_still_take_the_general_path():
+    """The guard is on the order VALUES, not on the `orders` argument, so a basis with any
+    nonzero angular order keeps working."""
+    from scipy.special import yv, yvp
+    from lappy.bases import FundamentalBasis
+    from lappy.geometry import PointSet
+
+    fs = FundamentalBasis(np.array([6+6j, -6-5j]), orders=3)
+    assert fs._m.any(), 'orders=3 should produce nonzero angular orders'
+    pts = PointSet(np.array([0.3+0.2j, -0.4+0.1j, 0.15-0.35j]))
+    k = np.sqrt(9.64)
+    r = fs._r_cols(pts)
+    assert np.allclose(fs._bessel(9.64, pts), yv(fs._m[np.newaxis, :], k*r), rtol=0, atol=0)
+    assert np.allclose(fs._besselp(9.64, pts), yvp(fs._m[np.newaxis, :], k*r), rtol=0, atol=0)
+
+
+def test_the_fast_path_survives_column_restriction():
+    """`cols` slices the order array, so the all-zero test must be made on the SLICE."""
+    from scipy.special import yv
+    from lappy.bases import FundamentalBasis
+    from lappy.geometry import PointSet
+
+    fs = FundamentalBasis(np.array([6+6j, -6-5j, 5.5-6j]), orders=1)
+    pts = PointSet(np.array([0.3+0.2j, -0.4+0.1j]))
+    cols = np.array([0, 2])
+    k = np.sqrt(9.64)
+    got = fs._bessel(9.64, pts, cols)
+    want = yv(fs._m[cols][np.newaxis, :], k*fs._r_cols(pts)[:, cols])
+    assert got.shape == want.shape
+    assert np.allclose(got, want, rtol=1e-13, atol=1e-15)

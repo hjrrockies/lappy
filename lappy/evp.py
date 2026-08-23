@@ -425,7 +425,16 @@ class Eigenproblem(BaseEigenproblem):
         xs = np.linspace(lam_prev - h, lam_prev + h, n_pts)
         if xs[0] <= 0:
             xs = np.linspace(lam_prev/2, lam_prev + h, n_pts)
-        ys = np.array([sig(x) for x in xs])
+        # The scan points are independent, so evaluate them together: `tensions` takes an array
+        # and threads it. This is the loop's hot path, and serially it was the whole cost of a
+        # `track` -- the parabolic refinement that follows needs only a handful more sigmas.
+        try:
+            rows = solver.tensions(xs, n_workers=mps.n_workers_default, **solver_kwargs)
+            ys = np.array([float(np.atleast_1d(r)[0]) for r in rows])
+        except TypeError:
+            # A solver whose `tensions` does not take arrays or `n_workers` (anything not an
+            # MPSEigensolver) still works, one point at a time.
+            ys = np.array([sig(x) for x in xs])
         i = int(np.argmin(ys))
         if verbose > 0:
             print(f'track: window [{xs[0]:.6g}, {xs[-1]:.6g}] about {lam_prev:.9g}, '
