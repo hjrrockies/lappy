@@ -6,8 +6,8 @@ from .geometry import PointSet, Polygon
 from .bases import make_default_basis, ParticularBasis, NormalizedBasis, MultiBasis, FourierBesselBasis
 from .cubature import polygon_cubature
 from .asymp import weyl_est
-from .eigfun_integrals import (boundary_quadrature, EigfunData, gram as eigfun_gram,
-                               lowdin_transform, refine_quadrature)
+from .eigfun_integrals import (boundary_quadrature, hadamard_quadrature, EigfunData,
+                               gram as eigfun_gram, lowdin_transform, refine_quadrature)
 
 from .cache import instance_lru_cache
 import numpy as np
@@ -306,14 +306,57 @@ class MPSEigensolver(BaseEigensolver):
         self._certify_target = certify_target
         self._certifications = {}
 
+        # For the lazily-built `hadamard_quad`. Set by `from_domain`; absent under manual
+        # construction, in which case that property explains what to build instead of guessing.
+        self._lam_max = None
+        self._orthonorm_precision = None
+        self._hadamard_quad = None
+
     @property
     def bdry_quad(self):
         """The corner-adapted boundary quadrature backing L^2-orthonormalization (see
         eigfun_integrals.boundary_quadrature), or None if unavailable. Exposed for reuse by
-        code building other boundary functionals from the same eigenfunctions (e.g.
-        Hadamard-type shape derivatives) via eigfun_integrals.weighted_integral -- lappy
-        itself implements no such formulas."""
+        code building other boundary functionals from the same eigenfunctions via
+        eigfun_integrals.weighted_integral -- lappy itself implements no such formulas.
+
+        **NOT the right node set for a shape derivative that moves a singular corner.** This
+        one is `weight_family='even'`, matched to the eigenfunction's own exponent family, which
+        is what the Rellich/Gram normalization needs. A corner-moving velocity supplies
+        `V.n ~ r` there, which that family does not integrate exactly: measured 6.1 digits
+        against 9.3 for `hadamard_quad` on the L-shape's reentrant vertex, with both answers
+        looking entirely plausible. Use `hadamard_quad` for those; `normal_velocity` warns if
+        you do not. An earlier version of this docstring recommended this object for
+        Hadamard-type derivatives, which for a polygon parametrization -- where moving a vertex
+        IS the design variable -- was pointing callers at the wrong one.
+        """
         return self._bdry_quad
+
+    @property
+    def hadamard_quad(self):
+        """Boundary quadrature for SHAPE-DERIVATIVE integrals, built on first use and cached.
+
+        `weight_family='integer'`, i.e. `eigfun_integrals.hadamard_quadrature`: exact on integer
+        powers of distance from a singular corner, which is what a corner-moving `V.n` supplies.
+        It is a SEPARATE node set from `bdry_quad` on purpose -- the trade runs the other way for
+        the Rellich weight, and by as much -- so both are kept rather than one being made to
+        serve twice.
+
+        Sized from the same `lam_max` and `orthonorm_precision` the solver was built with. Raises
+        if the solver was constructed by hand rather than through `from_domain`, because then
+        neither is known and inventing them would be exactly the unfounded guess this property
+        exists to remove.
+        """
+        if self._hadamard_quad is not None:
+            return self._hadamard_quad
+        if self._domain is None or self._lam_max is None:
+            raise ValueError(
+                'hadamard_quad needs the domain and lam_max this solver was sized for, which a '
+                'hand-built solver does not carry. Either build the solver with '
+                'MPSEigensolver.from_domain, or build the node set directly with '
+                'eigfun_integrals.hadamard_quadrature(domain, lam_max).')
+        prec = self._orthonorm_precision if self._orthonorm_precision is not None else 1e-13
+        self._hadamard_quad = hadamard_quadrature(self._domain, self._lam_max, precision=prec)
+        return self._hadamard_quad
 
     @classmethod
     def default_basis(domain, n):
@@ -388,8 +431,11 @@ class MPSEigensolver(BaseEigensolver):
                                                 precision=orthonorm_precision,
                                                 x0=orthonorm_x0)
 
-        return cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol, prec,
-                   bdry_quad=bdry_quad, domain=domain, certify_target=certify_target)
+        solver = cls(basis, bdry_pts, int_pts, bdry_normals, bc_param, reg_type, rtol, ttol,
+                     prec, bdry_quad=bdry_quad, domain=domain, certify_target=certify_target)
+        solver._lam_max = float(lam_max)
+        solver._orthonorm_precision = orthonorm_precision
+        return solver
         
     def _get_params(self, reg_type=None, rtol=None, ttol=None, ltol=None):
         """Helper to resolve parameters against instance defaults"""

@@ -30,8 +30,9 @@ This split ratifies a boundary the codebase drew earlier, rather than inventing 
 * `docs/eigfun_integrals.md`: `weighted_integral` keeps the four bilinear Cauchy-data kernels
   and an arbitrary boundary weight as "the extension point for Hadamard-type shape derivatives
   — but only ever at eigenfunction scale. lappy implements no such formulas itself."
-* `MPSEigensolver.bdry_quad` is exposed precisely "for reuse by code building other boundary
-  functionals from the same eigenfunctions (e.g. Hadamard-type shape derivatives)".
+* `MPSEigensolver.bdry_quad` is exposed for reuse by code building other boundary functionals
+  from the same eigenfunctions. (It used to name Hadamard-type shape derivatives as the example.
+  That was wrong for the polygon case and §3 records why; `hadamard_quad` is the one for those.)
 
 The seam is where the mathematics has one: upstream is "solve the PDE, integrate Cauchy data",
 downstream is "which functional, which perturbation field, which optimizer".
@@ -53,6 +54,26 @@ identity (`test_dilation_through_the_converter_is_the_rellich_identity`), which 
 and orientation together, plus a check that a purely tangential velocity returns zero. douse
 computes `dp` from its parametrization — using `bq.seg_idx`/`bq.tau` to know where each node
 sits — and lappy converts. The convention is enforced in one place rather than agreed in two.
+
+**And it is not only the sign that a downstream package would get wrong.** The node set matters
+too, and the default one is the wrong choice for the polygon case. `MPSEigensolver.bdry_quad` is
+`weight_family='even'`, matched to the eigenfunction's own exponent family because that is what
+the Rellich/Gram normalization needs. A velocity that MOVES A SINGULAR CORNER supplies
+`V·n ~ r` there, outside that family. Measured end to end on the L-shape's reentrant vertex
+against a five-point central difference over a frozen plan:
+
+| node set | agreement with the FD |
+|---|---|
+| `solver.bdry_quad` (`'even'`) | **6.1 digits** |
+| `solver.hadamard_quad` (`'integer'`) | **9.3 digits** |
+
+Three orders, and both answers look entirely plausible. For a polygon parametrization moving a
+vertex *is* the design variable and reentrant corners are the interesting ones, so this is the
+ordinary case rather than an edge case — and `bdry_quad`'s docstring used to recommend itself
+for exactly this. `MPSEigensolver.hadamard_quad` now builds the right set lazily, and
+`normal_velocity` warns when a velocity moves a singular corner on an `'even'` set. The two
+node sets are kept separate on purpose: the trade runs the other way for the Rellich weight, and
+by as much.
 
 **Degenerate clusters are part of the contract. DOCUMENTED** in
 `MPSEigensolver.eigenfunction_coef`, including what is *not* promised: which orthonormal basis of
@@ -88,15 +109,18 @@ accurate. It is the only test sensitive to a *systematic* error in `||u||`.
 Conveniently this needs no `ParametricDomain`: for those two cases `V·n` is three lines
 inline. lappy's promise stays tested in lappy, without importing anything from douse.
 
-**This exists: `tests/test_shape_derivative.py`** (22 tests), covering rectangle edge
+**This exists: `tests/test_shape_derivative.py`** (26 tests), covering rectangle edge
 translation, dilation against the Rellich identity, a degenerate cluster splitting correctly,
-the sector radius derivative at a singular corner, and the `weight_family='integer'`
-corner-moving case. `tests/test_basis_plan_smoothness.py` adds the frozen-plan version on the
-rectangle family, where both `lambda` and `dlambda` are closed form.
+the sector radius derivative at a singular corner, the `weight_family='integer'` corner-moving
+case, and — through the auto-configured path, on a frozen plan — a polygon VERTEX-moving
+derivative at a reentrant corner against a five-point central difference.
+`tests/test_basis_plan_smoothness.py` adds the frozen-plan version on the rectangle family,
+where both `lambda` and `dlambda` are closed form.
 
-One gap remains, and it matters because it is the path douse will actually call: those tests
-build their solvers by hand (`bases.make_default_basis` plus explicit collocation), not through
-`Eigenproblem(dom, precision=...)`. A case going through auto-configuration belongs here.
+Most of these still build their solvers by hand (`bases.make_default_basis` plus explicit
+collocation) rather than through `Eigenproblem(dom, precision=...)`; the vertex-moving test is
+the one that goes the whole way, and it is the one that found the node-set defect in §3. More
+of the tier-1 cases should follow it.
 
 ## 5. Why the API was not committed to (RESOLVED)
 

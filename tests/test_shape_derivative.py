@@ -476,3 +476,135 @@ def test_hadamard_quadrature_refuses_a_conflicting_weight_family():
     from lappy.eigfun_integrals import hadamard_quadrature
     with pytest.raises(TypeError, match='weight_family'):
         hadamard_quadrature(geometry.L_shape(), 100.0, weight_family='even')
+
+
+# ── The node set a shape derivative needs is NOT the one that normalizes it ──────
+#
+# `MPSEigensolver.bdry_quad` is `weight_family='even'`, matched to the eigenfunction's own
+# exponent family, which is what the Rellich/Gram normalization requires. A velocity that MOVES
+# a singular corner supplies `V.n ~ r` there, outside that family. For a polygon parametrization
+# moving a vertex IS the design variable, so this is the ordinary case rather than an edge case,
+# and both answers look entirely plausible -- which is why `hadamard_quad` exists and why
+# `normal_velocity` warns instead of trusting the caller to remember.
+#
+# `bdry_quad`'s docstring used to recommend itself for exactly this, so these tests also pin
+# that the redirection stays.
+
+L_VERTS = np.array([0, 1j, -1+1j, -1-1j, 1-1j, 1], dtype=complex)   # vertex 0 is reentrant
+L_DIR = 0.5 + 0.5j
+
+
+def _l_moved(t):
+    v = L_VERTS.copy()
+    v[0] = v[0] + t*L_DIR
+    return geometry.Polygon(v, bc='dir', val_simple=False)
+
+
+def _vertex_velocity(bq, k, direction, n_vert):
+    """dp for moving vertex k, straight from the per-node provenance."""
+    dp = np.zeros(len(bq.pts), dtype=complex)
+    prev = (k - 1) % n_vert
+    dp[bq.seg_idx == prev] = bq.tau[bq.seg_idx == prev]*direction
+    dp[bq.seg_idx == k] = (1.0 - bq.tau[bq.seg_idx == k])*direction
+    return dp
+
+
+@pytest.mark.slow
+def test_a_corner_moving_derivative_needs_the_hadamard_node_set():
+    """The measurement that motivated `hadamard_quad`, run end to end through the solver.
+
+    Reference is a five-point central difference in the vertex position, over a FROZEN plan, so
+    the basis is identical at every step and the difference measures the shape rather than the
+    discretization. `weight_family='integer'` must beat `'even'` by orders, not by a little.
+    """
+    import warnings as _w
+    from lappy import basis_plan as BP, Eigenproblem
+    from lappy.asymp import weyl_est
+
+    dom0 = _l_moved(0.0)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        plan = BP.plan_basis(dom0, weyl_est(6, dom0), target=1e-13)
+
+    lam, lams, keep = None, [], None
+    for t in (-0.02, -0.01, 0.0, 0.01, 0.02):
+        dom = _l_moved(t)
+        with _w.catch_warnings():
+            _w.simplefilter('ignore')
+            s = MPSEigensolver.from_domain(dom, lam_max=weyl_est(6, dom),
+                                           basis=BP.realize(plan, dom), prec=1e-13)
+            evp = Eigenproblem(dom, eval_solver=s, precision=1e-13)
+            lam = float(evp.solve(1)[0]) if lam is None else float(evp.track(lam))
+        lams.append(lam)
+        if t == 0.0:
+            keep = (lam, s)
+    lams = np.array(lams)
+    h = 0.01
+    fd5 = (lams[0] - 8*lams[1] + 8*lams[3] - lams[4])/(12*h)
+
+    lam_c, s_c = keep
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        coef = s_c.eigenfunction_coef(lam_c, mult=1)
+        errs = {}
+        for name, bq in (('even', s_c.bdry_quad), ('integer', s_c.hadamard_quad)):
+            ed = eigfun_cauchy_data(s_c.basis, lam_c, coef, bq)
+            Vn = normal_velocity(bq, _vertex_velocity(bq, 0, L_DIR, len(L_VERTS)))
+            errs[name] = abs(-weighted_integral(ed, 'NN', Vn)[0, 0] - fd5)/abs(fd5)
+
+    gain = np.log10(errs['even']/errs['integer'])
+    assert errs['integer'] < 1e-8, errs
+    assert gain > 2.0, f"hadamard_quad should beat bdry_quad by orders here, got {gain:.1f} " \
+                       f"digits: {errs}"
+
+
+def test_normal_velocity_warns_only_when_a_singular_corner_moves():
+    """The guard has to be precise in both directions: a false alarm on every edge translation
+    would train the caller to ignore it."""
+    import warnings as _w
+    from lappy import Eigenproblem
+    from lappy.eigfun_integrals import hadamard_quadrature
+    from lappy.asymp import weyl_est
+
+    dom = geometry.L_shape()                      # vertex 0 reentrant, 1..5 regular
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        solver = Eigenproblem(dom, precision=1e-10)._get_eval_solver(None)
+    bq, hq = solver.bdry_quad, solver.hadamard_quad
+
+    def warns(b, dp):
+        with _w.catch_warnings(record=True) as caught:
+            _w.simplefilter('always')
+            normal_velocity(b, dp)
+        return any('weight_family' in str(c.message) for c in caught)
+
+    assert warns(bq, _vertex_velocity(bq, 0, L_DIR, 6)), 'moving the reentrant vertex must warn'
+    assert not warns(hq, _vertex_velocity(hq, 0, L_DIR, 6)), 'the integer rule must be silent'
+    assert not warns(bq, _vertex_velocity(bq, 3, L_DIR, 6)), 'a REGULAR vertex is fine'
+    assert not warns(bq, np.where(bq.seg_idx == 2, 0.3 + 0j, 0j).astype(complex)), \
+        'translating an edge moves no corner'
+    assert not warns(bq, bq.pts - bq.x0), 'uniform dilation is the Rellich case'
+    assert not warns(bq, np.zeros(len(bq.pts), dtype=complex))
+
+
+def test_the_two_node_sets_are_distinct_and_labelled():
+    """Both are kept because the trade runs opposite ways; neither can serve twice."""
+    import warnings as _w
+    from lappy import Eigenproblem
+    dom = geometry.L_shape()
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        solver = Eigenproblem(dom, precision=1e-10)._get_eval_solver(None)
+    assert solver.bdry_quad.weight_family == 'even'
+    assert solver.hadamard_quad.weight_family == 'integer'
+    assert solver.hadamard_quad is solver.hadamard_quad          # built once, cached
+    assert solver.hadamard_quad is not solver.bdry_quad
+
+
+def test_hadamard_quad_refuses_to_guess_for_a_hand_built_solver():
+    """It is sized from the solver's own lam_max and precision; a manually constructed solver
+    carries neither, and inventing them is the guess this property exists to remove."""
+    dom = rect(2.0, 1.0)
+    solver = _solver(dom, 3*ref.rect_eig(2, 1, 2.0, 1.0))
+    with pytest.raises(ValueError, match='hand-built solver does not carry|needs the domain'):
+        solver.hadamard_quad

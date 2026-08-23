@@ -130,8 +130,15 @@ CornerPanel = namedtuple('CornerPanel',
 BoundaryQuad = namedtuple('BoundaryQuad',
                           ['pts', 'normals', 'tangents', 'wts', 'dir_mask', 'neu_mask',
                            'panels', 'panel_id', 'sizing_precision', 'x0', 'shortfalls',
-                           'seg_idx', 'tau'],
-                          defaults=((), None, None))
+                           'seg_idx', 'tau', 'weight_family'],
+                          defaults=((), None, None, 'even'))
+# `weight_family` records which exponent class this node set integrates exactly at a SINGULAR
+# corner, because that is a property of the rule and callers cannot see it any other way.
+# 'even' (the default, and what backs Rellich/Gram) rationalizes the eigenfunction's own family
+# via `sub = nu`; 'integer' uses `sub = 1/2` so that integer powers of `r` -- what a
+# corner-moving shape velocity supplies -- are exact instead. The two are not interchangeable
+# in either direction; see `hadamard_quadrature`, and `normal_velocity`, which warns when a
+# velocity moves a singular corner on an 'even' node set.
 # `seg_idx` and `tau` are each node's PROVENANCE: which boundary segment it lies on, and its
 # normalized-arclength parameter along that segment. Both are computed inside `assemble_panels`
 # anyway; they are carried rather than discarded because a downstream shape package needs them
@@ -458,7 +465,8 @@ def _panel_rule(panel):
     raise ValueError(f"unknown panel rule {panel.rule!r}")
 
 
-def assemble_panels(domain, panels, sizing_precision=None, x0=None, shortfalls=()):
+def assemble_panels(domain, panels, sizing_precision=None, x0=None, shortfalls=(),
+                    weight_family='even'):
     """BoundaryQuad from a panel plan, via each segment's own p/N/T at normalized arclength.
 
     Segments are parametrized by normalized arclength, so |dp/dtau| == seg.len identically and
@@ -484,7 +492,8 @@ def assemble_panels(domain, panels, sizing_precision=None, x0=None, shortfalls=(
     return BoundaryQuad(np.concatenate(P), np.concatenate(N), np.concatenate(T),
                         np.concatenate(W), np.concatenate(D), np.concatenate(U),
                         tuple(panels), np.concatenate(PID), sizing_precision, x0,
-                        tuple(shortfalls), np.concatenate(SEG), np.concatenate(TAU))
+                        tuple(shortfalls), np.concatenate(SEG), np.concatenate(TAU),
+                        weight_family)
 
 
 def eigfun_cauchy_data(basis, lam, coef, bq):
@@ -550,13 +559,66 @@ def normal_velocity(bq, dp):
     which is the Rellich identity `gram` already computes.
 
     Returns a real array, ready to pass as `weighted_integral`'s `weight`.
+
+    WARNS IF THE VELOCITY MOVES A SINGULAR CORNER on an 'even' node set. That combination is
+    the one place this machinery quietly loses three orders, and it is the ordinary case for a
+    polygon parametrization, where moving a vertex IS the design variable. Measured end to end
+    on the L-shape's reentrant vertex against a five-point central difference:
+
+        solver.bdry_quad      (weight_family='even')     6.1 digits
+        hadamard_quadrature   (weight_family='integer')  9.3 digits
+
+    Both answers look perfectly reasonable, which is why this warns rather than trusting the
+    caller to remember. Use `MPSEigensolver.hadamard_quad`, or build one with
+    `hadamard_quadrature(domain, lam_max)`. A velocity that leaves every singular corner fixed
+    (translating an edge, dilating, moving only regular corners) is unaffected and silent.
     """
     dp = np.asarray(dp)
     if dp.shape != np.shape(bq.pts):
         raise ValueError(f'dp has shape {dp.shape}, expected one displacement per quadrature '
                          f'node: {np.shape(bq.pts)}. Evaluate the velocity field at `bq.pts` '
                          f'(or from `bq.seg_idx`/`bq.tau`), not at the panel endpoints.')
+    moved = _moved_singular_corners(bq, dp)
+    if moved and bq.weight_family != 'integer':
+        warnings.warn(
+            f'this velocity moves singular corner(s) {sorted(moved)} but the node set has '
+            f"weight_family={bq.weight_family!r}. A corner-moving V.n is O(r) there, which the "
+            f"'even' rule does not integrate exactly -- measured at 6.1 digits against 9.3 for "
+            f"'integer' on the L-shape's reentrant vertex. Use MPSEigensolver.hadamard_quad, or "
+            f'eigfun_integrals.hadamard_quadrature(domain, lam_max).')
     return complex_dot(dp, bq.normals)
+
+
+def _moved_singular_corners(bq, dp, frac=0.02):
+    """Indices of singular corners this displacement field moves.
+
+    A corner moves when `dp` is nonzero AT it. The nodes are graded toward corners, so the
+    innermost node on a corner-anchored panel is the closest sample available -- read `dp`
+    there. `frac` of the panel's own extent is the tolerance for "at the corner", generous
+    because the question is only whether the field vanishes there, not by how much.
+
+    Corner data comes from the panels themselves (`nu`, `corner`), not from a fresh
+    `corner_specs` call, because a `BoundaryQuad` carries no domain reference and re-deriving
+    the geometry from the nodes would be its own source of error.
+    """
+    moved = set()
+    scale = np.max(np.abs(dp)) if dp.size else 0.0
+    if scale == 0.0:
+        return moved
+    for pid, panel in enumerate(bq.panels):
+        if panel.corner is None or panel.corner < 0 or panel.nu is None:
+            continue
+        if float(panel.nu).is_integer():          # regular corner: no fractional exponents
+            continue
+        on = np.flatnonzero(bq.panel_id == pid)
+        if not len(on):
+            continue
+        # tau0 is always the corner-anchored end (see CornerPanel), so the nearest node is the
+        # one whose tau is closest to it.
+        nearest = on[np.argmin(np.abs(bq.tau[on] - panel.tau0))]
+        if np.abs(dp[nearest]) > frac*scale:
+            moved.add(int(panel.corner))
+    return moved
 
 
 def default_x0(domain, singular_test=None):
@@ -799,7 +861,7 @@ def boundary_quadrature(domain, lam_max, precision=1e-13, x0=None, panel_frac=1.
     if demoted:
         sizing_precision = float('inf')
     bq = assemble_panels(domain, panels, sizing_precision=sizing_precision, x0=x0,
-                         shortfalls=shortfalls)
+                         shortfalls=shortfalls, weight_family=weight_family)
 
     if warn:
         short = {c: a for c, a in achieved.items() if a > precision}
@@ -945,7 +1007,8 @@ def refine_quadrature(domain, bq, depth=2, smooth_order=48):
         for a, b in zip(taus[:-1], taus[1:]):
             refined.append(CornerPanel(p.seg_idx, a, b, 'legendre', smooth_order,
                                        np.nan, None, np.nan, False, -1))
-    return assemble_panels(domain, refined, sizing_precision=bq.sizing_precision, x0=bq.x0,
+    return assemble_panels(domain, refined, weight_family=bq.weight_family,
+                           sizing_precision=bq.sizing_precision, x0=bq.x0,
                            shortfalls=bq.shortfalls)
 
 
