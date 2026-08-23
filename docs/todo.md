@@ -11,40 +11,21 @@ finding it produced stays in `benchmarks/suite/run/NOTEBOOK.md`.
 **Design constraint (Hayden, 2026-08-12):** a SINGULAR corner always needs corner Fourier-Bessel
 terms; any basis lacking FB at a singular corner should be expected to fail. So the open question
 is never FB-versus-FS, it is how to AUGMENT a corner-FB basis -- with fundamental solutions along
-the boundary, or clustered at corners, those being the two methods tried. Read every result
-below through that: "FB uniform beat FB-all-on-reentrant" is a BUDGET result (the singular corner
-kept 21 terms instead of 128), not evidence against FB.
-- [ ] `make_default_basis(domain, lam_max, precision)` -- the current signature asks the caller
-      for `n_basis`, the one quantity they have no principled way to choose. `docs/basis_
-      heuristics.md` is *a* theory with partial evidence (the FS offset scaling with wavelength
-      is the empirically grounded part), not a spec. Approach is open-ended: gather evidence for
-      what works, taking the current implementation's ideas as inspiration rather than law.
-- [ ] `fb + boundary-offset FS` beats the current `mixed` branch on BOTH multi-singular-corner
-      domains (chevron 3.1e-11 vs 2.4e-09; H_shape 5.3e-10 vs 1.2e-07) and has no branch at all.
-      Its offset should taper near reentrant corners -- it currently drops 25% of its sources on
-      H_shape for landing inside the domain, and wins anyway.
-- [ ] `fs_corners` (lightning FS alone) is DEGENERATE on every corner domain tried: contrast
-      0.8-1.7, i.e. no eigenvalue signal. It is half of the current multi-corner branch.
+the boundary, or clustered at corners, those being the two methods tried.
+
+**Mostly closed by `lappy/basis_plan.py`.** The predicate hunt that used to fill this section is
+over, and not because a predicate was found: `plan_basis` has no branch to predicate. It derives
+corner Fourier-Bessel budgets and boundary-offset source arcs from the geometry, `lam_max` and a
+target, and `refine_plan`/`check_precision` measure the result rather than predicting it -- which
+is the "self-certifying constructor" the sixth failed-predicate entry had already concluded the
+evidence favoured. Everything removed from this section is settled in
+`benchmarks/basis_lab/PLAN_LAB.md` (the redesign, S0-S5) or `HEURISTICS.md` (1154 measurements of
+the recipe it replaced). What is still open on the planner lives in PLAN_LAB.md's own "Open, in
+priority order" list; it is not duplicated here.
+
 - [ ] H_shape's reference is only "at least 7.8 digits", which is above where the interesting
-      comparisons happen. Needs a better reference before its rankings can be quoted.
-- [ ] Size model must carry geometry: the same target precision costs n~48 on L_shape and
-      >192 on chevron/H_shape. No geometry-independent `precision -> n` rule can work.
-- [ ] Corner COUNT does not pick the construction: `mixed` beats `pure_fb` on chevron and loses
-      to it on H_shape, both with four singular corners. Find what does predict it.
-- [ ] Two tension curves stall (chevron `pure_fb` ~2e-08, H_shape `mixed` ~2.4e-07). Check
-      `rtol=1e-12` pencil truncation before blaming the basis.
-- [ ] Re-run the convergence study. The first one measured `solve_interval`'s `ltol=1e-8`
-      bracket tolerance, not the basis, so its "~10 digit plateau" and every fitted rate are
-      void (retracted in NOTEBOOK). `bench.py` now uses `manual_solve`+`polish_eigs` and gets
-      14.6 digits at n=64 on L_shape where the old path read 10.7.
-- [ ] `solve_interval`'s `ltol_default=1e-8` is a relative stopping tolerance on lam, so the
-      search gives up after ~8 significant digits, and it is what
-      `Eigenproblem.solve` uses -- so the documented headline path is the coarse one while the
-      reference tables come from `benchmarks/reference/common.solve_domain_v2`. Either the
-      polished pipeline belongs in `lappy`, or the default tolerance is too loose. Also affects
-      anything that trusted `solve_interval` accuracy, which included this session's
-      `certified_quadrature` measurements (probably benign -- verify_gram compares two
-      quadratures at the SAME lam, so the error is common-mode -- but unverified).
+      comparisons happen. Needs a better reference before its rankings can be quoted. (The
+      planner now certifies 9.5 there, so this bites sooner than it used to.)
 - [ ] Find an exact-truth domain that actually exercises a corner singularity. Sectors are
       degenerate (FB about the apex spans the exact eigenfunctions) and polyominoes are
       degenerate the other way (closed-form eigenfunctions are smooth at reentrant corners).
@@ -52,12 +33,36 @@ kept 21 terms instead of 128), not evidence against FB.
 - [ ] "Singular corner" means two different things in this codebase: `pi/alpha` non-integer in
       `bases` (counts sharp CONVEX corners -- chevron(1,2) has four) versus the quadrature's
       reentrant/nonintegral notion (same domain, one). Pick distinct names.
-- [ ] Decide the objective before optimizing to it: certified digits for `lambda` is what every
-      measurement so far scores, but the stated goal is a Hadamard-ready solver and nobody has
-      checked whether a basis tuned for `lambda` is also good for `dlambda`.
+- [ ] `PlanConfig.n_cap = 240` is a hard ceiling adopted from S0a's rank saturation, which was
+      measured on TWO domains and flagged there as possibly coincidental. Probed since: `n_reg`
+      does grow with the wavenumber, but far slower than kappa (L_shape 123 -> 159 as kappa goes
+      5.6 -> 26.4; square 84 -> 119 as kappa goes 9.4 -> 45.5). Everything validated is at a
+      6-eigenvalue window. A shape-optimization loop wanting lam_1..lam_20 will meet this cap,
+      and nothing has measured what happens there.
+- [ ] `PlanConfig.rtol` duplicates a value the solver owns; the planner should read it from the
+      solver so the two cannot drift. Getting that constant wrong is what made achieved accuracy
+      non-monotone in the target (PLAN_LAB S2).
+- [ ] Arc-local geometry is sampled at the arc MIDPOINT only. Not the current limiter on the
+      suite (thickness varies by under 2x along the arcs measured on iso_tri_h4), but it would
+      be on a mushroom or a stadium. Subdividing arcs by thickness variation is the next step.
+- [ ] `_apply_cap` can return `n_total > n_cap` when the FB budget alone exceeds it (spiral).
+      Reported, but "cap" is then a misleading name.
 
 ## MPSEigensolver
 - [x] `from_domain()` method with good defaults
+- [x] Branch predicate hunt (six dead candidates) -- ABANDONED, and correctly: `basis_plan` has
+      no branch. See PLAN_LAB.md.
+- [ ] **`solve(k)` can return k accurate eigenvalues that are not the FIRST k.** Measured 9 of 90
+      (domain, k) cells over 10 suite polygons: `right_trapezoid` k=10 drops lam_3 = 44.9484877814
+      and is correct at k=9 and k=11; `reg_ngon_6` is wrong from index 5 at k=5..10; `eq_tri` at
+      k=5. Two causes: `_solve_dir_neu`'s rescue loop is gated on `len(eigs) < k_search` so it
+      never runs when the count is right and the set is wrong, and `_find_deficient_gaps`'
+      `thresh=1` on the cumulative Weyl deviation cannot see one missing mode (that deviation
+      already ranges 0.12-1.5 on right_trapezoid's CORRECT first ten). Fatal for an optimizer,
+      which would follow a wrong gradient across a mode swap.
+- [ ] No inner-loop entry point: `solve(k)` runs a global Weyl-gridded scan every call, at 2-8 s
+      per 4-eigenvalue solve (22 s on H_shape) with solver construction ~10 ms. A shape loop knows
+      where lambda was last iterate and wants a local bracket.
 - [ ] Test coverage for the weighted-evaluation path (`weights=True` -> `PointSet.sqrt_wts` ->
       `bases` Vandermonde scaling). No current caller, `weights=False` everywhere by default,
       and every consumer sits behind a `hasattr(pts, 'wts')` guard -- which is exactly how
@@ -65,51 +70,15 @@ kept 21 terms instead of 128), not evidence against FB.
 - [ ] `kind='mesh'` on a curved domain takes its point count from mesh resolution, not basis
       size: 1.9e4 nodes on a unit disk against ~50 from a random draw. Works, deterministic,
       probably not what an MPS solve wants.
-
 - [ ] `from_domain`'s `prec=` parameter IS `ltol` (passed straight through to the constructor's
       ninth positional). Two names for the lambda-axis tolerance, neither of them obviously that.
       Rename or alias.
-
-- [ ] Branch predicate is UNSOLVED; three candidates are dead. Corner count (what the
-      constructor uses) separates nothing; sharpest convex corner is refuted (iso_tri h=0.5 and
-      h=4 are equally sharp with opposite pure-FB verdicts); bbox aspect is refuted (h=0.5 is
-      4:1 and fine, h=2 is 1:1 and fails). See NOTEBOOK retraction.
-- [ ] Q3 ANSWERED (partly): L_shape's pure-FB win survives a fair retest -- augmentation at
-      m=32 gives 4.2e-10 against pure FB's 9.1e-16, even at the corrected d/h=2 offset. The
-      follow-on elongation claim was WITHIN-FAMILY and is retracted: bbox aspect 4.0 occurs
-      twice inside iso_tri with benefits 7 orders apart. See NOTEBOOK correction.
-- [ ] BASELINE CORRECTION: make_default_basis takes the BLEND branch on iso_tri and chevron
-      (3-4 singular corners), not pure FB. Measured properly it is optimal or near-optimal on
-      9 of 12 domains; "corner count separates none of these correctly" was WRONG. Two narrow
-      failures remain: chevron 217x (blend branch, wrong FS placement/offset) and asym_L 2:1/3:1
-      16-35x (pure-FB branch on an elongating domain).
-- [ ] CHEAPEST WIN, no new branching: swap lightning corner FS for boundary FS at d=2h inside
-      the existing multi-singular blend branch, and test against all 12 domains. Fixes chevron
-      (217x -> 1x) and iso_tri h=8 (9x -> 1x) in the recipe test; needs checking it does not
-      regress the iso_tri members where the current blend is already optimal.
-- [ ] A single fixed recipe is NOT the answer: FB@singular+boundary FS at half budget fixes
-      chevron and iso_tri h8 but regresses square (9x) and L_shape (25x).
-- [ ] SIXTH failed predicate (elongation). Before hunting a seventh, decide Q4: a self-certifying
-      constructor (size, measure sigma_hat and contrast, escalate) does not need a predicate and
-      degrades gracefully. The evidence increasingly favours it.
 - [ ] `detect_floor` computes the censor at `n_max//2`, so L_shape's censor came out at 2.84e-14
       while pure FB at n=128 reaches 9.1e-16 -- thirty times below its own "floor". Derive the
       censor from the reference's documented accuracy, or from the largest size in the ladder.
-- [ ] Predicate hunt: FOUR candidates dead (corner count, sharpest convex corner, bbox aspect,
-      FB budget concentration -- the last refuted by intervention, not just correlation). A
-      fifth, "non-integer pi/alpha at a convex corner", already fails on iso_tri h=0.5. Consider
-      stopping the hunt and shipping the fitted rule below.
 - [ ] Elongated L-shapes (asym_L 5:1) cannot be certified by ANY basis tried -- two good bases
       disagree by more than their own tension. Either a harder domain than it looks, or a gap
       in the whole approach. Worth a look before it becomes a blind spot.
-- [ ] `fb_corner_fraction`/`fs_corner_fraction` give regular corners weight ZERO, so on a
-      domain with one singular corner the default stacks both families there and leaves every
-      other corner bare. Measured cost on asym_L: the default is the worst of six constructions
-      tried, 16x behind FB@singular + boundary FS. Allocation is the fix, not a new family.
-- [ ] Singular corner needs ~a quarter of the budget, not all of it: m=0 fails categorically,
-      m=16-64 of 128 is a broad optimum, m=128 (today's default) is ~10x worse than m=64.
-- [ ] fs_frac=0.25 as a robust default: never worse than 1.8e-11 across the whole iso_tri
-      family where pure FB spans eleven orders. Costs 100x on L_shape though.
 - [ ] Deliverable tables must be "columns to reach precision p", never "sigma at fixed n" --
       the square comparison inverts across the saturation crossing.
 
