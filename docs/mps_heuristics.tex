@@ -1,0 +1,455 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[expansion=false]{microtype}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!55!black,citecolor=blue!55!black,
+            urlcolor=blue!55!black]{hyperref}
+
+\newtheorem{principle}{Design Principle}
+
+\newcommand{\dist}{\operatorname{dist}}
+\newcommand{\diam}{\operatorname{diam}}
+\newcommand{\Sstar}{\mathcal{S}^\star}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Z}{\mathbb{Z}}
+
+\title{Geometric Heuristics for Basis Selection in the GSVD\\
+Method of Particular Solutions}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent
+We give a closed-form heuristic system for choosing the type, count, and placement
+of particular solutions in the GSVD formulation of the Method of Particular Solutions
+(MPS) for the planar Dirichlet Laplace eigenproblem. The basis consists of
+corner-adapted fractional-order Fourier--Bessel functions
+$J_{k\alpha}(\sqrt{\lambda}\,r)\sin(k\alpha\theta)$ together with real-valued mono-
+and multipole fundamental solutions $Y_k(\sqrt{\lambda}\,r)\{\sin,\cos\}(k\theta)$
+placed at exterior source points. All prescriptions depend only on measurable
+geometric data --- area, perimeter, diameter, corner angles, and inter-corner
+distances --- and on a single accuracy parameter $\Lambda = \ln(1/\hat\epsilon)$
+derived from the target eigenvalue precision via the Moler--Payne bound.
+\end{abstract}
+
+\tableofcontents
+
+\bigskip
+
+The system is built around two error mechanisms that behave completely differently
+--- \emph{oscillatory resolution}, which scales like $\kappa=\sqrt{\lambda}$, and
+\emph{analytic-continuation decay}, which scales like $\log(1/\epsilon)$ --- plus a
+\emph{partition-of-responsibility} principle that decides which basis family owns
+which piece of $\partial\Omega$. Everything below reduces to closed-form counts in
+terms of $A=|\Omega|$, $L=|\partial\Omega|$, $D=\diam\Omega$, the corner angles
+$\omega_c$, and inter-corner distances.
+
+\section{Notation, and converting \texorpdfstring{$\epsilon$}{epsilon} into a target tension}
+\label{sec:notation}
+
+Let $\kappa=\sqrt{\lambda}$ and $\kappa_{\max}=\sqrt{\lambda_{\max}}$. Corner $c$ has
+vertex $v_c$, interior angle $\omega_c$, and corner exponent
+\[
+  \alpha_c=\pi/\omega_c,
+  \qquad
+  \text{basis } J_{j\alpha_c}(\kappa r_c)\sin(j\alpha_c\theta_c),
+  \quad j=1,\dots,M_c .
+\]
+
+The tension $t=\|u\|_{L^2(\partial\Omega)}/\|u\|_{L^2(\Omega)}$ has units of
+length$^{-1/2}$, so form the dimensionless quantity
+\[
+  \hat t \;=\; \sqrt{A/L}\;\, t ,
+  \qquad
+  \frac{|\lambda-\lambda_n|}{\lambda_n}\;\lesssim\; C_\Omega\,\hat t .
+\]
+Here $C_\Omega$ is $O(1)$--$O(10)$ for non-pathological domains.
+\textbf{Calibrate it once} per domain family against a known eigenvalue rather than
+trusting a literature constant. Then set the design tolerance
+\begin{equation}
+  \boxed{\;
+  \hat\epsilon=\frac{\epsilon}{10\,C_\Omega},
+  \qquad
+  \Lambda:=\ln(1/\hat\epsilon).
+  \;}
+  \label{eq:Lambda}
+\end{equation}
+The parameter $\Lambda$ is the single ``how many digits'' quantity that appears in
+every count below. Design for the \emph{linear} Moler--Payne relation, not for the
+quadratic behaviour that is sometimes observed empirically --- if the quadratic bonus
+materialises, it is free margin.
+
+\paragraph{Hard floor.} In IEEE double precision, $\sigma_{\min}$ of the GSVD pencil
+plateaus around $10^{-13}$--$10^{-14}$ even with column equilibration, so
+$\epsilon\lesssim 10^{-12}$ is the practical limit. Below that the remedy is extended
+precision, not more basis functions.
+
+\section{The organizing principle}
+\label{sec:principle}
+
+Two distinct things limit a particular-solution basis.
+
+\begin{description}[leftmargin=2.2em,style=nextline]
+\item[(a) Oscillation.]
+  Any trace on $\partial\Omega$ has arclength wavenumber up to $\kappa$. The function
+  $J_\nu(\kappa r)$ is exponentially small once $\nu>\kappa r$, with an Airy
+  transition of width $\sim(\kappa r)^{1/3}$. So a corner expansion reaching radius
+  $R$ needs orders up to $\nu\approx \kappa R + 2(\kappa R)^{1/3}$.
+\item[(b) Analytic continuation.]
+  A Fourier--Bessel series about $v_c$ converges like $(r/d_c)^{\nu}$, where $d_c$ is
+  the distance from $v_c$ to the nearest \emph{singularity of the analytic
+  continuation of $u$} --- \emph{not} the nearest corner. Beyond $r=d_c$ the series
+  is useless no matter how many terms are added.
+\end{description}
+
+This is why single-corner MPS works spectacularly on the L-shape --- all the other
+corners are $\pi/2$, hence regular, hence not singularities of the continuation ---
+and fails on domains with several reentrant corners.
+
+\begin{principle}[Partition of responsibility]
+Each singular corner owns only the boundary arc within radius
+\[
+  R_c=\gamma\, d_c ,\qquad \gamma\in[0.3,0.5],
+\]
+and the MFS sources own everything else. Do not ask a corner expansion to cover the
+whole boundary unless $d_c=\infty$.
+\end{principle}
+
+The \emph{obstruction set} used to compute $d_c$ is
+\begin{align*}
+  \Sstar=\ &\{\text{singular corners}\}\ \cup\
+            \{\text{their reflections across each edge}\}\\
+    &\cup\ \{\text{Schwarz-function singularities of curved arcs}\},
+\end{align*}
+with the practical proxy $2\times(\text{distance to the nearest non-adjacent edge})$
+for the reflected images, and the radius of curvature for smooth curved arcs. Then
+\[
+  d_c=\dist\big(v_c,\ \Sstar\setminus\{v_c\}\big),
+\]
+capped by the largest radius actually needed,
+$d_c\leftarrow\min\big(d_c,\ \max_{x\in\partial\Omega}|x-v_c|/\gamma\big)$.
+
+There is a genuine optimum in $\gamma$: raising it shrinks the MFS workload but
+inflates $M_c$ through both mechanisms. The total is quite flat over
+$\gamma\in[0.3,0.5]$; use $\gamma=0.4$ unless you profile.
+
+\section{Corner classification: which corners get enrichment?}
+\label{sec:classification}
+
+Compute $\mu_c=\dist(\alpha_c,\Z)$.
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{2.4cm}p{4.0cm}p{7.2cm}@{}}
+\toprule
+\textbf{Case} & \textbf{Condition} & \textbf{Treatment} \\
+\midrule
+Regular
+  & $\mu_c=0$ (i.e.\ $\omega_c=\pi/m$)
+  & No singular enrichment; $u$ extends by reflection. \\[3pt]
+Weakly singular
+  & $\mu_c>0$, $\alpha_c>\Lambda/(2\ln 15)$
+  & Treat as regular. \\[3pt]
+Singular
+  & $\mu_c>0$, $\alpha_c\le\Lambda/(2\ln 15)$
+  & Full corner-adapted treatment (\S\ref{sec:corner}). \\[3pt]
+Near-integer
+  & $0<\mu_c\lesssim0.05$
+  & Singular, but scale the continuation term by
+    $\min(1,\mu_c/0.05)$. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The weakly singular cutoff comes from the observation that a smooth basis resolves
+$r^{\alpha_c}$ to $\hat\epsilon$ with degree $\sim\hat\epsilon^{-1/(2\alpha_c)}$,
+which is single digits when $\alpha_c$ is large. For $\hat\epsilon=10^{-11}$
+($\Lambda\approx25$) the cutoff is $\alpha_c\lesssim4.6$: \textbf{corners wider than
+about $39^\circ$ get corner-adapted terms; sharper spikes do not.}
+
+\paragraph{Should regular corners receive corner-adapted terms?}
+Not a $\Lambda$-sized budget. Two nuances:
+
+\begin{itemize}[leftmargin=1.4em]
+\item A \emph{small} set of $J_{jm}(\kappa r)\sin(jm\theta)$ at a regular corner
+  ($m=\pi/\omega_c$ integral) is cheap and often improves conditioning, because it
+  supplies well-localised angular content that the MFS represents only awkwardly. Use
+  $M_c=\lceil \tfrac{\omega_c}{\pi}(\kappa R_c^{\mathrm{loc}}+5)\rceil$ with
+  $R_c^{\mathrm{loc}}$ equal to half the shorter adjacent edge, and no continuation
+  term. Treat this as optional.
+\item The operationally important difference is in the MFS: \textbf{do not taper the
+  source offset to zero at a regular corner} (\S\ref{sec:mfs}). That is where most of
+  the savings live.
+\end{itemize}
+
+\section{Corner-adapted counts}
+\label{sec:corner}
+
+For each singular corner,
+\begin{equation}
+  \boxed{\;
+  M_c=
+  \underbrace{\Big\lceil \tfrac{\omega_c}{\pi}
+    \big(\kappa_{\max}R_c+2(\kappa_{\max}R_c)^{1/3}+5\big)\Big\rceil}_{\text{oscillatory}}
+  \;+\;
+  \underbrace{\Big\lceil \tfrac{\omega_c}{\pi}\cdot
+    \frac{\Lambda}{\ln(1/\gamma)}\Big\rceil}_{\text{continuation}}
+  \;}
+  \label{eq:Mc}
+\end{equation}
+
+Note the structure: the angle enters \emph{only} through the factor
+$\omega_c/\pi=1/\alpha_c$, because the index spacing in $\nu$ is $\alpha_c$. Wider
+corners cost proportionally more terms for the same $\nu_{\max}$ --- a $3\pi/2$
+reentrant corner costs three times what a $\pi/2$ corner would at equal reach. That
+single factor is the whole angle dependence; there is no separate ``reentrant corners
+are harder'' term, because the difficulty is already captured by $1/\alpha_c$ and by
+$d_c$ shrinking when singular corners cluster.
+
+\paragraph{Conditioning cap.} Truncate at
+\[
+  \nu_{\max}^{(c)}\le \kappa R_c+\frac{\ln(1/\epsilon_{\mathrm{mach}})}{\ln(R_c/r_{\mathrm{mid}})},
+  \qquad
+  r_{\mathrm{mid}}=\text{median }|x-v_c|\text{ over the owned arc},
+\]
+since beyond that the column's dynamic range over the sampled boundary exceeds what
+double precision can carry, and the GSVD will discard it anyway. Always
+\textbf{column-equilibrate} (unit norm with respect to the combined
+boundary\,+\,interior quadrature) before forming the pencil; without it the $J_\nu$
+and $Y_k$ columns differ by hundreds of orders of magnitude.
+
+\section{Fundamental-solution placement}
+\label{sec:mfs}
+
+Treat the offset sources and the lightning clusters as \emph{one graded curve}, not
+two families. That is the cleanest way to keep them consistent.
+
+\subsection{Local offset}
+
+For $s\in\partial\Omega$,
+\[
+  \delta(s)=\min\Big(\delta_{\mathrm{amb}},\ \eta\cdot\dist(s,\Sstar)\Big),
+  \qquad \eta\approx0.3,
+  \qquad
+  \delta_{\mathrm{amb}}=\min\big(0.25D,\ \tfrac{1}{3}\rho_{\mathrm{curv}}^{\min}\big).
+\]
+Sources go at $s+\delta(s)n(s)$ (outward normal). Because $\Sstar$ contains only
+\emph{singular} corners and their images, $\delta$ stays at $\delta_{\mathrm{amb}}$
+across regular corners and collapses only at singular ones --- exactly the geometric
+clustering one wants, derived rather than imposed.
+
+\subsection{Local spacing}
+
+The classical MFS/Fourier result for a source curve at distance $\delta$ with spacing
+$h$ is boundary error $\sim e^{-\pi\delta/h}$. Hence
+\begin{equation}
+  \boxed{\;
+  h(s)=\min\Big(\frac{2\pi}{3\kappa_{\max}},\ \frac{\pi\,\delta(s)}{\Lambda}\Big)
+  \;}
+  \label{eq:h}
+\end{equation}
+The first argument is the Nyquist / three-points-per-wavelength floor; the second is
+the accuracy requirement. For high-accuracy work the second almost always binds,
+meaning \textbf{MFS sources are oversampled several-fold relative to Nyquist} --- that
+is normal, and is the price of the offset.
+
+\subsection{Total count}
+
+\[
+  N_{\mathrm{mfs}}\;\approx\;
+  \max\Big(\frac{3\kappa_{\max}L}{2\pi},\ \frac{\Lambda L}{\pi\,\delta_{\mathrm{amb}}}\Big)
+  \;+\;\sum_{c\ \mathrm{sing}} n_c^{\mathrm{clus}}.
+\]
+Since $h(s)\propto\dist(s,v_c)$ near a singular corner, the tapered region contributes
+geometrically clustered sources with ratio $1+\pi\eta/\Lambda$ per step; the count for
+the tail is
+$n_c^{\mathrm{clus}}\approx \ln(\delta_{\mathrm{amb}}/s_{\min})
+\big/\ln(1+\pi\eta/\Lambda)$.
+
+\subsection{Where to stop the taper}
+
+This is where the Fourier--Bessel basis and the clusters must not duplicate each other.
+
+\begin{itemize}[leftmargin=1.4em]
+\item \textbf{Corner has FB terms} (\S\ref{sec:corner}): stop the taper at
+  $s_{\min}\approx 0.05\,R_c$ and keep only a short tail,
+  $n_c^{\mathrm{clus}}\approx 8$--$12$ poles on the outward angle bisector. Their job
+  is to bridge the region where the FB series is still converging but the ambient MFS
+  cannot reach --- a conditioning bridge, not an approximation tool. More than this is
+  wasted and actively hurts $\sigma_{\min}$.
+\item \textbf{Corner has no FB terms} (weakly singular by \S\ref{sec:classification},
+  or $M_c$ capped for conditioning): use full Gopal--Trefethen tapered clustering on
+  the outward bisector,
+  \[
+    s_j=\delta_{\mathrm{amb}}\,e^{-\sigma(\sqrt{n_c}-\sqrt{j})},
+    \qquad \sigma\approx4,\quad j=1,\dots,n_c,
+  \]
+  with root-exponential convergence $\sim e^{-\pi\sqrt{2\alpha_c n_c}}$, giving
+  \begin{equation}
+    \boxed{\;n_c^{\mathrm{clus}}\approx\frac{\Lambda^2}{2\pi^2\alpha_c}\;}
+    \label{eq:lightning}
+  \end{equation}
+\end{itemize}
+
+\subsection{Multipole orders}
+
+Use plain monopoles ($Y_0$) for the clustered near-corner sources --- they are close to
+the boundary and low order suffices. Reserve multipole stacks for a handful of far
+centres, where they permit far fewer sources. For a centre at distance $\rho_j$ from
+the arc it serves, of half-extent $a_j$,
+\[
+  K_j\approx \kappa\sqrt{\rho_j^2+a_j^2}
+    +\frac{\Lambda}{\ln\!\big(\sqrt{\rho_j^2+a_j^2}/\rho_j\big)},
+  \qquad
+  K_j\le \frac{\ln(1/\epsilon_{\mathrm{mach}})}{\ln(1+D/\rho_j)} .
+\]
+The second inequality is a hard conditioning cap:
+$Y_k(\kappa r)\sim -\frac{(k-1)!}{\pi}(2/\kappa r)^k$ has dynamic range
+$(r_{\max}/r_{\min})^{K}$ across $\Omega$, and once that exceeds
+$1/\epsilon_{\mathrm{mach}}$ the column carries no information.
+
+Use only $Y_k$ at exterior centres, never $J_k$ --- the regular part about an exterior
+centre is already spanned by the interior and corner Fourier--Bessel functions and
+merely duplicates them.
+
+\section{Collocation, the \texorpdfstring{$A_I$}{A\_I} block, and quadrature}
+\label{sec:colloc}
+
+\paragraph{Replace the interior points.} With interior sampling, $M_I$ must scale like
+$A\kappa^2$ to control $\|u\|_{L^2(\Omega)}$ reliably, and undersampling produces
+spurious tension minima that look exactly like eigenvalues. Use the Rellich identity
+instead: for a Dirichlet solution of $\Delta u+\lambda u=0$,
+\begin{equation}
+  \|u\|_{L^2(\Omega)}^2
+  =\frac{1}{2\lambda}\int_{\partial\Omega}(x\cdot n)\,|\partial_n u|^2\,ds ,
+  \label{eq:rellich}
+\end{equation}
+with $x$ measured from any origin --- choose one making $x\cdot n>0$, i.e.\ a star
+centre, if $\Omega$ is star-shaped. Then \emph{both} blocks of the pencil are boundary
+matrices, $M_I$ becomes $O(\kappa)$ rather than $O(\kappa^2)$, and the
+norm-equivalence constants relating $\sigma_{\min}$ to the true tension become
+$\kappa$-independent --- which matters, since the whole $\epsilon\mapsto\hat\epsilon$
+chain of \S\ref{sec:notation} assumes it.
+
+\paragraph{Boundary nodes.} Take $M_B\approx 3N$ in total, with weights folded in as
+$\sqrt{w_i}$ so the discrete norms actually approximate $L^2$; otherwise the
+topological-equivalence constant drifts with $\kappa$ and the calibration of
+$C_\Omega$ is meaningless. Use composite Gauss--Legendre panels, geometrically refined
+toward each singular corner with ratio $1/2$, down to $\approx s_{\min}$ from
+\S\ref{sec:mfs} --- roughly $\log_2(\ell_e/s_{\min})$ levels per adjacent edge.
+
+\section{Total budget and precision floors}
+\label{sec:budget}
+
+\[
+  N_{\mathrm{tot}}=\sum_{c\ \mathrm{sing}}M_c
+    +\sum_{c\ \mathrm{reg}}M_c^{\mathrm{opt}}
+    +N_{\mathrm{mfs}}.
+\]
+
+Sanity checks before building the matrix:
+
+\begin{itemize}[leftmargin=1.4em]
+\item If $N_{\mathrm{tot}}\gtrsim 600$ in double precision, conditioning will limit
+  the GSVD before approximation power does. Relax $\epsilon$, reduce $\gamma$, or move
+  to extended precision; adding functions will make $\sigma_{\min}$ \emph{worse}.
+\item $N_{\mathrm{tot}}$ should scale like
+  $O(\kappa_{\max}L)+O(\Lambda\cdot n_{\mathrm{sing}})$, i.e.\ like
+  $\sqrt{\lambda_{\max}}$, not $\lambda_{\max}$. If the heuristic produces
+  $O(\lambda)$ growth, something is wrong --- usually interior points.
+\item If $\sigma_{\min}$ stops decreasing as $N$ increases, you are on the floor;
+  enrichment will not help.
+\end{itemize}
+
+\section{\texorpdfstring{$\lambda$}{lambda}-sweep bookkeeping}
+\label{sec:sweep}
+
+Every count above depends on $\kappa$. \textbf{Do not} recompute the basis
+continuously during a sweep: discontinuous basis changes put kinks in
+$\sigma_{\min}(\lambda)$ and wreck root-finding and minimum tracking. Freeze the basis
+on dyadic windows $\lambda\in[\lambda_0,2\lambda_0)$, sized at the window's upper end,
+with hysteresis at the window boundaries. Within a window $\sigma_{\min}(\lambda)$ is
+then smooth and the usual scaling and minimisation machinery applies.
+
+\section{Adaptive correction loop}
+\label{sec:adaptive}
+
+The heuristic gets within a factor of roughly $1.5$; close the loop.
+
+\begin{enumerate}[leftmargin=1.8em]
+\item Build with the counts above; compute $\sigma_{\min}$ at a converged eigenvalue.
+\item If $\hat\epsilon$ is not met, evaluate the boundary residual $|u(s)|$ panel by
+  panel.
+\item Attribute the largest residual to its owner: inside $R_c$ of a singular corner,
+  increase $M_c$ by $25\%$; outside, halve $h$ on that arc, or --- if $\delta$ there is
+  already at $\eta\dist(s,\Sstar)$ --- add a taper level.
+\item If the residual is \emph{uniform} along $\partial\Omega$, you are
+  conditioning-limited, not resolution-limited: increase $\delta_{\mathrm{amb}}$
+  \emph{and} decrease $h$ together (keeping $\pi\delta/h=\Lambda$), or drop the weakest
+  GSVD directions.
+\end{enumerate}
+
+\section{Worked example: the L-shape}
+\label{sec:example}
+
+Take $\lambda\approx100$, $\epsilon=10^{-10}$; $A=3$, $L=8$, $D=\sqrt5$, $\kappa=10$.
+With $C_\Omega=10$ we get $\hat\epsilon=10^{-11}$ and $\Lambda=25.3$. The corners are
+one at $3\pi/2$ ($\alpha=2/3$, singular) and five at $\pi/2$ (regular).
+
+\begin{itemize}[leftmargin=1.4em]
+\item Only one singular corner, so $\Sstar$ reduces to its own reflections: the
+  nearest non-adjacent edge is at distance $1$, giving $d_c=2$. With $\gamma=0.4$,
+  $R_c=0.8$.
+\item Oscillatory term: $\kappa R_c=8$, so $\nu=8+4.0+5=17$ and
+  $M^{\mathrm{osc}}=17\times1.5=26$.
+\item Continuation term: $\nu=25.3/\ln 2.5=27.6$, so $M^{\mathrm{cont}}=41$. Hence
+  $M_c=67$.
+\item MFS: $\delta_{\mathrm{amb}}=0.25D=0.56$, so $h=\pi(0.56)/25.3=0.070$ --- the
+  Nyquist floor would be $0.21$, so accuracy binds. Then
+  $N_{\mathrm{mfs}}\approx 8/0.070\approx115$, plus a $\sim10$-pole bridge at the
+  reentrant corner.
+\item Regular corners: no taper and no continuation budget --- $\delta$ stays at
+  $0.56$ all the way around them.
+\end{itemize}
+
+\noindent
+Totals: $N_{\mathrm{tot}}\approx 195$, $M_B\approx600$ graded boundary nodes, no
+interior points. That is the right order for ten digits at $\lambda\approx100$ on this
+domain.
+
+\section{Things to verify in a given implementation}
+\label{sec:caveats}
+
+\begin{description}[leftmargin=2.2em,style=nextline]
+\item[Source-curve resonance.]
+  Real MFS bases built from $Y_k$ on a closed exterior curve $\Gamma'$ can lose
+  completeness at isolated $\lambda$ related to the spectrum of the region bounded by
+  $\Gamma'$. It manifests as an isolated spike in $\sigma_{\min}$ that moves when
+  $\Gamma'$ is perturbed. Cheap diagnostic: re-run suspicious $\lambda$ with
+  $\delta_{\mathrm{amb}}$ scaled by $1.3$; genuine eigenvalues do not move. Including
+  multipole orders mitigates this substantially.
+\item[$C_\Omega$ calibration]
+  is the weakest link in the chain --- but everything downstream is
+  $\log(1/\hat\epsilon)$, so an order-of-magnitude error in $C_\Omega$ costs only
+  about $10\%$ more basis functions. Do not over-engineer it.
+\item[Degeneracies.]
+  With multiplicity greater than one, a single $\sigma_{\min}$ is not enough: track
+  the $m$ smallest generalized singular values and use the tension of the whole
+  subspace. The counts above are unchanged.
+\item[Tuned versus derived constants.]
+  The values $\gamma=0.4$, $\eta=0.3$, $\sigma=4$, $M_B/N=3$, and the
+  $2(\kappa R)^{1/3}+5$ transition margin are tuned, not derived. The structures
+  $\Lambda/\ln(1/\gamma)$, $\pi\delta/h$, $\Lambda^2/(2\pi^2\alpha)$, and
+  $\omega_c/\pi$ \emph{are} derived and should be trusted more than the constants in
+  front of them.
+\end{description}
+
+\end{document}
