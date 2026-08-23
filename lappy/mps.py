@@ -525,7 +525,19 @@ class MPSEigensolver(BaseEigensolver):
         orthonorm=False to get the raw (arbitrarily-scaled) GSVD nullspace coefficients
         instead. Falls back to raw coefficients with a warning if no bdry_quad was
         supplied at construction (e.g. from_domain(..., orthonorm=False), a domain with
-        Robin boundary conditions, or manual construction)."""
+        Robin boundary conditions, or manual construction).
+
+        `mult > 1` returning an ORTHONORMAL CLUSTER is a deliberate part of the downstream
+        contract, not an implementation convenience. A shape derivative of a multiple eigenvalue
+        is not a derivative: it is the set of eigenvalues of the m x m matrix
+        `int (du_i/dn)(du_j/dn) (V.n) ds`, which `eigfun_integrals.weighted_integral` returns at
+        exactly that shape. The pairing is what makes degenerate shape derivatives possible at
+        all, and symmetric domains and most maximize-a-gap problems live there
+        (docs/scope_and_downstream.md section 3).
+
+        Note what is NOT promised: WHICH orthonormal basis of the eigenspace comes back. Loewdin
+        returns one of infinitely many, and it moves under a perturbation of the domain, so no
+        individual entry of that matrix means anything on its own -- only its spectrum does."""
         coef = self._nullspace_coef_raw(eig, mult, reg_type, rtol, ttol)
         if not orthonorm:
             return coef

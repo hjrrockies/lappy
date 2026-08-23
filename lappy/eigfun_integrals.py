@@ -129,8 +129,17 @@ CornerPanel = namedtuple('CornerPanel',
 # makes per-corner diagnostics (and the edge/arc split that corner tests must report) possible.
 BoundaryQuad = namedtuple('BoundaryQuad',
                           ['pts', 'normals', 'tangents', 'wts', 'dir_mask', 'neu_mask',
-                           'panels', 'panel_id', 'sizing_precision', 'x0', 'shortfalls'],
-                          defaults=((),))
+                           'panels', 'panel_id', 'sizing_precision', 'x0', 'shortfalls',
+                           'seg_idx', 'tau'],
+                          defaults=((), None, None))
+# `seg_idx` and `tau` are each node's PROVENANCE: which boundary segment it lies on, and its
+# normalized-arclength parameter along that segment. Both are computed inside `assemble_panels`
+# anyway; they are carried rather than discarded because a downstream shape package needs them
+# to evaluate a velocity field `V` at the nodes, and without them the only route is to call the
+# private `_panel_rule` and redo the affine map `tau = tau0 + (tau1-tau0)*u` by hand. See
+# docs/scope_and_downstream.md section 3, which asked for exactly this and called a package
+# reaching into private helpers on its first call "the sign of a seam one field short".
+
 # `sizing_precision` is the MODEL bound that chose the orders -- a sizing heuristic, not a
 # certificate. It was called `precision` and read as an accuracy claim, which it is not:
 # `chevron_1_2` reports 1e-13 here while `verify_gram` measures 4.9e-08 on the actual
@@ -455,7 +464,7 @@ def assemble_panels(domain, panels, sizing_precision=None, x0=None, shortfalls=(
     Segments are parametrized by normalized arclength, so |dp/dtau| == seg.len identically and
     the weight is seg.len*|h|*w with no per-node Jacobian."""
     segs = domain.bdry.segments
-    P, N, T, W, D, U, PID = [], [], [], [], [], [], []
+    P, N, T, W, D, U, PID, SEG, TAU = [], [], [], [], [], [], [], [], []
     for pid, panel in enumerate(panels):
         seg = segs[panel.seg_idx]
         u, w = _panel_rule(panel)
@@ -468,12 +477,14 @@ def assemble_panels(domain, panels, sizing_precision=None, x0=None, shortfalls=(
         D.append(np.full(len(u), float(seg.bc_type == 'dir')))
         U.append(np.full(len(u), float(seg.bc_type == 'neu')))
         PID.append(np.full(len(u), pid))
+        SEG.append(np.full(len(u), panel.seg_idx, dtype=int))
+        TAU.append(tau)
     if x0 is None:
         x0 = default_x0(domain)
     return BoundaryQuad(np.concatenate(P), np.concatenate(N), np.concatenate(T),
                         np.concatenate(W), np.concatenate(D), np.concatenate(U),
                         tuple(panels), np.concatenate(PID), sizing_precision, x0,
-                        tuple(shortfalls))
+                        tuple(shortfalls), np.concatenate(SEG), np.concatenate(TAU))
 
 
 def eigfun_cauchy_data(basis, lam, coef, bq):
@@ -511,6 +522,41 @@ def weighted_integral(ed, kernel, weight):
     if kernel == 'cr':
         return (ed.U_T*w).T@ed.U_N + (ed.U_N*w).T@ed.U_T
     raise ValueError(f"'kernel' must be one of 'uv', 'NN', 'TT', 'cr' (got {kernel!r})")
+
+
+def normal_velocity(bq, dp):
+    """`V.n` at `bq`'s nodes, from a per-node boundary displacement `dp` (complex).
+
+    This is the boundary weight a Hadamard-type shape derivative integrates against:
+
+        dlam = -integral (du/dn)^2 (V.n) ds  =  -weighted_integral(ed, 'NN', normal_velocity(bq, dp))
+
+    THE POINT OF IT LIVING HERE. `lappy` owns the normal convention, the segment orientation and
+    the arclength parametrization, so it should own the one place they are combined into a scalar
+    -- and a downstream package that got the sign or the orientation wrong would not crash, it
+    would return a *plausible wrong gradient* that an optimizer follows happily. Keeping the
+    converter upstream means the convention is enforced in one place rather than agreed in two
+    (docs/scope_and_downstream.md section 3).
+
+    `dp` is whatever the caller's parametrization says each node MOVES BY -- douse computes it
+    from `dp/dtheta`, using `bq.seg_idx` and `bq.tau` to know where each node sits. Only the
+    normal component survives, which is the content of the Hadamard formula: a purely tangential
+    velocity slides the boundary along itself and does not move the domain.
+
+    Sign: `bq.normals` is the OUTWARD unit normal, so `V.n > 0` grows the domain. The pairing is
+    pinned against a case with a closed-form answer in
+    `tests/test_shape_derivative.py::test_dilation_through_the_converter_is_the_rellich_identity`
+    -- uniform dilation `dp = pts - x0` must reproduce `integral (r.N)(du/dn)^2 ds = 2 lam`,
+    which is the Rellich identity `gram` already computes.
+
+    Returns a real array, ready to pass as `weighted_integral`'s `weight`.
+    """
+    dp = np.asarray(dp)
+    if dp.shape != np.shape(bq.pts):
+        raise ValueError(f'dp has shape {dp.shape}, expected one displacement per quadrature '
+                         f'node: {np.shape(bq.pts)}. Evaluate the velocity field at `bq.pts` '
+                         f'(or from `bq.seg_idx`/`bq.tau`), not at the panel endpoints.')
+    return complex_dot(dp, bq.normals)
 
 
 def default_x0(domain, singular_test=None):

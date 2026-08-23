@@ -25,11 +25,11 @@ computes. `test_dilation_is_the_rellich_identity` pins that correspondence.
 import numpy as np
 import pytest
 
-from lappy import bases, geometry, mps, reference as ref
+from lappy import bases, eigfun_integrals, geometry, mps, reference as ref
 from lappy.geometry import rect, disk_sector
 from lappy.mps import MPSEigensolver
 from lappy.eigfun_integrals import (boundary_quadrature, eigfun_cauchy_data, gram,
-                                    weighted_integral)
+                                    normal_velocity, weighted_integral)
 from lappy.utils import complex_dot
 
 
@@ -49,11 +49,12 @@ def _solver(domain, lam_max, n_basis=120, seed=0):
 def _segment_of_node(bq):
     """Which boundary segment each quadrature node belongs to.
 
-    Reconstructed from `panel_id` because `BoundaryQuad` does not carry it directly; see
-    docs/scope_and_downstream.md section 3, where storing `(seg_idx, tau)` per node is proposed
-    so a downstream package can read this instead of rebuilding it.
+    `BoundaryQuad` now carries this per node (`seg_idx`, with `tau` beside it), so this is a
+    one-line alias kept for readability. It used to rebuild the array from `panel_id`, which
+    docs/scope_and_downstream.md section 3 named as the sign of a seam one field short -- the
+    field is there now, and `test_the_quad_carries_node_provenance` pins that the two agree.
     """
-    return np.array([bq.panels[p].seg_idx for p in bq.panel_id])
+    return bq.seg_idx
 
 
 def _hadamard(solver, lam, Vn, mult=1):
@@ -154,6 +155,71 @@ def test_dilation_is_the_rellich_identity():
 
     assert abs(norm2 - 1.0) < 1e-11, norm2                 # u is orthonormal
     assert abs(had - (-2*lam*norm2))/abs(2*lam) < 1e-11, (had, -2*lam*norm2)
+
+
+def test_the_quad_carries_node_provenance():
+    """`seg_idx` and `tau` per node, so a downstream package can evaluate `V` without calling
+    the private `_panel_rule` and redoing the affine map itself.
+
+    Checked against the panel-walking reconstruction that used to be the only route, and against
+    the segment's own parametrization: `seg.p(tau)` must land back on the node.
+    """
+    dom = rect(2.0, 1.0)
+    bq = boundary_quadrature(dom, 3*ref.rect_eig(2, 1, 2.0, 1.0), precision=1e-13, warn=False)
+
+    from_panels = np.array([bq.panels[p].seg_idx for p in bq.panel_id])
+    assert np.array_equal(bq.seg_idx, from_panels)
+
+    assert bq.tau.shape == bq.pts.shape
+    assert np.all((bq.tau >= -1e-12) & (bq.tau <= 1 + 1e-12)), (bq.tau.min(), bq.tau.max())
+    segs = dom.bdry.segments
+    back = np.array([segs[s].p(np.array([t]))[0] for s, t in zip(bq.seg_idx, bq.tau)])
+    assert np.max(np.abs(back - bq.pts)) < 1e-12, np.max(np.abs(back - bq.pts))
+
+
+def test_dilation_through_the_converter_is_the_rellich_identity():
+    """`normal_velocity` must reproduce `test_dilation_is_the_rellich_identity` exactly.
+
+    That test builds `V.n` by hand with `complex_dot(bq.pts - bq.x0, bq.normals)`; this one
+    passes the same displacement field through the public converter. It is the sign test: the
+    Rellich identity fixes both the magnitude AND the orientation, so a flipped normal or a
+    conjugation error cannot pass. Nothing else downstream would catch it -- it would return a
+    plausible wrong gradient.
+    """
+    L, H = 2.0, 1.0
+    dom = rect(L, H)
+    lam = ref.rect_eig(2, 1, L, H)
+    solver = _solver(dom, 3*lam)
+    bq = solver.bdry_quad
+
+    dp = bq.pts - bq.x0                                    # uniform dilation about x0
+    Vn = eigfun_integrals.normal_velocity(bq, dp)
+    assert np.allclose(Vn, complex_dot(dp, bq.normals), rtol=0, atol=0)
+
+    had = _hadamard(solver, lam, Vn)[0, 0]
+    assert abs(had - (-2*lam))/abs(2*lam) < 1e-11, (had, -2*lam)
+    assert had < 0, 'outward dilation must DECREASE a Dirichlet eigenvalue'
+
+
+def test_normal_velocity_rejects_a_mismatched_field():
+    """The shape check is worth having: silently broadcasting a wrong-length `V` would produce a
+    finite, plausible number."""
+    dom = rect(2.0, 1.0)
+    bq = boundary_quadrature(dom, 3*ref.rect_eig(2, 1, 2.0, 1.0), precision=1e-13, warn=False)
+    with pytest.raises(ValueError, match='one displacement per quadrature node'):
+        eigfun_integrals.normal_velocity(bq, np.ones(len(bq.pts) - 1, dtype=complex))
+
+
+def test_a_tangential_velocity_moves_nothing():
+    """Only the normal component enters, which is the content of the Hadamard formula: sliding
+    the boundary along itself does not change the domain."""
+    L, H = 2.0, 1.0
+    dom = rect(L, H)
+    lam = ref.rect_eig(2, 1, L, H)
+    solver = _solver(dom, 3*lam)
+    bq = solver.bdry_quad
+    Vn = eigfun_integrals.normal_velocity(bq, 0.37*bq.tangents)
+    assert np.max(np.abs(Vn)) < 1e-14, np.max(np.abs(Vn))
 
 
 def test_scaling_the_eigenfunction_would_break_the_derivative():

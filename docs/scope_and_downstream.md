@@ -1,8 +1,10 @@
 # Scope: what `lappy` provides, and what a downstream shape package owns
 
-**Status: provisional, 2026-08-06.** This records a design discussion, not a commitment. The
-API sketched in §3 is deliberately *not* being built yet — see §5 for why, and what has to
-happen first.
+**Status: §5's two blockers are gone; §3 is built. Updated 2026-08-23.** This began as a record
+of a design discussion rather than a commitment, deferring the interface until two moving pieces
+settled. Both have (`lappy/basis_plan.py` and the auto-configuration it enabled — see
+`benchmarks/basis_lab/PLAN_LAB.md` S2 and S4), and §3's four items are now implemented. What
+remains provisional is §1's *division of labour*, not the seam itself.
 
 ## 1. The line
 
@@ -38,22 +40,23 @@ downstream is "which functional, which perturbation field, which optimizer".
 
 Four items, in rough order of how load-bearing they are.
 
-**Per-node provenance.** To evaluate `V·n` at the quadrature nodes, the downstream package
-needs each node's `(seg_idx, tau)`. Today that is only reconstructible by calling the private
-`_panel_rule` and redoing the affine map `tau = tau0 + (tau1-tau0)*u`. `BoundaryQuad` should
-carry per-node `seg_idx` and `tau` arrays — they are computed anyway inside `assemble_panels`.
-A downstream package reaching into private helpers on its first call is the sign of a seam one
-field short.
+**Per-node provenance. DONE.** `BoundaryQuad` carries per-node `seg_idx` and `tau`, collected
+in `assemble_panels` where they were already being computed and discarded.
+`tests/test_shape_derivative.py::test_the_quad_carries_node_provenance` pins them against the
+panel-walking reconstruction and against `seg.p(tau)` landing back on the node.
 
-**The orientation convention stays upstream.** A shape velocity enters as `V·n`, and a sign or
-orientation error there yields a *plausible, wrong gradient* that an optimizer will follow
-happily. `lappy` already owns the normal convention, segment orientation and arclength
-parametrization, so it should also own the one converter: given a per-node boundary
-displacement `dp` (complex, at the quadrature nodes), return `V·n` using its own normals.
-douse computes `dp` from its parametrization; lappy converts. The convention is then enforced
-in one place rather than agreed in two.
+**The orientation convention stays upstream. DONE.** `eigfun_integrals.normal_velocity(bq, dp)`
+takes a per-node complex displacement and returns `V·n` under lappy's own outward-normal
+convention. A sign or orientation error there yields a *plausible, wrong gradient* that an
+optimizer will follow happily, so the sign is pinned by uniform dilation against the Rellich
+identity (`test_dilation_through_the_converter_is_the_rellich_identity`), which fixes magnitude
+and orientation together, plus a check that a purely tangential velocity returns zero. douse
+computes `dp` from its parametrization — using `bq.seg_idx`/`bq.tau` to know where each node
+sits — and lappy converts. The convention is enforced in one place rather than agreed in two.
 
-**Degenerate clusters are part of the contract.** A shape derivative of a multiple eigenvalue
+**Degenerate clusters are part of the contract. DOCUMENTED** in
+`MPSEigensolver.eigenfunction_coef`, including what is *not* promised: which orthonormal basis of
+the eigenspace comes back. A shape derivative of a multiple eigenvalue
 is not a derivative — it is a directional derivative of the eigenvalues of the `m x m` matrix
 `int (du_i/dn)(du_j/dn) (V.n) ds`. `weighted_integral` already returns `m x m` rather than a
 scalar, and `eigenfunction_coef(mult=m)` returns an orthonormal cluster. That pairing is what
@@ -85,49 +88,75 @@ accurate. It is the only test sensitive to a *systematic* error in `||u||`.
 Conveniently this needs no `ParametricDomain`: for those two cases `V·n` is three lines
 inline. lappy's promise stays tested in lappy, without importing anything from douse.
 
-## 5. Why the API is not being committed to yet
+**This exists: `tests/test_shape_derivative.py`** (22 tests), covering rectangle edge
+translation, dilation against the Rellich identity, a degenerate cluster splitting correctly,
+the sector radius derivative at a singular corner, and the `weight_family='integer'`
+corner-moving case. `tests/test_basis_plan_smoothness.py` adds the frozen-plan version on the
+rectangle family, where both `lambda` and `dlambda` are closed form.
 
-Two pieces of `lappy` are still moving, and both could change what it is able to promise:
+One gap remains, and it matters because it is the path douse will actually call: those tests
+build their solvers by hand (`bases.make_default_basis` plus explicit collocation), not through
+`Eigenproblem(dom, precision=...)`. A case going through auto-configuration belongs here.
 
-1. **Basis-selection heuristics.** Ten benchmark domains sit in bucket 2 — complete spectrum,
-   clean tension curve, under 8 digits — diagnosed as basis insufficiency. Breaking out of
-   `make_default_basis` there may change the shape of what a solver needs (column scaling,
-   pivoted selection, source placement), and with it what "give me a good eigenfunction" costs
-   and how it is configured.
-2. **The `domain -> (Eigenproblem + auto-configured Eigensolver)` pipeline.** The reference
-   work has been driving solvers by hand (`benchmarks/reference/common.build_solver`
-   deliberately bypasses `from_domain`). Folding what was learned back into auto-configuration
-   will change the constructor surface that douse would call.
+## 5. Why the API was not committed to (RESOLVED)
 
-Committing to an interface across that seam now would freeze it against machinery that is
-about to change. The four items in §3 are cheap and additive; the *interface* should wait
-until the pipeline settles.
+Two pieces of `lappy` were still moving, and both could have changed what it is able to promise.
+Both have now settled, which is what reopened this document:
+
+1. **Basis-selection heuristics. Settled by `lappy/basis_plan.py`.** Ten benchmark domains sat in
+   bucket 2 — complete spectrum, clean tension curve, under 8 digits — diagnosed as basis
+   insufficiency. The resolution was not a better branch but *no* branch: `plan_basis` derives the
+   construction from geometry, `lam_max` and a target, and `refine_plan`/`check_precision` measure
+   what it achieved. Measured black-box on ten polygons, `Eigenproblem(dom, precision=1e-10).solve(4)`
+   gives 8.8–13.3 true digits at 60–364 columns with nothing configured.
+2. **The `domain -> (Eigenproblem + auto-configured Eigensolver)` pipeline. Settled** (PLAN_LAB S4).
+   `mps.default_basis_for` is the seam; `precision` is one dial that sizes the basis and becomes
+   the search's `ltol`. The reference work's hand-built solvers are no longer the only path.
+
+So the interface can be fixed, and §3's four items are done. What is left before douse leans on
+this is not interface design but two solver-level gaps recorded in `docs/todo.md`: there is no
+inner-loop entry point (`solve(k)` rescans globally every call, 2–8 s per solve), and `solve(k)`'s
+mode completeness rests on scan-grid resolution rather than on a validated detector.
 
 ## 6. Sequencing
 
-1. Write the §4 contract test. It is a day's work, it is the goal's acceptance criterion, and
-   it settles the one open sizing question in the right currency — `smooth_safety` matters for
-   `dlambda`, not for `lambda`.
-2. Bucket-2 basis research, starting with the six sharp-corner domains (chevrons x4,
-   parallelogram_p65/p127) where the mechanism is understood. Treat the four thin-neck domains
-   (stadium x2, mushroom_thin, mushroom_neck01) as a separate investigation — likely a
-   different mechanism, possibly not a basis problem at all.
-3. Polish the auto-configuration pipeline with what (1) and (2) establish.
-4. Only then fix the douse interface.
+The original four steps are done: the §4 contract test exists, the bucket-2 basis research
+became `basis_plan`, the auto-configuration pipeline was polished on what it established, and
+§3's items are implemented. What replaces them, before douse leans on any of this:
 
-Bucket 3 (the two spirals) stays parked: it is two pathological domains, and the goal is
-explicitly "non-pathological".
+1. **An inner-loop entry point.** `solve(k)` runs a global Weyl-gridded scan every call, 2–8 s
+   per 4-eigenvalue solve (22 s on H_shape) against ~10 ms of solver construction. A shape loop
+   knows where `lambda` was last iterate and wants a local bracket, not a rescan. This is the
+   largest available speedup and it also sidesteps §6's next item entirely, since tracking
+   follows one mode by value rather than selecting a set by index.
+2. **A validated completeness detector for `solve(k)`.** Grid resolution currently does the work
+   (`ppl`), and no cheap audit stands behind it — the Weyl-count test already in
+   `_solve_dir_neu` provably cannot serve, because per-gap expected counts overlap between
+   correct and incorrect results once multiplicity is in play.
+3. **A `dlambda` case through the auto-configured path** (§4's remaining gap).
+4. Then fix the douse interface.
 
-**Measure basis variants carefully.** Interior collocation points come from the global RNG,
-and the record shows `iso_right_tri` returning 4.9, 4.0 and 2.5 certified digits on three runs
-of identical code. A trial-and-error basis study must fix the seed *and* report spread across
-several, or it will chase draws. The spread is itself a signal: a basis whose accuracy depends
-strongly on the interior sample is telling you the system is under-determined.
+The chevrons and thin isoceles triangles stay parked alongside the spirals: `check_precision`
+reports honestly on them and the goal is explicitly "non-pathological".
+
+**Measure basis variants carefully.** Interior collocation points used to come from the global
+RNG, and the record shows `iso_right_tri` returning 4.9, 4.0 and 2.5 certified digits on three
+runs of identical code. That draw is now seeded by default (PLAN_LAB S1), so this is a trap for
+anyone who passes `rng=np.random.default_rng()` rather than the default: fix the seed *and*
+report spread across several. The spread is itself a signal — a basis whose accuracy depends
+strongly on the interior sample is telling you the system is under-determined — and it matters
+more to `dlambda` than to `lambda` (S0b: seed spreads up to 1.4 digits against 0.5).
 
 ## 7. Open questions
 
-* Does the eigenvalue-digit objective agree with the `dlambda`-accuracy objective? A basis
-  tuned for one may not be best for the other. (1) above is what makes this checkable.
+* ~~Does the eigenvalue-digit objective agree with the `dlambda`-accuracy objective?~~
+  **ANSWERED: yes.** PLAN_LAB S0b/S0c measured both at a known `lambda`, so no search could
+  confound either: 57 of 60 comparable pairs concordant on rectangles, and on the L-shape no cell
+  had `MP >= 10` with `dlambda` below its reference floor — the failure mode the stage existed to
+  detect. `dlambda` digits run 1–3 *above* certified digits, so tuning to certified eigenvalue
+  accuracy is safe and the derivative follows with margin. One rider: `dlambda` is more sensitive
+  to the interior collocation draw than `lambda` is (seed spreads up to 1.4 digits against 0.5),
+  which is why the S1 determinism fix was worth more than hygiene.
 * Where does a `Domain` family's *derivative* geometry live in practice — is
   `ParametricSegment` convenient enough for douse to build `dp/dtheta` on top of, or does it
   end up needing something upstream after all? This is the one place the seam might be in the
