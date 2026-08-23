@@ -66,7 +66,9 @@ priority order" list; it is not duplicated here.
       Low urgency while `track` is the loop's entry point, since tracking has no index to shift.
 - [ ] `ppl=20` costs +43% on the initial grid against ppl=10 (12.9 s/cell against 9.0 on the
       90-cell sweep). Scaling `ppl` with the local spectral density, rather than flatly, would
-      buy most of it back -- the clusters that need it are local.
+      buy most of it back -- the clusters that need it are local. (Threading has more than repaid
+      this in absolute terms, but the waste is still there.)
+
 - [ ] Test coverage for the weighted-evaluation path (`weights=True` -> `PointSet.sqrt_wts` ->
       `bases` Vandermonde scaling). No current caller, `weights=False` everywhere by default,
       and every consumer sits behind a `hasattr(pts, 'wts')` guard -- which is exactly how
@@ -85,6 +87,26 @@ priority order" list; it is not duplicated here.
       in the whole approach. Worth a look before it becomes a blind spot.
 - [ ] Deliverable tables must be "columns to reach precision p", never "sigma at fixed n" --
       the square comparison inverts across the saturation crossing.
+
+## Speed
+Profile first: basis evaluation is ~67% of a solve on planner-built bases and the GSVD stack
+~33%. S0a's 52/48 split was measured on `pure_fb` and does not carry over.
+- [x] Order-0 Bessel: `yv(0,.)`/`yvp(0,.)` -> `y0`/`-y1`, 42x/94x on that call.
+- [x] Thread the lambda grid (`mps.n_workers_default`), ~2-3x end to end.
+- [ ] **The `jv` ladder in `FourierBesselBasis._bessel` is the largest single item left**: 14.5 s
+      of a 36.9 s H_shape solve. The orders are `j*alpha` for fixed alpha, an arithmetic
+      sequence, so Miller backward recurrence could get the whole ladder for roughly the cost of
+      one call. Numerically delicate -- forward recurrence in order is unstable for order >
+      argument -- so it needs its own accuracy study before it is worth trying.
+- [ ] `solve_interval` uses only `tensions(lam)[:2]` but `gsvdvals` computes every generalized
+      singular value. Not obviously recoverable (the GSVD does not truncate the way a symmetric
+      eigenproblem does, and `regularize_pencil`'s SVD is needed to form the projection), but it
+      is where the other third of the time goes.
+- [ ] `track` scans 9 points per iterate; 5 would be ~40% fewer sigmas in the inner loop. Trades
+      against the edge guard's reliability, so measure on the L-shape family before adopting.
+- [ ] Threading gains flatten between 4 and 8 workers, which smells like the per-sigma LAPACK
+      calls competing with a threaded BLAS. Worth checking whether pinning BLAS to 1 thread
+      inside the workers beats the current arrangement.
 
 ## Reference values
 - [ ] **DECIDE: `REFERENCE['reg_ngon_6']` is short a mode, and the generator is the suspect.**
