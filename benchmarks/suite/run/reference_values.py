@@ -75,20 +75,29 @@ REFERENCE = {
         certified_digits=12.81,
         n_basis=240, method='symmetry(reg_ngon(5) mirror, |G|=2)',
     ),
+    # CORRECTED 2026-08-23, and NOT by re-running the generator: see the note at the end of
+    # this file. The symmetry-reduced value was short a mode -- it listed 32.4518575 once, but
+    # that eigenvalue is a genuine DOUBLE -- so every entry above index 3 was shifted up by one
+    # and 70.1403637 (really lambda_11) was carried in as lambda_10.
     'reg_ngon_6': dict(
-        eigs=np.array([7.15533913392606, 18.1316778655306, 18.1316778655307, 32.4518575144004, 37.4913528767983, 47.6293657738571, 52.6378901391434, 60.1051120941663, 60.1051120941666, 70.1403636520179]),
-        certified_digits=12.52,
-        n_basis=320, method='symmetry(reg_ngon(6) D2, |G|=4)',
+        eigs=np.array([7.155339133926042, 18.131677865530694, 18.131677865530694, 32.45185751440048, 32.45185751440048, 37.49135287679824, 47.62936577385704, 52.63789013914339, 60.10511209416662, 60.10511209416662]),
+        certified_digits=12.10,
+        n_basis=320, method='full domain (corrected; was symmetry(reg_ngon(6) D2, |G|=4))',
     ),
     'reg_ngon_7': dict(
         eigs=np.array([6.73509919668493, 17.0838072047597, 17.0838072047597, 30.6436549212198, 30.6436549212202, 35.3970328105267, 47.1007284327514, 47.1007284327517, 57.017683247908, 57.017683247909]),
         certified_digits=11.48,
         n_basis=240, method='symmetry(reg_ngon(7) mirror, |G|=2)',
     ),
+    # CORRECTED 2026-08-23; see the note at the end of this file. The symmetry-reduced value
+    # was missing lambda_1 = 6.4849335 ENTIRELY, so the whole table was shifted by one. Caught
+    # by Faber--Krahn: the octagon has area 2.8284, the equal-area disk has lambda_1 = 6.424,
+    # and no domain of that area can have a smaller first eigenvalue -- so a table starting at
+    # 16.456 was impossible. The old certified_digits=8.02 was measured against the wrong set.
     'reg_ngon_8': dict(
-        eigs=np.array([16.4561190301738, 16.4561190302216, 29.5405646301545, 29.5405647280651, 34.1244752857501, 45.5297514878318, 45.52975148786, 55.0497435508494, 55.0497435508501, 62.5956364321651]),
-        certified_digits=8.02,
-        n_basis=120, method='symmetry(reg_ngon(8) D2, |G|=4)',
+        eigs=np.array([6.48493349372267, 16.45611903018437, 16.45611903018437, 29.54056472809668, 29.54056472809668, 34.12447528574973, 45.529751487864296, 45.529751487864296, 55.04974355085233, 55.04974355085233]),
+        certified_digits=10.45,
+        n_basis=320, method='full domain (corrected; was symmetry(reg_ngon(8) D2, |G|=4))',
     ),
     'iso_tri_h1': dict(
         eigs=np.array([24.6740110027233, 49.3480220054469, 64.1524286070807, 83.8916374092592, 98.6960440108939, 123.370055013617, 128.304857214162, 143.109263815795, 167.78327481852, 182.587681420153]),
@@ -165,3 +174,27 @@ REFERENCE = {
 #   mushroom_thin: 7.4 digits
 #   mushroom_neck01: 5.1 digits
 #   cut_square_r025: 7.2 digits
+
+
+# ── The two corrected entries, and why they are not regenerated ─────────────────────────────
+#
+# `reg_ngon_6` and `reg_ngon_8` were each short a mode. Both came from a symmetry-reduced solve,
+# and `benchmarks/reference/symsolve.solve_sym` documents the hazard itself: the registered group
+# is "the largest elementary abelian 2-subgroup with real characters", which can be a PROPER
+# SUBGROUP of the domain's true symmetry -- and then degeneracies the full group would split
+# survive inside a single sector and must be recovered by that sector's own multiplicity
+# estimate. These are the only two suite entries that reduce a domain by a proper subgroup
+# (reg_ngon(6) is D6 and reg_ngon(8) is D8, both reduced by D2), and they are exactly the two
+# that were wrong. Every |G|=2 mirror/half-turn entry checks out, and `rect D2` is fine because
+# D2 IS a rectangle's full group.
+#
+# The replacements come from `benchmarks/reference/produce.run_one`'s FULL-DOMAIN branch --
+# build_solver, manual_solve, polish_eigs to ltol=1e-14, certify_solver, at n_basis=320 -- so
+# they are produced by the same machinery as every other entry, minus the reduction that lost
+# the mode. Every polygon table now agrees with an independent full-domain solve
+# (`tests/test_reference_tables.py`, which is the cross-check that never existed and is why both
+# defects were found by accident rather than by the suite).
+#
+# They are patched here rather than regenerated because `benchmarks.suite.emit` reads a results
+# ledger that still holds the bad symmetry runs; regenerating without first fixing the
+# per-sector multiplicity estimate would reintroduce them. That fix is open in docs/todo.md.

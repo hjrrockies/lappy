@@ -2,6 +2,12 @@
 # public facing functions should be imported here so they can be used directly
 name = "lappy"
 
+# 0.9 = beta, and the number is a claim about the POLYGON path specifically: see
+# docs/polygon_contract.md for what is promised, what is measured, and what is out of scope.
+# Curved domains work but are not part of that claim -- `mps.default_basis_for` raises for them
+# rather than guessing a basis size.
+__version__ = "0.9.0"
+
 # modules available on package load
 from . import mps
 from . import bases
