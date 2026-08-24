@@ -206,3 +206,90 @@ def test_replanning_every_iterate_would_change_the_basis_size(frozen):
     assert len(set(sizes)) > 1, f'expected re-planning to vary the size, got {sizes}'
     assert sizes == sorted(sizes), sizes
     assert max(sizes) - min(sizes) < 0.15*min(sizes), sizes   # smooth drift, not a jump
+
+
+# ── Moving a VERTEX, where the corner angles change too ─────────────────────────
+#
+# Everything above translates an edge, so every corner angle is fixed and only `clearance` and
+# the arc lengths move. A polygon parametrization does not work that way: moving a vertex moves
+# two edges and changes two interior angles at once, and `alpha = pi/omega` is what sets a corner
+# block's exponents. `realize` freezes the term COUNT `M` and the arc endpoints as fractions, but
+# recomputes alpha from the moved geometry -- so this asks whether that split is the right one.
+#
+# The rectangle cannot test this (a rectangle with a moved vertex is not a rectangle, and there is
+# no closed form), so the instrument is a generic convex quadrilateral and the check is internal
+# consistency: constant size, tension staying at the floor, and a smoothly varying nu.
+
+QUAD = np.array([0.0, 1.3, 1.6 + 1.0j, 0.15 + 0.85j])
+QUAD_DIR = 0.6 + 0.8j
+QUAD_TS = (-0.04, -0.02, 0.0, 0.02, 0.04)
+
+
+def _quad_moved(t, k=2):
+    v = QUAD.copy()
+    v[k] = v[k] + t*QUAD_DIR
+    return geo.Polygon(v)
+
+
+@pytest.fixture(scope='module')
+def vertex_swept():
+    """One plan frozen at t=0, realized on each member of a vertex-moving family."""
+    from lappy import Eigenproblem
+    from lappy.eigfun_integrals import corner_specs
+    dom0 = _quad_moved(0.0)
+    lam_max = weyl_est(6, dom0)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        plan = BP.plan_basis(dom0, lam_max, target=1e-12)
+
+    out, lam = [], None
+    for t in QUAD_TS:
+        dom = _quad_moved(t)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            basis = BP.realize(plan, dom)
+            solver = MPSEigensolver.from_domain(dom, lam_max=weyl_est(6, dom), basis=basis,
+                                                prec=1e-12)
+            evp = Eigenproblem(dom, eval_solver=solver, precision=1e-12)
+            lam = float(evp.solve(1)[0]) if lam is None else float(evp.track(lam))
+            sigma = float(np.atleast_1d(solver.sigma(lam))[0])
+        out.append(dict(t=t, n=len(basis), lam=lam, sigma=sigma,
+                        nus=sorted(float(c.nu) for c in corner_specs(dom))))
+    return out
+
+
+def test_a_frozen_plan_survives_vertex_motion(vertex_swept):
+    """Constant size and a tension still at the floor, though every angle has moved.
+
+    This is the claim the edge-translating family above cannot make: `alpha` is recomputed from
+    the moved geometry while `M` stays frozen, and that has to be enough.
+    """
+    assert len({r['n'] for r in vertex_swept}) == 1, [r['n'] for r in vertex_swept]
+    worst = max(r['sigma'] for r in vertex_swept)
+    assert worst < 1e-9, [(r['t'], r['sigma']) for r in vertex_swept]
+
+
+def test_the_corner_exponents_move_smoothly_under_vertex_motion(vertex_swept):
+    """`nu` is what the corner blocks are built on, so a kink in it would be a kink in the basis.
+
+    Second differences are compared against the curve's own scale rather than against zero: nu(t)
+    has real curvature here, and asking for it to be small is the badly-designed assertion
+    PLAN_LAB records failing three of eight smoothness tests on the first run.
+    """
+    nus = np.array([r['nus'] for r in vertex_swept])          # (n_t, n_corner)
+    for j in range(nus.shape[1]):
+        d1 = np.diff(nus[:, j])
+        if np.max(np.abs(d1)) < 1e-12:
+            continue                                          # a corner that does not move
+        d2 = np.abs(np.diff(d1))
+        assert np.max(d2) < 0.25*np.max(np.abs(d1)), (j, nus[:, j])
+
+
+def test_lambda_is_smooth_under_vertex_motion(vertex_swept):
+    """Third differences of a smooth curve sampled at five points are dominated by its own
+    curvature; a basis-induced kink would break the ordering."""
+    lams = np.array([r['lam'] for r in vertex_swept])
+    d1 = np.diff(lams)
+    assert np.all(d1 < 0), lams                               # monotone: pushing out lowers lam_1
+    d3 = np.abs(np.diff(np.diff(d1)))
+    assert np.max(d3) < 0.02*np.max(np.abs(d1)), lams

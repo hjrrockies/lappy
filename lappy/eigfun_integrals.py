@@ -581,7 +581,7 @@ def normal_velocity(bq, dp):
     moved = _moved_singular_corners(bq, dp)
     if moved and bq.weight_family != 'integer':
         warnings.warn(
-            f'this velocity moves singular corner(s) {sorted(moved)} but the node set has '
+            f'this velocity moves reentrant corner(s) {sorted(moved)} but the node set has '
             f"weight_family={bq.weight_family!r}. A corner-moving V.n is O(r) there, which the "
             f"'even' rule does not integrate exactly -- measured at 6.1 digits against 9.3 for "
             f"'integer' on the L-shape's reentrant vertex. Use MPSEigensolver.hadamard_quad, or "
@@ -590,12 +590,27 @@ def normal_velocity(bq, dp):
 
 
 def _moved_singular_corners(bq, dp, frac=0.02):
-    """Indices of singular corners this displacement field moves.
+    """Indices of REENTRANT corners (nu < 1) this displacement field moves.
 
     A corner moves when `dp` is nonzero AT it. The nodes are graded toward corners, so the
     innermost node on a corner-anchored panel is the closest sample available -- read `dp`
     there. `frac` of the panel's own extent is the tolerance for "at the corner", generous
     because the question is only whether the field vanishes there, not by how much.
+
+    WHY THE CUT IS AT nu < 1, and not at "non-integer nu" or "got a corner-adapted rule".
+    Both of those were tried and both over-fire: on a generic convex quadrilateral every corner
+    is non-integer (nu = 1.687 to 2.671) and every one gets `cornerinterp`, yet the two weight
+    families agree there to 1e-7 relative and both match a five-point central difference to 6.8
+    digits. nu < 1 is where a loss has actually been measured -- 6.1 digits against 9.3 on the
+    L-shape's reentrant vertex -- and it is the regime with a mechanism: `(du/dn)^2 ~ r^(2nu-2)`
+    is UNBOUNDED at the corner for nu < 1 and vanishing for nu > 1, so the weight's own exponent
+    is riding on a singular integrand in the first case and a decaying one in the second. It is
+    also `corner_specs`' historical criterion and the regime of every row in
+    `hadamard_quadrature`'s measured table (nu = 0.587 to 0.772).
+
+    The band 1 < nu < 1.69 is untested in either direction. If a shape family lives there and
+    the derivative matters, measure it against a finite difference rather than trusting this
+    silence.
 
     Corner data comes from the panels themselves (`nu`, `corner`), not from a fresh
     `corner_specs` call, because a `BoundaryQuad` carries no domain reference and re-deriving
@@ -608,7 +623,7 @@ def _moved_singular_corners(bq, dp, frac=0.02):
     for pid, panel in enumerate(bq.panels):
         if panel.corner is None or panel.corner < 0 or panel.nu is None:
             continue
-        if float(panel.nu).is_integer():          # regular corner: no fractional exponents
+        if float(panel.nu) >= 1.0:                # bounded (du/dn)^2: no measured loss
             continue
         on = np.flatnonzero(bq.panel_id == pid)
         if not len(on):

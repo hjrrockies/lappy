@@ -608,3 +608,61 @@ def test_hadamard_quad_refuses_to_guess_for_a_hand_built_solver():
     solver = _solver(dom, 3*ref.rect_eig(2, 1, 2.0, 1.0))
     with pytest.raises(ValueError, match='hand-built solver does not carry|needs the domain'):
         solver.hadamard_quad
+
+
+@pytest.mark.slow
+def test_a_vertex_move_with_no_singular_corner_is_fine_on_either_node_set():
+    """The other half of the guard's claim: where no corner is singular, `bdry_quad` is correct
+    and staying silent is justified rather than merely lenient.
+
+    A generic convex quadrilateral -- every nu between 1.69 and 2.67 -- moving one vertex, against
+    a five-point central difference. Both node sets must agree with it and with each other. This
+    is why the defect above is easy to miss: it appears only once a reentrant corner is a design
+    variable, so a package tested on convex shapes would ship and then go wrong later.
+    """
+    import warnings as _w
+    from lappy import basis_plan as BP, Eigenproblem
+    from lappy.asymp import weyl_est
+
+    verts = np.array([0.0, 1.3, 1.6 + 1.0j, 0.15 + 0.85j])
+    direction = 0.6 + 0.8j
+
+    def moved(t):
+        v = verts.copy(); v[2] = v[2] + t*direction
+        return geometry.Polygon(v)
+
+    dom0 = moved(0.0)
+    with _w.catch_warnings():
+        _w.simplefilter('ignore')
+        plan = BP.plan_basis(dom0, weyl_est(6, dom0), target=1e-12)
+
+    lam, lams, keep = None, [], None
+    for t in (-0.04, -0.02, 0.0, 0.02, 0.04):
+        dom = moved(t)
+        with _w.catch_warnings():
+            _w.simplefilter('ignore')
+            s = MPSEigensolver.from_domain(dom, lam_max=weyl_est(6, dom),
+                                           basis=BP.realize(plan, dom), prec=1e-12)
+            evp = Eigenproblem(dom, eval_solver=s, precision=1e-12)
+            lam = float(evp.solve(1)[0]) if lam is None else float(evp.track(lam))
+        lams.append(lam)
+        if t == 0.0:
+            keep = (lam, s)
+    lams = np.array(lams)
+    fd5 = (lams[0] - 8*lams[1] + 8*lams[3] - lams[4])/(12*0.02)
+
+    lam_c, s_c = keep
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter('always')
+        coef = s_c.eigenfunction_coef(lam_c, mult=1)
+        got = {}
+        for name, bq in (('even', s_c.bdry_quad), ('integer', s_c.hadamard_quad)):
+            ed = eigfun_cauchy_data(s_c.basis, lam_c, coef, bq)
+            Vn = normal_velocity(bq, _vertex_velocity(bq, 2, direction, len(verts)))
+            got[name] = -weighted_integral(ed, 'NN', Vn)[0, 0]
+    assert not [c for c in caught if 'weight_family' in str(c.message)], \
+        'no corner here is singular, so the guard must not fire'
+
+    for name, val in got.items():
+        assert abs(val - fd5)/abs(fd5) < 1e-5, (name, val, fd5)
+    assert abs(got['even'] - got['integer'])/abs(fd5) < 1e-7, got

@@ -167,3 +167,52 @@ def test_track_rejects_nonsense_arguments():
         evp.track(-1.0)
     with pytest.raises(ValueError, match="'n_pts' must be at least 3"):
         evp.track(9.64, n_pts=2)
+
+
+# ── Tracking a DEGENERATE cluster ───────────────────────────────────────────────
+#
+# The tests above track a simple eigenvalue, and the only `mult=2` assertion is that tracking a
+# SIMPLE one as a double raises. That leaves the case douse meets constantly untested: symmetric
+# domains have doubles generically, and a maximize-the-gap objective lives on them by
+# construction. `eigenfunction_coef(mult=m)` and `weighted_integral`'s m x m return exist for
+# exactly this, so `track` has to be able to deliver the lambda they need.
+#
+# reg_ngon_6 carries two doubles inside a small window. Note lam_4 = 32.45185751 is one of them
+# even though `benchmarks/suite/run/reference_values` lists it once -- that table is short a mode
+# (docs/todo.md); both cluster members certify to 9.2 Moler--Payne digits.
+
+REG_NGON_6 = [(7.15533913, 1), (18.13167787, 2), (32.45185751, 2)]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('lam_true,mult', REG_NGON_6)
+def test_track_follows_a_degenerate_cluster(lam_true, mult):
+    """The lambda must come back accurate, and the cluster must come back at full width."""
+    dom = geo.reg_ngon(6)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        evp = Eigenproblem(dom, precision=1e-10)
+        solver = evp._get_eval_solver(None)
+        got = evp.track(lam_true*1.0005, mult=mult)
+        coef = solver.eigenfunction_coef(got, mult=mult)
+    assert abs(got - lam_true)/lam_true < 1e-8, (got, lam_true)
+    assert coef.shape[1] == mult, coef.shape
+
+
+@pytest.mark.slow
+def test_a_tracked_cluster_is_orthonormal():
+    """`track` is only useful for a degenerate mode if what follows it is usable: the cluster it
+    locates has to orthonormalize, which is what makes the m x m shape-derivative matrix mean
+    anything."""
+    from lappy.eigfun_integrals import eigfun_cauchy_data, gram
+    dom = geo.reg_ngon(6)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        evp = Eigenproblem(dom, precision=1e-10)
+        solver = evp._get_eval_solver(None)
+        lam = evp.track(18.13167787*1.0005, mult=2)
+        coef = solver.eigenfunction_coef(lam, mult=2)
+        ed = eigfun_cauchy_data(solver.basis, lam, coef, solver.bdry_quad)
+        G = gram(ed, lam, solver.bdry_quad)
+    assert G.shape == (2, 2)
+    assert np.max(np.abs(G - np.eye(2))) < 1e-8, G
