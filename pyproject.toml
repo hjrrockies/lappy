@@ -23,5 +23,12 @@ dependencies = [
     "tqdm>=4.0",
 ]
 
+# Explicit, because the repo root also holds benchmarks/, tests/, scripts/ and docs/, and
+# setuptools' auto-discovery refuses a flat layout with more than one candidate. This used to be
+# supplied by setup.py's find_packages(); that file was removed as a duplicate of this one, which
+# broke `pip install -e .` for anything downstream until it was declared here.
+[tool.setuptools.packages.find]
+include = ["lappy*"]
+
 [tool.setuptools.package-data]
 lappy = ["data/cubature_rules/*.json"]
