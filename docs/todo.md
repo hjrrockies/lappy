@@ -33,12 +33,39 @@ priority order" list; it is not duplicated here.
 - [ ] "Singular corner" means two different things in this codebase: `pi/alpha` non-integer in
       `bases` (counts sharp CONVEX corners -- chevron(1,2) has four) versus the quadrature's
       reentrant/nonintegral notion (same domain, one). Pick distinct names.
-- [ ] `PlanConfig.n_cap = 240` is a hard ceiling adopted from S0a's rank saturation, which was
-      measured on TWO domains and flagged there as possibly coincidental. Probed since: `n_reg`
-      does grow with the wavenumber, but far slower than kappa (L_shape 123 -> 159 as kappa goes
-      5.6 -> 26.4; square 84 -> 119 as kappa goes 9.4 -> 45.5). Everything validated is at a
-      6-eigenvalue window. A shape-optimization loop wanting lam_1..lam_20 will meet this cap,
-      and nothing has measured what happens there.
+- [x] **MEASURED: "a loop wanting lam_1..lam_20 will meet n_cap" -- and k turns out NOT to be the
+      limiting variable.** `benchmarks/envelope/k_sweep.py`, 54 cells, ledger in
+      `benchmarks/envelope/run/k_sweep.jsonl`, 30 min total. Window scaled as
+      `weyl_est(k+4, dom)`, precision 1e-12, digits from `check_precision`.
+
+      | domain | n | capped | k=4 | k=8 | k=12 | k=16 | k=20 | k=24 | drop |
+      |---|---|---|---|---|---|---|---|---|---|
+      | square | 100 | no | 11.3 | 11.0 | 11.3 | 11.5 | 11.0 | 11.1 | -0.2 |
+      | rect_thin | 204 | no | 13.2 | 12.7 | 12.0 | 12.4 | 11.3 | 11.7 | -1.5 |
+      | reg_ngon_8 | 232 | no | 11.3 | 11.3 | 11.3 | 10.9 | 10.9 | 10.9 | -0.3 |
+      | L_shape | 182 | no | 12.1 | 11.5 | 12.1 | 11.6 | 11.2 | 11.4 | -0.8 |
+      | GWW1 | 239 | YES | 9.2 | 9.2 | 9.0 | 8.9 | 8.9 | 8.9 | -0.3 |
+      | H_shape | 408 | YES | 9.4 | 9.4 | 9.4 | 9.4 | 9.4 | 9.4 | -0.0 |
+      | chevron_1_15 | 238 | YES | 5.9 | 5.9 | 5.3 | 5.3 | 5.3 | 5.2 | -0.6 |
+      | iso_tri_h16 | 238 | YES | 6.9 | 5.7 | 4.9 | 4.9 | 4.9 | 4.9 | -1.9 |
+
+      Going from k=4 to k=24 costs 0.2 to 1.9 digits, and on the four uncapped domains accuracy
+      is essentially FLAT in k at 11-13 digits. **What binds is `n_cap`, and it binds at every k
+      including k=4** -- GWW1 sits at 9 digits whichever eigenvalue you ask for. So the ceiling
+      is a property of the GEOMETRY, not of the eigenvalue index, and "lam_20 and beyond
+      untested" in the contract was caution rather than a real limit. Cost grows roughly linearly
+      in k (square 2.7 s at k=4 -> 20 s at k=24; reg_ngon_8 11.7 -> 101 s).
+
+      `cut_square_r025` is excluded: mixed arc/polygon, so `default_basis_for` refuses. Expected.
+
+- [ ] **`n_cap = 240` is now the measured ceiling on the hard domains and should be revisited.**
+      Four of eight suite polygons cap, and all four are the ones stuck below 10 digits. The cap
+      still rests on the two-domain rank-saturation measurement S0a called possibly coincidental.
+      Raising it is the single change that would move GWW1/H_shape/chevron/iso_tri.
+
+- [x] **`_apply_cap` really does return `n_total > n_cap`, confirmed in the wild:** H_shape
+      reports `n_total = 408` against a cap of 240, at every k. Previously known from reading the
+      code; now it has a measurement. "Cap" is the wrong name for whatever this is.
 - [ ] `PlanConfig.rtol` duplicates a value the solver owns; the planner should read it from the
       solver so the two cannot drift. Getting that constant wrong is what made achieved accuracy
       non-monotone in the target (PLAN_LAB S2).
@@ -57,6 +84,17 @@ priority order" list; it is not duplicated here.
       `tests/test_mode_completeness.py` and `Eigenproblem.solve`'s docstring.
 - [x] No inner-loop entry point -- ADDED as `Eigenproblem.track`, ~2.5x faster than `solve(1)`
       and immune to the set-selection problem above, since it follows a mode by value.
+- [x] **`track` does not scale to a SET, and `Eigenproblem.track_set` is what does.** Following
+      `lam_1..lam_K` with K separate `track` calls succeeded ONCE IN 46 STEPS on a rectangle
+      family walked down to a relative gap of 6.4e-09 (19 refusals, 25 collapses), each failure
+      costing the full `solve` that tracking exists to avoid. And the successes are not all
+      right: where the true pair is split by 4.3e-09, the per-value path returned a value wrong
+      by 1.1e-08 relative, past every guard -- the tension is small there, and the coincidence
+      check only looks within rtol=1e-9. `track_set` does ONE windowed `solve_interval`, so no
+      two seeds can converge onto one mode, and reads multiplicity from the tension spectrum, so
+      a pair too tight for the grid returns as one eigenvalue of multiplicity 2. Same walk:
+      46/46, no refusals, worst error 2.0e-14. In a douse N=4 optimization run it took full
+      solves from 43 to 2 and the endpoint error from 5.4e-09 to 7.3e-10.
 - [ ] **`solve(k)`'s completeness has no validated detector behind it, only grid resolution.**
       `ppl=20` measured 0 of 90 but a tighter cluster than H_shape's could still defeat it, and
       the audit already in `_solve_dir_neu` provably cannot serve: per-gap Weyl expected counts
