@@ -464,6 +464,109 @@ class Eigenproblem(BaseEigenproblem):
                 f'probably stepped off the mode it was following, or the cluster has split.')
         return lam
 
+    def track_set(self, lams_prev, window=None, n_pts=None, ppl=20, solver=None,
+                  solver_kwargs=None, verbose=0):
+        """Follow a SET of eigenvalues with ONE windowed scan. The inner-loop call for k > 1.
+
+        `track` follows one mode. A loop wanting `lam_1..lam_K` has had to call it K times and
+        then repair the result, and near a degeneracy that repair is the common path rather than
+        the exceptional one. Measured on a rectangle family walked down to a relative gap of
+        6e-09, tracking each of three eigenvalues separately: **1 success in 46 steps**, against
+        19 refusals and 25 detected collapses -- every one of which falls back to a full
+        `solve`, which is the 2-8 s call `track` exists to avoid. The speedup was simply not
+        being had where these problems spend their time.
+
+        Worse, the successes are not all right. Two seeds converging toward one mode can both
+        land near it and be accepted: the pair is then reported split when it is not, or with a
+        value that is neither member. Measured at the endpoint of an N=4 `lam_2/lam_1` run, where
+        the true pair is split by 4.3e-09: the per-value path returned a `lam_2` wrong by 1.1e-08
+        relative -- past every guard, because the guards check the tension (which is small: the
+        value IS near an eigenvalue) and check coincidence only within `rtol=1e-9`, which a
+        4.3e-09 split just clears. The reported ratio came out on the impossible side of 5/2.
+
+        ONE SCAN CANNOT DO EITHER. It brackets every tension minimum in the window at once, so
+        two seeds cannot converge onto one mode -- there is no per-seed convergence to do. And it
+        reads multiplicity from the tension spectrum, so a pair too tight for the grid comes back
+        as one eigenvalue of multiplicity 2, i.e. two EQUAL values. That is the honest answer at
+        that resolution, and it is the one the cluster model wants: `Lambda = 0`, with any
+        orthonormal basis of the eigenspace serving.
+
+        `lams_prev` is the previous iterate's values, ascending, repeated by multiplicity.
+        Returns `(lams, mults)`: `lams` has the same length as `lams_prev`, and `mults` gives the
+        multiplicity each value was found with.
+
+        RAISES `EigensolverFailure` rather than guessing, on the three ways this goes wrong: the
+        window turned up fewer modes than were asked for, a located minimum sits on the window
+        edge (so the window chose it), or a returned value is further from its seed than the
+        window half-width (so the set has shifted rather than moved).
+        """
+        solver = self._get_eval_solver(solver)
+        solver_kwargs = dict(solver_kwargs or {})
+        lams_prev = np.atleast_1d(np.asarray(lams_prev, dtype=float))
+        if lams_prev.ndim != 1 or lams_prev.size == 0:
+            raise ValueError(f'lams_prev must be a non-empty 1-D array, got shape '
+                             f'{lams_prev.shape}')
+        if np.any(lams_prev <= 0):
+            raise ValueError(f'lams_prev must be positive, got min {lams_prev.min():.6g}')
+        lams_prev = np.sort(lams_prev)
+        K = lams_prev.size
+
+        spacing = self._mean_spacing(float(lams_prev.mean()))
+        h = float(window) if window is not None else spacing/3.0
+        if not (h > 0 and np.isfinite(h)):
+            raise EigensolverFailure(f'could not size a scan window about '
+                                     f'{lams_prev.mean():.9g} (half-width {h}); pass `window`')
+        a = max(float(lams_prev[0]) - h, float(lams_prev[0])*0.5)
+        b = float(lams_prev[-1]) + h
+
+        if n_pts is None:
+            # the same points-per-Weyl-level currency `solve` uses, so one knob governs both
+            n_pts = int(np.clip(round(ppl*(b - a)/spacing), 9, 400))
+        if verbose > 0:
+            print(f'track_set: [{a:.9g}, {b:.9g}] about {K} seeds, n_pts={n_pts}')
+
+        eigs, mults, _ = solver.solve_interval(a, b, int(n_pts), verbose=verbose-1,
+                                               **solver_kwargs)
+        eigs = np.asarray(eigs, dtype=float)
+        if eigs.size == 0:
+            raise EigensolverFailure(
+                f'no eigenvalue found in [{a:.9g}, {b:.9g}] while tracking {K} values about '
+                f'{lams_prev.mean():.9g}. The set has moved further than the window, or the '
+                f'basis no longer resolves this shape.')
+
+        edge = max(1e-12, 1e-6*(b - a))
+        on_edge = eigs[(eigs - a < edge) | (b - eigs < edge)]
+        if on_edge.size:
+            raise EigensolverFailure(
+                f'a tension minimum sits on the edge of the scan window [{a:.9g}, {b:.9g}] '
+                f'(at {on_edge[0]:.9g}), so the window and not the tension chose it. Widen '
+                f'`window`, or step the shape more finely.')
+
+        found = _expand_mults(eigs, mults)
+        if found.size < K:
+            raise EigensolverFailure(
+                f'tracking {K} eigenvalues but the window [{a:.9g}, {b:.9g}] accounts for only '
+                f'{found.size} (values {np.array2string(eigs, precision=9)}, multiplicities '
+                f'{np.asarray(mults)}). A mode has left the window or been missed.')
+
+        lams = found[:K]
+        moved = np.abs(lams - lams_prev)
+        if np.any(moved > h):
+            i = int(np.argmax(moved))
+            raise EigensolverFailure(
+                f'tracked value {lams[i]:.9g} is {moved[i]:.3g} from its seed '
+                f'{lams_prev[i]:.9g}, beyond the window half-width {h:.3g}. The set has probably '
+                f'shifted by an index rather than moved.')
+
+        out_mults = np.ones(K, dtype=int)
+        j = 0
+        for e, m in zip(eigs, np.asarray(mults, dtype=int)):
+            for _ in range(int(m)):
+                if j < K:
+                    out_mults[j] = int(m)
+                    j += 1
+        return lams, out_mults
+
     def eigenfunction(self, eig, mult=1, solver=None, **solver_kwargs):
         solver = self._get_evec_solver(solver)
         return solver.eigenfunction(eig, mult, **solver_kwargs)

@@ -216,3 +216,75 @@ def test_a_tracked_cluster_is_orthonormal():
         G = gram(ed, lam, solver.bdry_quad)
     assert G.shape == (2, 2)
     assert np.max(np.abs(G - np.eye(2))) < 1e-8, G
+
+
+# =============================================================================================
+# `track_set`: one windowed scan for the whole set.
+#
+# WHY IT EXISTS, measured. Following `lam_1..lam_3` with three separate `track` calls, across a
+# rectangle family walked down to a relative gap of 6.4e-09, succeeded **once in 46 steps**: 19
+# refusals and 25 collapses, each of which costs a full `solve`. And a success is not proof of
+# correctness -- at the endpoint of a shape-optimization run whose true pair is split by 4.3e-09,
+# the per-value path returned a `lam_2` wrong by 1.1e-08 relative, past every guard, because the
+# tension IS small there and the coincidence check only looks within rtol=1e-9. `track_set` on
+# the same walk: 46 of 46, no refusals, worst error 2.0e-14.
+
+
+@pytest.mark.slow
+def test_track_set_walks_the_family_and_agrees_with_solve(frozen):
+    """The set version of the cold-start walk, checked against a full solve at each member."""
+    plan, make = frozen
+    _, evp0 = make(0.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        lams = np.asarray(evp0.solve(3), dtype=float)
+
+    for t, expected_lam1 in FAMILY:
+        _, evp = make(t)
+        lams, mults = evp.track_set(lams)
+        assert len(lams) == 3 and len(mults) == 3
+        assert np.all(np.diff(lams) >= 0), f'track_set must return ascending values: {lams}'
+        assert abs(lams[0] - expected_lam1) < 1e-8, f't={t}: {lams[0]:.10f}'
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            full = np.asarray(evp.solve(3), dtype=float)
+        assert np.allclose(lams, full, rtol=1e-10), np.c_[lams, full]
+
+
+@pytest.mark.slow
+def test_track_set_reports_a_degenerate_pair_as_one_value_twice(frozen):
+    """A regular hexagon has `lam_2 = lam_3`. The whole point of reading multiplicity from the
+    tension spectrum is that such a pair comes back as ONE eigenvalue of multiplicity 2 -- two
+    EQUAL values -- rather than as two seeds that each wandered somewhere near it."""
+    dom = geo.reg_ngon(6)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        evp = Eigenproblem(dom, precision=1e-10)
+        lams = np.asarray(evp.solve(3), dtype=float)
+        got, mults = evp.track_set(lams*(1 + 1e-6))
+
+    assert got[1] == got[2], f'a genuine double must come back as one value twice: {got}'
+    assert tuple(mults) == (1, 2, 2), mults
+    assert np.allclose(got, lams, rtol=1e-9), np.c_[got, lams]
+
+
+@pytest.mark.slow
+def test_track_set_raises_rather_than_shifting_by_an_index(frozen):
+    """Seeded far from the set, it must refuse -- not return whatever the window happens to hold.
+    That is the failure `track`'s edge guard exists for, and the set version needs its own."""
+    plan, make = frozen
+    _, evp = make(0.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        lams = np.asarray(evp.solve(3), dtype=float)
+    with pytest.raises(EigensolverFailure):
+        evp.track_set(lams*1.5)
+
+
+def test_track_set_rejects_nonsense_arguments():
+    dom = geo.rect(1, 1)
+    evp = Eigenproblem(dom, precision=1e-8)
+    with pytest.raises(ValueError, match='non-empty'):
+        evp.track_set([])
+    with pytest.raises(ValueError, match='positive'):
+        evp.track_set([1.0, -2.0])
