@@ -135,15 +135,15 @@ class BaseSegment(ABC):
         pass
 
     @abstractmethod
-    def pts(self, n, kind='legendre', weights=False, **kwargs):
+    def pts(self, n, kind='legendre', **kwargs):
         pass
 
     @abstractmethod
-    def tangents(self, n, kind='legendre', weights=False, **kwargs):
+    def tangents(self, n, kind='legendre', **kwargs):
         pass
 
     @abstractmethod
-    def normals(self, n, kind='legendre', weights=False, **kwargs):
+    def normals(self, n, kind='legendre', **kwargs):
         pass
 
     def plot(self, n=None, ax=None, showbc=False, **plot_kwargs):

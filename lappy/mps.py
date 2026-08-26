@@ -223,7 +223,7 @@ def nullspace_eval(A1, A2, mult=1, A_extra=None, reg_type='svd', rtol=rtol_defau
 
     return tuple([arr for arr in (U1, U2, U_extra) if arr is not None])
     
-def make_bdry_vander(basis, bdry_pts, bdry_normals=None, bc_param=0, bdry_wts=None):
+def make_bdry_vander(basis, bdry_pts, bdry_normals=None, bc_param=0):
     """Builds the MPS boundary matrix A_B(lam) corresponding to the given basis and boundary data."""
     # process boundary condition
     bc_param = np.asarray(bc_param)
@@ -239,58 +239,40 @@ def make_bdry_vander(basis, bdry_pts, bdry_normals=None, bc_param=0, bdry_wts=No
     if not isinstance(bdry_pts, PointSet):
         bdry_pts = PointSet(bdry_pts)
 
-    # process bdry_wts
-    if bdry_wts is None or bdry_wts is True: 
-        bdry_wts = hasattr(bdry_pts, 'wts')
-    elif not isinstance(bdry_wts, np.ndarray):
-        raise TypeError("'bdry_wts' must be None, True/False, or ndarray")
-
     # dirichlet boundary condition
     if np.all(bc_param == 0):
-        def A_B(lam): return basis(lam, bdry_pts, bdry_wts)
-        
+        def A_B(lam): return basis(lam, bdry_pts)
+
     # neumann boundary condition
     elif np.all(bc_param == 1):
-        def A_B(lam): return basis.ddiff(lam, bdry_pts, bdry_normals, bdry_wts)
-        
+        def A_B(lam): return basis.ddiff(lam, bdry_pts, bdry_normals)
+
     # robin boundary condition
     else:
         bc_param = bc_param[:,np.newaxis]
         def A_B(lam):
-            dir = basis(lam, bdry_pts, hasattr(bdry_pts, 'wts'))
-            neu = basis.ddiff(lam, bdry_pts, bdry_normals, bdry_wts)
+            dir = basis(lam, bdry_pts)
+            neu = basis.ddiff(lam, bdry_pts, bdry_normals)
             return (1-bc_param)*dir + bc_param*neu
-        
+
     return A_B
-    
-def make_vander(basis, pts, wts=None):
+
+def make_vander(basis, pts):
     # process inputs
     if not isinstance(pts, PointSet):
         pts = PointSet(pts)
 
-    # process wts
-    if wts is None or wts is True: 
-        wts = hasattr(pts, 'wts')
-    elif not isinstance(wts, np.ndarray):
-        raise TypeError("'wts' must be None, True/False, or ndarray")
-    
     def A(lam):
-        return basis(lam, pts, wts)
+        return basis(lam, pts)
     return A
-    
-def make_ddiff_vander(basis, pts, vecs, wts=None):
+
+def make_ddiff_vander(basis, pts, vecs):
     # process inputs
     if not isinstance(pts, PointSet):
         pts = PointSet(pts)
 
-    # process wts
-    if wts is None or wts is True: 
-        wts = hasattr(pts, 'wts')
-    elif not isinstance(wts, np.ndarray):
-        raise TypeError("'wts' must be None, True/False, or ndarray")
-    
     def A(lam):
-        return basis.ddiff(lam, pts, vecs, wts)
+        return basis.ddiff(lam, pts, vecs)
     return A
 
 class MPSEigensolver(BaseEigensolver):
@@ -401,7 +383,7 @@ class MPSEigensolver(BaseEigensolver):
         pass
 
     @classmethod
-    def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False, weights=False,
+    def from_domain(cls, domain, lam_max=None, prec=ltol_default, basis=None, mesh=False,
                     reg_type='svd', rtol=rtol_default, ttol=ttol_default,
                     orthonorm=True, orthonorm_precision=1e-13, orthonorm_x0=None,
                     certify_target=None, rng=None):
@@ -438,11 +420,11 @@ class MPSEigensolver(BaseEigensolver):
 
         # boundary data
         n_per_seg = pts_per_seg(domain, basis)
-        bdry_pts, bdry_normals, bc_param = make_default_bdry_data(domain, basis, weights)
+        bdry_pts, bdry_normals, bc_param = make_default_bdry_data(domain, basis)
 
         # interior points
         kind = 'mesh' if mesh else 'random'
-        int_pts = make_default_int_pts(domain, kind, weights, len(basis), lam_max, prec, rng=rng)
+        int_pts = make_default_int_pts(domain, kind, len(basis), lam_max, prec, rng=rng)
 
         # normalize basis
         basis = basis.to_normalized((bdry_pts, int_pts))
@@ -680,12 +662,12 @@ class MPSEigensolver(BaseEigensolver):
         if extra_pts is not None:
             if not isinstance(extra_pts, PointSet):
                 extra_pts = PointSet(extra_pts)
-            A_extra = self.basis(eig, extra_pts, hasattr(extra_pts, 'wts'))
+            A_extra = self.basis(eig, extra_pts)
         else: A_extra = None
         if ddiff_pts is not None:
             if not isinstance(ddiff_pts, PointSet):
                 ddiff_pts = PointSet(ddiff_pts)
-            A_ddiff = self.basis.ddiff(eig, ddiff_pts, ddiff_vecs, hasattr(ddiff_pts, 'wts'))
+            A_ddiff = self.basis.ddiff(eig, ddiff_pts, ddiff_vecs)
         else:
             A_ddiff = None
 
@@ -710,15 +692,6 @@ class MPSEigensolver(BaseEigensolver):
             U_B, U_I = out
             U_extra, U_ddiff = None, None
 
-        # unweight for eigenfunction evaluation
-        if hasattr(self.bdry_pts, 'wts'):
-            U_B /= self.bdry_pts.sqrt_wts
-        if hasattr(self.int_pts, 'wts'):
-            U_I /= self.int_pts.sqrt_wts
-        if hasattr(extra_pts, 'wts'):
-            U_extra /= extra_pts.sqrt_wts
-        if hasattr(ddiff_pts, 'wts'):
-            U_ddiff /= ddiff_pts.sqrt_wts
 
         if orthonorm:
             D, G = self._orthonorm_transform_eval(eig, mult, reg_type, rtol, ttol)
@@ -1144,7 +1117,7 @@ def bdry_jacobi_exponents(domain, order=0):
     b = b - order
     return a, b
 
-def make_default_bdry_data(domain, basis, weights=False, mult=2, min_per_seg=0):
+def make_default_bdry_data(domain, basis, mult=2, min_per_seg=0):
     """Default boundary collocation data for MPSEigensolver.from_domain.
 
     Plain Gauss-Legendre points, with point counts from pts_per_seg. MPS
@@ -1164,8 +1137,8 @@ def make_default_bdry_data(domain, basis, weights=False, mult=2, min_per_seg=0):
     directly instead -- a different task from collocation, deliberately kept
     separate here."""
     n_per_seg = pts_per_seg(domain, basis, mult, min_per_seg)
-    bdry_pts = domain.bdry_pts(n_per_seg, kind='legendre', weights=weights)
-    bdry_normals = domain.bdry_normals(n_per_seg, kind='legendre', weights=weights)
+    bdry_pts = domain.bdry_pts(n_per_seg, kind='legendre')
+    bdry_normals = domain.bdry_normals(n_per_seg, kind='legendre')
     bc_param = np.concatenate([np.full(n, seg.bc, 'float') for seg, n in zip(domain.bdry.segments, n_per_seg)])
     return bdry_pts, bdry_normals, bc_param
 
@@ -1200,7 +1173,7 @@ def default_basis_for(domain, lam_max, target=ltol_default, rtol=rtol_default):
 DEFAULT_INT_SEED = 0
 
 
-def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam_max=None,
+def make_default_int_pts(domain, kind='random', npts_rand=50, lam_max=None,
                          prec=1e-8, rng=None):
     """Interior collocation points for `domain`.
 
@@ -1240,30 +1213,26 @@ def make_default_int_pts(domain, kind='random', weights=False, npts_rand=50, lam
     orthonormalization goes through the boundary-only Rellich identity (`eigfun_integrals`), and
     these points are collocation points for the MPS pencil, a different job entirely.
 
-    Its remaining mechanism is on the same trajectory. `weights=True` gives the PointSet a
-    `sqrt_wts`, which `bases` applies to every Vandermonde it builds, making the pencil a
-    quadrature-weighted least-squares problem rather than plain collocation -- but that existed
-    to let tension evaluation approximate L^2 norms on the boundary and interior, which the
-    tension pipeline no longer needs in order to be reliable. So both the original motivation
-    and the weighting it feeds are superseded, `weights=False` is the default everywhere, and
-    every `sqrt_wts` consumer sits behind a `hasattr(pts, 'wts')` guard that is False in the
-    default path.
+    Its remaining mechanism went with it. `weights=True` used to give the PointSet a `sqrt_wts`
+    that `bases` applied to every Vandermonde, making the pencil a quadrature-weighted
+    least-squares problem rather than plain collocation. That existed to let tension evaluation
+    approximate L^2 norms, which the tension pipeline no longer needs in order to be reliable, so
+    both the original motivation and the weighting it fed were superseded. It was deleted on
+    2026-08-26 rather than kept as an option: it had no caller, its `kind='mesh'` half had never
+    worked on any domain, and weights on a point set are the wrong shape -- they belong to the
+    quadrature rule that owns them, as `BoundaryQuad` already has them.
 
-    Kept anyway: it is optional, it costs nothing when unused, and 'mesh' remains the only
-    deterministic interior draw that does not go through `rng`. Treat it as a working capability
-    with no current caller, not as load-bearing."""
+    'mesh' itself is kept: it remains the only deterministic interior draw that does not go
+    through `rng`. Treat it as a working capability with no current caller, not as load-bearing."""
     if kind not in ('random', 'mesh'):
         raise ValueError(f"kind must be 'random' or 'mesh', got {kind!r}")
     if kind == 'random':
         if rng is None:
             rng = DEFAULT_INT_SEED
-        return domain.int_pts(method='random', weights=weights, npts_rand=npts_rand, rng=rng)
+        return domain.int_pts(method='random', npts_rand=npts_rand, rng=rng)
     if isinstance(domain, Polygon):
         if lam_max is None:
             lam_max = weyl_est(6, domain)
-        # `wts`, NOT `weights`: rebinding the parameter here made `if weights:` a truth test on
-        # a numpy array, so this branch raised "truth value of an array is ambiguous" for BOTH
-        # values of the flag. kind='mesh' has therefore never worked, on any domain.
-        nodes, wts = polygon_cubature(domain, lam_max, prec)
-        return PointSet(nodes, wts) if weights else PointSet(nodes)
-    return domain.int_pts(method='mesh', weights=weights)
+        nodes, _wts = polygon_cubature(domain, lam_max, prec)
+        return PointSet(nodes)
+    return domain.int_pts(method='mesh')

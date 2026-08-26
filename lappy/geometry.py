@@ -40,20 +40,47 @@ def segment_intersection(a0, a1, b0, b1):
     else: return None
 
 class PointSet:
-    """Class for pointsets. Written to make caching of basis evaluations easier. Optionally includes weights for 
-    numerical quadrature. Designed to be immutable."""
-    def __init__(self, points, weights=None):
+    """An immutable, hashable set of points in the plane. Exists to be a cache key.
+
+    Numpy arrays are unhashable, so basis evaluations keyed on "these points at this lambda" need
+    a wrapper. That is this class's whole job.
+
+    HASHING IS BY VALUE, and that is load-bearing rather than cosmetic. Keying by identity is what
+    the class did before, and it silently failed wherever a caller re-wrapped the same nodes:
+    `eigfun_cauchy_data` builds a fresh PointSet per call, so a `douse` gradient over K
+    eigenvalues produced K distinct keys for one quadrature. Measured on a hexagon at n_basis=186,
+    the geometry caches held `2 + 4K` entries against a design intent of 2 -- 26 entries and
+    139 MB at K=6, on ONE solver, and none of it evictable.
+
+    Value hashing costs nothing on the path that matters. CPython compares key pointers before
+    calling `__eq__`, so handing back the same object never reaches the array comparison; and the
+    hash itself is computed once here, not per lookup. Measured: `hash(pts.tobytes())` is 2.9 us
+    at n=1000 and 57 us at n=20000, against 1.2 ms and 24 ms for a single elementwise pass over
+    the `(n, 300)` matrix being cached.
+
+    IMMUTABILITY IS WHAT MAKES THE HASH SAFE. `complex_form(...).flatten()` always copies, so
+    `pts` never aliases the caller's array, and `writeable=False` blocks mutation through this
+    reference. Do not add a setter, and do not store a view of someone else's buffer.
+
+    Weights used to live here too, for a quadrature-weighted least-squares variant of the pencil.
+    That is gone: orthonormalization goes through the boundary-only Rellich identity in
+    `eigfun_integrals`, and weights belong to the quadrature rule that owns them (`BoundaryQuad`
+    carries its own `wts`), not to a set of points.
+    """
+    def __init__(self, points):
         self.pts = complex_form(points).flatten()
         self.pts.flags.writeable = False
-        if weights is not None:
-            weights = np.asarray(weights)
-            if (weights.ndim != 1) or (weights.shape[0] != self.pts.shape[0]):
-                raise ValueError("provided weights must be a 1d array which matches the length of 'points'")
-            else:
-                self.wts = weights
-                self.wts.flags.writeable = False
-                self.sqrt_wts = np.sqrt(weights)[:,np.newaxis]
-                self.sqrt_wts.flags.writeable = False
+        self._hash = hash(self.pts.tobytes())
+
+    def __hash__(self):
+        return self._hash
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if not isinstance(other, PointSet):
+            return NotImplemented
+        return self._hash == other._hash and np.array_equal(self.pts, other.pts)
 
     @property
     def x(self):
@@ -72,19 +99,7 @@ class PointSet:
     def __add__(self, other):
         if not isinstance(other, PointSet):
             raise TypeError("'other' must be an instance of PointSet")
-        else:
-            new_pts = np.concatenate((self.pts, other.pts))
-            # neither have weights
-            if (not hasattr(self, "wts")) and (not hasattr(other, "wts")):
-                return PointSet(new_pts)
-            else:
-                if hasattr(self, "wts") and hasattr(other, "wts"):
-                    new_wts = np.concatenate((self.wts, other.wts))
-                elif hasattr(self, "wts"):
-                    new_wts = np.concatenate((self.wts, np.ones(len(other.pts))))
-                else:
-                    new_wts = np.concatenate((np.ones(len(self.pts)), other.wts))
-                return PointSet(new_pts, new_wts)
+        return PointSet(np.concatenate((self.pts, other.pts)))
 
 def pts_per_seg(domain, fb_basis, mult=2, min_per_seg=0):
     """Computes how many boundary points to have along each segment of a domain boundary so that each
@@ -353,35 +368,23 @@ def get_quadfunc(kind, **kwargs):
 
 class SegmentQuadratureMixin:
     """Provides pts/tangents/normals for any segment exposing p(tau), T(tau), N(tau), and len."""
-    def pts(self, n, kind='legendre', weights=False, **kwargs):
-        """Gets n points spaced along the segment, optionally with quadrature weights"""
+    def pts(self, n, kind='legendre', **kwargs):
+        """Gets n points spaced along the segment."""
         quadfunc = get_quadfunc(kind, **kwargs)
-        tau, wts = quadfunc(n)
-        pts = self.p(tau)
-        if weights:
-            return PointSet(pts, self.len*wts)
-        else:
-            return PointSet(pts)
+        tau, _wts = quadfunc(n)
+        return PointSet(self.p(tau))
 
-    def tangents(self, n, kind='legendre', weights=False, **kwargs):
-        """Gets the unit tangent vectors for n points spaced along the segment, optionally with quadrature weights"""
+    def tangents(self, n, kind='legendre', **kwargs):
+        """Gets the unit tangent vectors for n points spaced along the segment."""
         quadfunc = get_quadfunc(kind, **kwargs)
-        tau, wts = quadfunc(n)
-        tangents = self.T(tau)
-        if weights:
-            return PointSet(tangents, self.len*wts)
-        else:
-            return PointSet(tangents)
+        tau, _wts = quadfunc(n)
+        return PointSet(self.T(tau))
 
-    def normals(self, n, kind='legendre', weights=False, **kwargs):
-        """Gets the unit outward normal vectors for n points spaced along the segment, optionally with quadrature weights"""
+    def normals(self, n, kind='legendre', **kwargs):
+        """Gets the unit outward normal vectors for n points spaced along the segment."""
         quadfunc = get_quadfunc(kind, **kwargs)
-        tau, wts = quadfunc(n)
-        normals = self.N(tau)
-        if weights:
-            return PointSet(normals, self.len*wts)
-        else:
-            return PointSet(normals)
+        tau, _wts = quadfunc(n)
+        return PointSet(self.N(tau))
 
 class ParametricSegment(SegmentQuadratureMixin, BaseSegment):
     """Class for boundary segments (lines, curves) given in terms of a differentiable function p(t). 
@@ -1208,28 +1211,28 @@ class MultiSegment:
         n_seg = len(self.segments)
         return {key: np.full(n_seg, val) if np.isscalar(val) else val for key, val in kwargs.items()}
 
-    def pts(self, N, kind='legendre', weights=False, **kwargs):
+    def pts(self, N, kind='legendre', **kwargs):
         """Places N[i] points on ith segment of the MultiSegment"""
         if isinstance(N, (int, np.integer)):
             N = np.full(len(self.segments), N)
         kwargs = self._broadcast_quad_kwargs(kwargs)
-        return np.sum([self.segments[i].pts(N[i], kind, weights, **{key: val[i] for key, val in kwargs.items()})
+        return np.sum([self.segments[i].pts(N[i], kind, **{key: val[i] for key, val in kwargs.items()})
                        for i in range(len(self.segments)) if N[i] > 0])
 
-    def tangents(self, N, kind='legendre', weights=False, **kwargs):
+    def tangents(self, N, kind='legendre', **kwargs):
         """Computes tangent vectors at N[i] points along the ith segment of the MultiSegment"""
         if isinstance(N, (int, np.integer)):
             N = np.full(len(self.segments), N)
         kwargs = self._broadcast_quad_kwargs(kwargs)
-        return np.sum([self.segments[i].tangents(N[i], kind, weights, **{key: val[i] for key, val in kwargs.items()})
+        return np.sum([self.segments[i].tangents(N[i], kind, **{key: val[i] for key, val in kwargs.items()})
                        for i in range(len(self.segments)) if N[i] > 0])
 
-    def normals(self, N, kind='legendre', weights=False, **kwargs):
+    def normals(self, N, kind='legendre', **kwargs):
         """Computes normal vectors at N[i] points along the ith segment of the MultiSegment"""
         if isinstance(N, (int, np.integer)):
             N = np.full(len(self.segments), N)
         kwargs = self._broadcast_quad_kwargs(kwargs)
-        return np.sum([self.segments[i].normals(N[i], kind, weights, **{key: val[i] for key, val in kwargs.items()})
+        return np.sum([self.segments[i].normals(N[i], kind, **{key: val[i] for key, val in kwargs.items()})
                        for i in range(len(self.segments)) if N[i] > 0])
     
     def polyline(self):
@@ -1743,26 +1746,43 @@ class Domain(BaseDomain):
 
         return inside
     
-    def bdry_pts(self, n_per_seg, kind='legendre', weights=False, **kwargs):
-        return self.bdry.pts(n_per_seg, kind=kind, weights=weights, **kwargs)
+    def bdry_pts(self, n_per_seg, kind='legendre', **kwargs):
+        return self.bdry.pts(n_per_seg, kind=kind, **kwargs)
 
-    def bdry_tangents(self, n_per_seg, kind='legendre', weights=False, **kwargs):
-        return self.bdry.tangents(n_per_seg, kind=kind, weights=weights, **kwargs)
+    def bdry_tangents(self, n_per_seg, kind='legendre', **kwargs):
+        return self.bdry.tangents(n_per_seg, kind=kind, **kwargs)
 
-    def bdry_normals(self, n_per_seg, kind='legendre', weights=False, **kwargs):
-        return self.bdry.normals(n_per_seg, kind=kind, weights=weights, **kwargs)
+    def bdry_normals(self, n_per_seg, kind='legendre', **kwargs):
+        return self.bdry.normals(n_per_seg, kind=kind, **kwargs)
 
-    def bdry_data(self, n_per_seg, kind='legendre', weights=False, **kwargs):
+    def bdry_data(self, n_per_seg, kind='legendre', **kwargs):
         if isinstance(n_per_seg, (int, np.integer)):
             n_per_seg = np.full(len(self.bdry.segments), n_per_seg)
-        bdry_pts = self.bdry_pts(n_per_seg, kind=kind, weights=weights, **kwargs)
-        bdry_normals = self.bdry_normals(n_per_seg, kind=kind, weights=weights, **kwargs)
+        bdry_pts = self.bdry_pts(n_per_seg, kind=kind, **kwargs)
+        bdry_normals = self.bdry_normals(n_per_seg, kind=kind, **kwargs)
         bc_param = np.concatenate([np.full(n, seg.bc, 'float') for seg, n in zip(self.bdry.segments, n_per_seg)])
         return bdry_pts, bdry_normals, bc_param
     
-    def int_pts(self, method='random', weights=False, kind='dunavant', deg=4, mesh_kwargs={}, n_bdry=100, 
+    def int_quad(self, method='mesh', kind='dunavant', deg=4, mesh_kwargs={}, n_bdry=100,
+                 npts_rand=50, oversamp=2, rng=None):
+        """``(nodes, weights)`` for INTEGRATING over the interior. A quadrature rule, not points.
+
+        Weights live here, on the rule, rather than on the `PointSet` -- a set of points says
+        where to evaluate, a rule says how to integrate, and conflating them is what put a
+        `sqrt_wts` behind seven `hasattr` guards in `bases`. `int_pts` below returns the
+        collocation points for the MPS pencil and has nothing to do with integration.
+
+        The genuine consumer is `benchmarks/reference/certify.interior_l2`, which needs
+        ``||u||_{L2(Omega)}`` for the Moler--Payne bound.
+
+        ``rng`` (int or numpy Generator) makes ``method='random'`` reproducible.
+        """
+        nodes, wts = self._interior_nodes(method, kind, deg, mesh_kwargs, npts_rand, oversamp, rng)
+        return nodes, wts
+
+    def int_pts(self, method='random', kind='dunavant', deg=4, mesh_kwargs={}, n_bdry=100,
                 npts_rand=50, oversamp=2, rng=None):
-        """Gets interior points for the domain.
+        """Interior COLLOCATION points for the MPS pencil. See `int_quad` to integrate.
 
         ``rng`` (int or numpy Generator) makes ``method='random'`` reproducible.
         Interior collocation points feed straight into the MPS pencil, and the
@@ -1770,6 +1790,10 @@ class Domain(BaseDomain):
         certified digits across draws -- so anything producing reference values
         should pass one. ``None`` keeps the global RNG.
         """
+        nodes, _wts = self._interior_nodes(method, kind, deg, mesh_kwargs, npts_rand, oversamp, rng)
+        return PointSet(nodes)
+
+    def _interior_nodes(self, method, kind, deg, mesh_kwargs, npts_rand, oversamp, rng):
         if method == 'random':
             rng = as_generator(rng)
             pt = self.bdry.segments[0].p0
@@ -1791,15 +1815,14 @@ class Domain(BaseDomain):
             else:
                 raise RuntimeError("int_pts: rejection sampling failed to collect enough interior points")
             int_pts = pts[:npts_rand]
-            wts = np.full(npts_rand, self.area / npts_rand)
+            wts = np.full(len(int_pts), self.area / max(len(int_pts), 1))
 
         elif method == 'mesh':
             splinesegs = self.bdry.to_splinesegs().segments
             mesh = spline_mesh_with_curvature(splinesegs, **mesh_kwargs)
             int_pts, wts = tri_quad(mesh, kind, deg)
 
-        if weights: return PointSet(int_pts, wts)
-        else: return PointSet(int_pts)
+        return int_pts, wts
         
     @property
     def corners(self):
@@ -1938,20 +1961,27 @@ class Polygon(Domain):
     def corner_idx(self):
         return np.arange(self.n_vertices)
     
-    def int_pts(self, method='random', weights=False, kind='dunavant', deg=4, mesh_size=1, npts_rand=50, oversamp=2,
+    def int_quad(self, method='mesh', kind='dunavant', deg=4, mesh_size=1, npts_rand=50,
+                 oversamp=2, rng=None):
+        """``(nodes, weights)`` for integrating over the polygon. See `Domain.int_quad`."""
+        return self._interior_nodes(method, kind, deg, mesh_size, npts_rand, oversamp, rng)
+
+    def int_pts(self, method='random', kind='dunavant', deg=4, mesh_size=1, npts_rand=50, oversamp=2,
                 rng=None):
+        """Interior COLLOCATION points for the MPS pencil. See `int_quad` to integrate."""
+        nodes, _wts = self._interior_nodes(method, kind, deg, mesh_size, npts_rand, oversamp, rng)
+        return PointSet(nodes)
+
+    def _interior_nodes(self, method, kind, deg, mesh_size, npts_rand, oversamp, rng):
         if method == 'random':
-            pts = rand_interior_points(self.vertices, npts_rand, oversamp, rng=rng)
-            if weights: int_pts = PointSet(pts, np.full(npts_rand, self.area / npts_rand))
-            else: int_pts = PointSet(pts)
+            nodes = rand_interior_points(self.vertices, npts_rand, oversamp, rng=rng)
+            wts = np.full(len(nodes), self.area / max(len(nodes), 1))
 
         elif method == 'mesh':
             mesh = polygon_triangular_mesh(self.vertices, mesh_size)
-            int_pts, int_wts = tri_quad(mesh, kind, deg)
-            if weights: int_pts = PointSet(int_pts, int_wts)
-            else: int_pts = PointSet(int_pts)
+            nodes, wts = tri_quad(mesh, kind, deg)
 
-        return int_pts
+        return nodes, wts
 
     def contains(self, pts):
         """Checks containment using Shapely (exact, no approximation)."""

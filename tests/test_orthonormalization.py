@@ -264,7 +264,7 @@ def test_manual_construction_with_explicit_bdry_quad():
     domain = Polygon(RECT_VERTS, bc='dir')
     basis = FourierBesselBasis.from_domain(domain, orders=[8, 8, 8, 8])
     bdry_pts, bdry_normals, bc_param = make_default_bdry_data(domain, basis)
-    int_pts = make_default_int_pts(domain, 'random', False, len(basis))
+    int_pts = make_default_int_pts(domain, 'random', len(basis))
     basis_norm = basis.to_normalized((bdry_pts, int_pts))
     bq = boundary_quadrature(domain, rect_eig(3, 3, L, H))
 
@@ -437,7 +437,7 @@ def test_certification_needs_the_domain_and_says_so():
     domain = Polygon(RECT_VERTS, bc='dir')
     basis = FourierBesselBasis.from_domain(domain, orders=[8, 8, 8, 8])
     bdry_pts, bdry_normals, bc_param = make_default_bdry_data(domain, basis)
-    int_pts = make_default_int_pts(domain, 'random', False, len(basis))
+    int_pts = make_default_int_pts(domain, 'random', len(basis))
     basis_norm = basis.to_normalized((bdry_pts, int_pts))
     bq = boundary_quadrature(domain, rect_eig(3, 3, L, H))
     solver = MPSEigensolver(basis_norm, bdry_pts, int_pts, bdry_normals, bc_param,

@@ -124,7 +124,7 @@ class Eigenproblem(BaseEigenproblem):
         if isinstance(solver, BaseEigensolver) or solver is None:
             self._evec_solver = solver
         elif solver == 'mps':
-            self._evec_solver = MPSEigensolver.from_domain(self.domain, weights=True)
+            self._evec_solver = MPSEigensolver.from_domain(self.domain)
         else:
             raise TypeError("'solver' must be a valid Eigensolver or None")
 

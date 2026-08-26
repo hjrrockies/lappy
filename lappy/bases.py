@@ -81,7 +81,7 @@ def make_default_basis(domain, n_basis, fs_frac=0.5, fs_bdry_order=1, fs_d=1.0,
 
 class ParticularBasis(ABC):
     """Base class for function bases on the plane which depend on the spectral parameter λ."""
-    def __call__(self, lam, pts, wts=False, cols=None):
+    def __call__(self, lam, pts, cols=None):
         """Evaluate the basis on a given set of points in the plane for a given spectral parameter
         value. `cols`, if given, restricts evaluation to a subset of basis columns (an integer
         index array, in the given order) -- for bases with a per-column-localized cost (e.g.
@@ -92,26 +92,16 @@ class ParticularBasis(ABC):
         before this parameter existed."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
-        A = self._eval_pointset(lam, pts, cols)
-        if wts is True and hasattr(pts, 'wts'):
-            return pts.sqrt_wts*A
-        elif isinstance(wts, np.ndarray):
-            return wts[:,np.newaxis]*A
-        else: return A
+        return self._eval_pointset(lam, pts, cols)
 
-    def grad(self, lam, pts, wts=False, cols=None):
+    def grad(self, lam, pts, cols=None):
         """Evaluate the basis on a given set of points in the plane for a given spectral parameter
         value. See __call__ for `cols`."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
-        Agrad = self._grad_pointset(lam, pts, cols)
-        if wts is True and hasattr(pts, 'wts'):
-            return pts.sqrt_wts*Agrad
-        elif isinstance(wts, np.ndarray):
-            return wts[:,np.newaxis]*Agrad
-        else: return Agrad
+        return self._grad_pointset(lam, pts, cols)
 
-    def ddiff(self, lam, pts, vecs, wts=False, cols=None):
+    def ddiff(self, lam, pts, vecs, cols=None):
         """See __call__ for `cols`."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
@@ -119,12 +109,7 @@ class ParticularBasis(ABC):
         if isinstance(vecs, PointSet):
             vecs = vecs.pts
         vecs = vecs[:,np.newaxis]
-        Addiff = Agrad.real*vecs.real + Agrad.imag*vecs.imag
-        if wts is True and hasattr(pts, 'wts'):
-            return pts.sqrt_wts*Addiff
-        elif isinstance(wts, np.ndarray):
-            return wts[:,np.newaxis]*Addiff
-        else: return Addiff
+        return Agrad.real*vecs.real + Agrad.imag*vecs.imag
 
     @abstractmethod
     def _eval_pointset(self, lam, pts, cols=None):
@@ -138,8 +123,8 @@ class ParticularBasis(ABC):
         else:
             return MultiBasis([self, other])
     
-    def to_normalized(self, quad_pts, quad_wts=None, max_scale=True):
-        return NormalizedBasis(self, quad_pts, quad_wts, max_scale=max_scale)
+    def to_normalized(self, quad_pts, max_scale=True):
+        return NormalizedBasis(self, quad_pts, max_scale=max_scale)
 
     @abstractmethod
     def __len__(self):
@@ -229,7 +214,7 @@ class NormalizedBasis(ParticularBasis):
     zero norm. Accepts either a single PointSet or a list of component PointSets (e.g. [bdry_pts, int_pts])
     for norm computation.
     """
-    def __init__(self, basis, pts, wts=None, max_scale=False):
+    def __init__(self, basis, pts, max_scale=False):
         if not isinstance(basis, ParticularBasis):
             raise TypeError("'basis' must be an instance of ParticularBasis")
         self.basis = basis
@@ -241,12 +226,6 @@ class NormalizedBasis(ParticularBasis):
             for p in self.component_pts:
                 if not isinstance(p, PointSet):
                     raise TypeError("each element of pts must be a PointSet")
-
-        # wts: legacy scalar-weight path — only valid for single combined PointSet
-        if wts is not None:
-            self._legacy_quad_wts = np.sqrt(wts)[:, np.newaxis]
-        else:
-            self._legacy_quad_wts = None
 
         # rescale each column by max before norm computation
         self.max_scale = max_scale
@@ -267,8 +246,7 @@ class NormalizedBasis(ParticularBasis):
         it, so a given point set is evaluated once per lambda.
 
         It did not used to be. `norms(lam)` evaluates every component point set, and `__call__`
-        then evaluated the same points AGAIN in its `wts`-falsy branch -- the default, since
-        `bdry_pts`/`int_pts` carry no weights -- so a fresh lambda cost two boundary evaluations
+        then evaluated the same points AGAIN -- so a fresh lambda cost two boundary evaluations
         and two interior ones. Measured cost of that: a factor 2.04-2.27 (median 2.10) on the
         evaluation half of every `sigma`, which is itself 32-70% of a sigma
         (`benchmarks/basis_lab/PLAN_LAB.md`, S0a). Since per-lambda work in the underlying bases is
@@ -284,18 +262,6 @@ class NormalizedBasis(ParticularBasis):
         """
         return self.basis._eval_pointset(lam, pts)
 
-    def _weighted_eval(self, lam, pts):
-        """`_raw_eval` with row-weighting applied (if pts has weights).
-
-        Deliberately NOT cached: it would hold a second, weighted copy of the same evaluation, and
-        the weighting is one `m x n` multiply against the transcendental cost of the evaluation
-        it reuses.
-        """
-        A = self._raw_eval(lam, pts)
-        if hasattr(pts, 'sqrt_wts'):
-            return A * pts.sqrt_wts
-        return A
-
     @instance_lru_cache(maxsize=8)
     def _raw_grad_eval(self, lam, pts):
         """The gradient twin of `_raw_eval`. Cached for the same reason and sized the same way:
@@ -303,25 +269,14 @@ class NormalizedBasis(ParticularBasis):
         `eigenfunction_eval_extras` asks for gradients at points it has already evaluated.
 
         Unlike the value path this was never a *double* evaluation -- `norms` evaluates values,
-        not gradients -- so this is the smaller win. It is here for symmetry, and because the
-        comment on the branch below claimed a cache hit that could not happen: `_weighted_grad_eval`
-        carried no cache at all.
+        not gradients -- so this is the smaller win. It is here for symmetry.
         """
         return self.basis._grad_pointset(lam, pts)
 
-    def _weighted_grad_eval(self, lam, pts):
-        """`_raw_grad_eval` with row-weighting applied (if pts has weights)."""
-        Ag = self._raw_grad_eval(lam, pts)
-        if hasattr(pts, 'sqrt_wts'):
-            return Ag * pts.sqrt_wts
-        return Ag
-
     @instance_lru_cache(maxsize=128)
     def norms(self, lam):
-        As = [self._weighted_eval(lam, pts) for pts in self.component_pts]
+        As = [self._raw_eval(lam, pts) for pts in self.component_pts]
         A = np.vstack(As)
-        if self._legacy_quad_wts is not None:
-            A = A * self._legacy_quad_wts
         if self.max_scale:
             col_max = np.abs(A.max(axis=0))
             col_max[col_max==0] = 1.0
@@ -354,7 +309,7 @@ class NormalizedBasis(ParticularBasis):
         Ag = self._raw_grad_eval(lam, pts)
         return (Ag[:, active] / norms)[:, cols]
 
-    def __call__(self, lam, pts, wts=False, cols=None):
+    def __call__(self, lam, pts, cols=None):
         """`cols`, if given (and every basis column has nonzero norm, the overwhelmingly common
         case -- see norms()'s `active` mask), restricts evaluation to those wrapped-basis columns
         without evaluating the rest; see ParticularBasis.__call__. Falls back to full evaluation +
@@ -364,29 +319,15 @@ class NormalizedBasis(ParticularBasis):
             pts = PointSet(pts)
         norms, active = self.norms(lam)          # warms _raw_eval for component_pts
         if cols is None:
-            if wts is True and hasattr(pts, 'wts'):
-                A_w = self._weighted_eval(lam, pts)   # reuses the cached _raw_eval
-                return A_w[:, active] / norms
-            elif isinstance(wts, np.ndarray):
-                A = self._raw_eval(lam, pts)
-                return (A[:, active] / norms) * wts[:, np.newaxis]
-            else:
-                A = self._raw_eval(lam, pts)
-                return A[:, active] / norms
+            A = self._raw_eval(lam, pts)
+            return A[:, active] / norms
 
         if active.all():
-            A = self.basis._eval_pointset(lam, pts, cols) / norms[cols]
-        else:
-            A = self._raw_eval(lam, pts)
-            A = (A[:, active] / norms)[:, cols]
-        if wts is True and hasattr(pts, 'wts'):
-            return pts.sqrt_wts*A
-        elif isinstance(wts, np.ndarray):
-            return wts[:, np.newaxis]*A
-        else:
-            return A
+            return self.basis._eval_pointset(lam, pts, cols) / norms[cols]
+        A = self._raw_eval(lam, pts)
+        return (A[:, active] / norms)[:, cols]
 
-    def ddiff(self, lam, pts, vecs, wts=False, cols=None):
+    def ddiff(self, lam, pts, vecs, cols=None):
         """See __call__ for `cols`."""
         if not isinstance(pts, PointSet):
             pts = PointSet(pts)
@@ -396,26 +337,11 @@ class NormalizedBasis(ParticularBasis):
         vecs = vecs[:, np.newaxis]
 
         if cols is None:
-            if wts is True and hasattr(pts, 'wts'):
-                Ag_w = self._weighted_grad_eval(lam, pts)   # reuses the cached _raw_grad_eval
-                Ag = Ag_w[:, active] / norms
-            elif isinstance(wts, np.ndarray):
-                Ag_raw = self._raw_grad_eval(lam, pts)
-                Ag = (Ag_raw[:, active] / norms) * wts[:, np.newaxis]
-            else:
-                Ag_raw = self._raw_grad_eval(lam, pts)
-                Ag = Ag_raw[:, active] / norms
-            return Ag.real * vecs.real + Ag.imag * vecs.imag
-
-        if active.all():
+            Ag = self._raw_grad_eval(lam, pts)[:, active] / norms
+        elif active.all():
             Ag = self.basis._grad_pointset(lam, pts, cols) / norms[cols]
         else:
-            Ag_raw = self._raw_grad_eval(lam, pts)
-            Ag = (Ag_raw[:, active] / norms)[:, cols]
-        if wts is True and hasattr(pts, 'wts'):
-            Ag = pts.sqrt_wts*Ag
-        elif isinstance(wts, np.ndarray):
-            Ag = wts[:, np.newaxis]*Ag
+            Ag = (self._raw_grad_eval(lam, pts)[:, active] / norms)[:, cols]
         return Ag.real * vecs.real + Ag.imag * vecs.imag
 
     def __str__(self):

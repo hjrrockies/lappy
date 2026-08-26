@@ -23,27 +23,40 @@ class TestPointSet:
         assert np.allclose(ps.pts, pts_arr)
         assert len(ps) == 3
 
-    def test_creation_with_weights(self):
-        pts_arr = np.array([1+0j, 2+1j])
-        wts_arr = np.array([0.3, 0.7])
-        ps = PointSet(pts_arr, wts_arr)
-        assert np.allclose(ps.wts, wts_arr)
-        assert ps.wts.shape == pts_arr.shape
-        assert np.allclose(ps.sqrt_wts.flatten(), np.sqrt(wts_arr))
-
-    def test_weight_shape_mismatch_raises(self):
-        pts = np.array([1+0j, 2+0j])
-        weights = np.array([0.5])  # wrong length
-        with pytest.raises(ValueError):
-            PointSet(pts, weights)
-
     def test_immutability(self):
+        """`PointSet.__hash__` is computed once from the buffer, so a mutable `pts` would make the
+        hash silently wrong. This assertion is what that guarantee rests on."""
         ps = PointSet(np.array([1+0j]))
         assert ps.pts.flags.writeable == False
 
-        ps_w = PointSet(np.array([1+0j]), weights=np.array([0.5]))
-        assert ps_w.pts.flags.writeable == False
-        assert ps_w.wts.flags.writeable == False
+    def test_does_not_alias_the_callers_array(self):
+        """`.flatten()` copies, so mutating the source cannot invalidate the hash."""
+        src = np.arange(4, dtype=float)
+        ps = PointSet(src)
+        before = ps.pts.copy()
+        src[0] = 99.0
+        assert np.array_equal(ps.pts, before)
+
+    def test_hashes_and_compares_by_value(self):
+        """Two wrappers around equal nodes must be one cache key. Keying by identity instead is
+        what let `eigfun_cauchy_data` mint a fresh key per eigenvalue: measured 2+4K entries in
+        caches designed to hold 2."""
+        a = PointSet(np.array([1+0j, 2+0j]))
+        b = PointSet(np.array([1+0j, 2+0j]))
+        c = PointSet(np.array([1+0j, 3+0j]))
+        assert a is not b and hash(a) == hash(b) and a == b
+        assert a != c
+        assert {a: 'hit'}.get(b) == 'hit'
+
+    def test_same_object_lookup_does_not_call_eq(self):
+        """The reuse path must stay identity-fast: CPython compares key pointers before `__eq__`,
+        so re-using one object never reaches the array comparison."""
+        class Loud(PointSet):
+            def __eq__(self, other):
+                raise AssertionError('__eq__ should not be reached for an identical key')
+            __hash__ = PointSet.__hash__
+        k = Loud(np.arange(64, dtype=float))
+        assert {k: 'hit'}[k] == 'hit'
 
     def test_x_y_properties(self):
         pts_arr = np.array([1+2j, 3+4j])
@@ -62,34 +75,6 @@ class TestPointSet:
         assert not hasattr(result, 'wts')
         assert len(result) == 3
 
-    def test_add_both_weights(self):
-        pts1 = PointSet(np.array([1+0j]), weights=np.array([0.5]))
-        pts2 = PointSet(np.array([2+0j, 3+0j]), weights=np.array([0.3, 0.2]))
-        result = pts1 + pts2
-        assert hasattr(result, 'wts')
-        assert np.allclose(result.wts, [0.5, 0.3, 0.2])
-
-    def test_add_one_sided_weights(self):
-        # self has weights, other doesn't
-        pts1 = PointSet(np.array([1+0j]), weights=np.array([0.5]))
-        pts2 = PointSet(np.array([2+0j]))
-        result = pts1 + pts2
-        assert hasattr(result, 'wts')
-        assert np.allclose(result.wts, [0.5, 1.0])
-
-        # self doesn't have weights, other does
-        pts3 = PointSet(np.array([3+0j]))
-        pts4 = PointSet(np.array([4+0j]), weights=np.array([0.7]))
-        result2 = pts3 + pts4
-        assert hasattr(result2, 'wts')
-        assert np.allclose(result2.wts, [1.0, 0.7])
-
-
-# ---------------------------------------------------------------------------
-# TestLineSegment
-# ---------------------------------------------------------------------------
-
-class TestLineSegment:
     def test_identical_points_raises(self):
         with pytest.raises(ValueError):
             LineSegment(0, 0)
@@ -145,12 +130,6 @@ class TestLineSegment:
             ps = seg.pts(8, kind=kind)
             assert len(ps) == 8
 
-    def test_pts_with_weights(self):
-        seg = LineSegment(0, 1)
-        ps = seg.pts(10, weights=True)
-        assert hasattr(ps, 'wts')
-        assert len(ps.wts) == 10
-
     def test_pts_jacobi_default_exponents(self):
         # a=b=0 reduces to a non-singular weight; should still behave like a valid quadrature rule
         seg = LineSegment(0, 1)
@@ -160,10 +139,9 @@ class TestLineSegment:
     def test_pts_jacobi_integral_accuracy(self):
         # Gauss-Jacobi quadrature integrates tau^a*(1-tau)^b exactly (it's the weight
         # function itself): int_0^1 tau^-0.5 (1-tau)^0 dtau = B(0.5, 1) = 2
-        seg = LineSegment(0, 1)
-        ps = seg.pts(20, kind='jacobi', weights=True, a=-0.5, b=0)
-        tau = ps.x
-        integral = np.sum(ps.wts * tau**(-0.5))
+        from lappy.geometry import get_quadfunc
+        tau, wts = get_quadfunc('jacobi', a=-0.5, b=0)(20)
+        integral = np.sum(wts * tau**(-0.5))
         assert np.isclose(integral, 2.0, rtol=1e-10)
 
     def test_tangents_normals_jacobi_kind(self):
@@ -340,13 +318,9 @@ class TestMultiSegment:
         ps = unit_square_domain.bdry.pts(ns)
         assert len(ps) == ns.sum()
 
-    def test_pts_with_weights(self, unit_square_domain):
-        ps = unit_square_domain.bdry.pts(5, weights=True)
-        assert hasattr(ps, 'wts')
-
     def test_pts_jacobi_scalar_exponents_broadcast(self, unit_square_domain):
         # scalar a, b should broadcast to every segment, same as scalar N
-        ps = unit_square_domain.bdry.pts(5, kind='jacobi', weights=True, a=-0.5, b=0)
+        ps = unit_square_domain.bdry.pts(5, kind='jacobi', a=-0.5, b=0)
         assert len(ps) == 4 * 5
 
     def test_pts_jacobi_per_segment_exponents(self, unit_square_domain):
@@ -354,12 +328,13 @@ class TestMultiSegment:
         n_seg = len(bdry.segments)
         a = np.zeros(n_seg)
         a[0] = -0.5  # only the first segment gets a singular left endpoint
-        ps_mixed = bdry.pts(6, kind='jacobi', weights=True, a=a, b=0)
-        ps_uniform = bdry.pts(6, kind='jacobi', weights=True, a=0, b=0)
-        # weights on the first segment should differ from the uniform (a=0) case,
-        # while later segments (unaffected by 'a') should match
-        assert not np.allclose(ps_mixed.wts[:6], ps_uniform.wts[:6])
-        assert np.allclose(ps_mixed.wts[6:], ps_uniform.wts[6:])
+        ps_mixed = bdry.pts(6, kind='jacobi', a=a, b=0)
+        ps_uniform = bdry.pts(6, kind='jacobi', a=0, b=0)
+        # NODES on the first segment should differ from the uniform (a=0) case, while later
+        # segments (unaffected by 'a') should match. Observed on the nodes rather than the
+        # weights, which point sets no longer carry.
+        assert not np.allclose(ps_mixed.pts[:6], ps_uniform.pts[:6])
+        assert np.allclose(ps_mixed.pts[6:], ps_uniform.pts[6:])
 
     def test_dist_from_interior_point(self, unit_square_domain):
         assert np.isclose(unit_square_domain.bdry.dist(0.5+0.5j), 0.5, rtol=1e-3)
@@ -435,16 +410,6 @@ class TestDomain:
     def test_int_pts_random_interior(self, unit_square_domain):
         pts = unit_square_domain.int_pts(method='random', npts_rand=10)
         assert np.all(unit_square_domain.contains(pts.pts))
-
-    def test_int_pts_random_weights(self, unit_square_domain):
-        pts = unit_square_domain.int_pts(method='random', weights=True, npts_rand=20)
-        assert hasattr(pts, 'wts')
-        assert np.isclose(pts.wts.sum(), unit_square_domain.area, rtol=1e-6)
-
-    def test_int_pts_mesh_weights(self, unit_square_domain):
-        pts = unit_square_domain.int_pts(method='mesh', weights=True)
-        assert hasattr(pts, 'wts')
-        assert np.isclose(pts.wts.sum(), unit_square_domain.area, rtol=1e-2)
 
     def test_bdry_pts_count(self, unit_square_domain):
         ps = unit_square_domain.bdry_pts(5)
@@ -527,14 +492,6 @@ class TestPolygon:
     def test_int_pts_random_interior(self, unit_square_domain):
         pts = unit_square_domain.int_pts(method='random', npts_rand=15)
         assert np.all(unit_square_domain.contains(pts.pts))
-
-    def test_int_pts_random_weights_sum(self, unit_square_domain):
-        pts = unit_square_domain.int_pts(method='random', weights=True, npts_rand=20)
-        assert np.isclose(pts.wts.sum(), unit_square_domain.area, rtol=1e-6)
-
-    def test_int_pts_mesh_weights_sum(self, unit_square_domain):
-        pts = unit_square_domain.int_pts(method='mesh', weights=True)
-        assert np.isclose(pts.wts.sum(), unit_square_domain.area, rtol=1e-2)
 
     def test_n_vertices(self, unit_square_domain):
         assert unit_square_domain.n_vertices == 4
@@ -666,11 +623,6 @@ class TestGeometryFixes:
         assert p.area > 0
 
     # --- Domain.bdry_data weights propagation ---
-
-    def test_bdry_data_weights_propagate_to_normals(self, unit_square_domain):
-        bdry_pts, bdry_normals, bc_param = unit_square_domain.bdry_data(10, weights=True)
-        assert hasattr(bdry_pts, 'wts') and bdry_pts.wts is not None
-        assert hasattr(bdry_normals, 'wts') and bdry_normals.wts is not None
 
     def test_bdry_data_weights_false_by_default(self, unit_square_domain):
         bdry_pts, bdry_normals, bc_param = unit_square_domain.bdry_data(10)

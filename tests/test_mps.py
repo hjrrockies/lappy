@@ -212,23 +212,6 @@ class TestBdryJacobiExponents:
         assert np.allclose(a, 2.0 - order)
         assert np.allclose(b, 2.0 - order)
 
-    def test_weights_do_not_match_perimeter_except_at_order_zero(self):
-        # Gauss-Jacobi weights are constructed to exactly integrate functions with a
-        # matching (1-x)^a(1+x)^b singular factor, not the constant function -- so
-        # (unlike kind='legendre'/a=b=0) they do NOT sum to the exact perimeter once
-        # any exponent is nonzero. This is expected behavior of jacgauss, not a bug --
-        # it's exactly why bdry_jacobi_exponents is for accurate integration of known
-        # singular boundary quantities, not for MPS collocation.
-        lsh = L_shape()
-        n_per_seg = np.full(len(lsh.bdry.segments), 20)
-
-        leg_pts = lsh.bdry_pts(n_per_seg, kind='legendre', weights=True)
-        assert np.isclose(leg_pts.wts.sum(), lsh.perimeter, rtol=1e-10)
-
-        a, b = bdry_jacobi_exponents(lsh, order=1)
-        jac_pts = lsh.bdry_pts(n_per_seg, kind='jacobi', weights=True, a=a, b=b)
-        assert not np.isclose(jac_pts.wts.sum(), lsh.perimeter, rtol=1e-3)
-
     def test_sharp_corner_pushes_points_away(self):
         # a > 1 (sharp/regular convex corner): the eigenfunction vanishes rapidly
         # there, so Gauss-Jacobi grading pushes nodes AWAY from the corner relative
@@ -261,23 +244,6 @@ class TestMakeDefaultBdryData:
         bdry_pts, bdry_normals, bc_param = make_default_bdry_data(sq, basis)
         assert len(bdry_pts) == len(bdry_normals) == len(bc_param)
         assert len(bdry_pts) > 0
-
-    def test_weights_only_when_requested(self):
-        sq = Polygon(np.array([0, 1, 1+1j, 1j]))
-        basis = self._basis(sq)
-        bdry_pts, bdry_normals, _ = make_default_bdry_data(sq, basis, weights=False)
-        assert not hasattr(bdry_pts, 'wts')
-        bdry_pts, bdry_normals, _ = make_default_bdry_data(sq, basis, weights=True)
-        assert hasattr(bdry_pts, 'wts')
-        assert hasattr(bdry_normals, 'wts')
-
-    def test_weights_match_perimeter(self):
-        # plain Legendre weights ARE genuine arclength quadrature weights,
-        # unlike the Gauss-Jacobi case (see TestBdryJacobiExponents).
-        lsh = L_shape()
-        basis = self._basis(lsh)
-        bdry_pts, _, _ = make_default_bdry_data(lsh, basis, weights=True)
-        assert np.isclose(bdry_pts.wts.sum(), lsh.perimeter, rtol=1e-10)
 
     def test_matches_manual_legendre_bdry_data(self):
         # make_default_bdry_data(domain, basis) should be exactly

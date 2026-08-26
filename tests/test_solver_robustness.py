@@ -218,17 +218,17 @@ def test_make_default_int_pts_handles_curved_domains():
         assert np.all(dom.contains(pts.pts))
 
 
-@pytest.mark.parametrize('weights', [False, True])
 @pytest.mark.parametrize('dom,label', [(G.L_shape(), 'Polygon'), (G.ellipse(4, 1), 'curved')])
-def test_mesh_int_pts_does_not_raise_on_an_array_truth_test(dom, label, weights):
+def test_mesh_int_pts_does_not_raise_on_an_array_truth_test(dom, label):
     """`kind='mesh'` rebound its own `weights` parameter to the cubature weight ARRAY and then
     tested `if weights:`, so it raised "truth value of an array is ambiguous" for both values of
-    the flag. It had therefore never worked, on any domain."""
+    the flag. It had therefore never worked, on any domain.
+
+    The `weights` flag is gone (weights belong to `int_quad`, the rule), but the branch it broke
+    is still here and still has no other caller, so this keeps it exercised."""
     from lappy.mps import make_default_int_pts
-    pts = make_default_int_pts(dom, 'mesh', weights=weights, lam_max=100.0)
-    assert len(pts.pts) > 0
-    # PointSet only HAS a .wts attribute when it was built with weights
-    assert hasattr(pts, 'wts') == weights, f'{label}: weights flag ignored'
+    pts = make_default_int_pts(dom, 'mesh', lam_max=100.0)
+    assert len(pts.pts) > 0, label
 
 
 def test_make_default_int_pts_rejects_an_unknown_kind():

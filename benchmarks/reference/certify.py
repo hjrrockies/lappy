@@ -173,8 +173,10 @@ def interior_l2(domain, u, deg=10, mesh_kwargs=None, fallback_npts=200000,
             extra = {k: v for k, v in mesh_kwargs.items() if k in sig}
             if 'mesh_kwargs' in sig and mesh_kwargs and not extra:
                 extra = {'mesh_kwargs': mesh_kwargs}
-            pts_new = domain.int_pts(method='mesh', weights=True,
-                                     kind='dunavant', deg=deg, **extra)
+            # `int_quad`, not `int_pts`: this is an INTEGRAL, so it wants the rule (nodes AND
+            # weights). Point sets no longer carry weights -- see `geometry.PointSet`.
+            nodes, wts = domain.int_quad(method='mesh', kind='dunavant', deg=deg, **extra)
+            pts_new = (PointSet(nodes), wts)
         except Exception as exc:
             if strict:
                 raise
@@ -193,13 +195,14 @@ def interior_l2(domain, u, deg=10, mesh_kwargs=None, fallback_npts=200000,
         # releases them, and a correct expensive cache beats a cheap wrong one.
         _MESH_CACHE[key] = (domain, pts_new)
 
-    pts = _MESH_CACHE[key][1]
-    if pts is not None:
+    rule = _MESH_CACHE[key][1]
+    if rule is not None:
+        pts, wts = rule
         vals = np.abs(u(pts)).ravel() ** 2
-        return float(np.sqrt(np.sum(pts.wts * vals))), f'mesh/dunavant{deg}'
+        return float(np.sqrt(np.sum(wts * vals))), f'mesh/dunavant{deg}'
 
-    pts = domain.int_pts(method='random', weights=True, npts_rand=fallback_npts)
-    vals = np.abs(u(pts)).ravel() ** 2
+    nodes, _wts = domain.int_quad(method='random', npts_rand=fallback_npts)
+    vals = np.abs(u(PointSet(nodes))).ravel() ** 2
     n = len(vals)
     mean, sd = vals.mean(), vals.std(ddof=1)
     conservative = max(mean - 3 * sd / np.sqrt(n), 0.0)     # 3-sigma safe side
