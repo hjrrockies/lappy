@@ -145,6 +145,14 @@ Profile first: basis evaluation is ~67% of a solve on planner-built bases and th
 - [ ] Threading gains flatten between 4 and 8 workers, which smells like the per-sigma LAPACK
       calls competing with a threaded BLAS. Worth checking whether pinning BLAS to 1 thread
       inside the workers beats the current arrangement.
+- [ ] `NormalizedBasis._raw_eval` runs at a ~48% hit rate on the douse-shaped loop (578 hits,
+      624 misses, `maxsize=8`). `bases.py:280` sizes it for four lambdas of a two-component
+      build; whether the gradient path wants more is unmeasured. `lappy.cache.cache_stats()`
+      reports the rate now, so this is a query rather than an experiment.
+- [ ] `cache.DEFAULT_MAX_BYTES` is 512 MiB per PROCESS, chosen against a measured working set of
+      ~28 MB per solver at n_basis=186 -- generous on purpose, and never yet exercised on a real
+      N=12/16 grid. Confirm against one before treating it as tuned; remember N workers get N
+      budgets.
 
 ## Reference values
 - [x] `REFERENCE['reg_ngon_6']` and `['reg_ngon_8']` were each short a mode -- CORRECTED from a
