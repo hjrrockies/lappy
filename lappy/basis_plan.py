@@ -118,7 +118,7 @@ class PlanConfig:
     delta_hard_D: float = 0.40     # hard offset limits refinement may grow into (see _arc_blocks)
     delta_hard_frac: float = 0.90
     nyquist_ppw: float = 3.0   # minimum source points per wavelength
-    n_cap: int = 240           # refuse to plan past the measured rank-saturation ceiling
+    n_cap: int = 400           # refuse to plan past the measured rank-saturation ceiling
     min_src_per_arc: int = 2
     cone: float = 0.5          # local_thickness inward cone, cos of the half-angle
     n_probe: int = 1500        # boundary samples for local_thickness
@@ -211,6 +211,8 @@ class BasisPlan:
                 f'TOTAL columns    : {self.n_total}  (cap {self.cfg.n_cap})']
         if self.capped:
             out.append(f'CAPPED: {self.shortfall}')
+        elif self.shortfall:
+            out.append(f'OVER CAP (not thinned): {self.shortfall}')
         return '\n'.join(out)
 
 
@@ -469,6 +471,19 @@ def _apply_cap(corners, arcs, cfg):
     on the easy domains, and the source layer is where the old recipe's waste lived. If the FB
     budget alone exceeds the cap the plan reports a shortfall -- a domain this module cannot serve
     at this target is worth saying out loud, not worth silently under-serving.
+
+    `capped` MEANS "THE SOURCE BUDGET WAS ACTUALLY REDUCED", and nothing weaker. It used to mean
+    "the cap was consulted and the total was over it", which made it true of plans that were then
+    served the full budget anyway -- GWW1 and H_shape reported `capped=True` at 39% and 88% OVER
+    the nominal ceiling, because the refusal branch returns the arcs untouched. The regular N-gon
+    at N >= 8 hit the same thing from the other side: its sources are already at
+    `min_src_per_arc`, so there is nothing left to thin and the thinning branch returned a
+    byte-identical plan flagged `capped=True`. Sweeping `n_cap` over {150 ... 600} at N >= 8
+    produces the same plan and the same digits to every figure while the flag flips at 240, which
+    is how the flag came to be read as a cause of lost accuracy that it never was.
+
+    A plan that exceeds the cap without being thinned still says so in `shortfall`; that is the
+    honest signal, and it is reported independently of `capped`.
     """
     n_fb = sum(c.M for c in corners)
     n_fs = sum(a.n_src for a in arcs)
@@ -476,15 +491,21 @@ def _apply_cap(corners, arcs, cfg):
         return arcs, False, ''
     room = cfg.n_cap - n_fb
     if room < cfg.min_src_per_arc*len(arcs):
-        return (arcs, True,
+        return (arcs, False,
                 f'Fourier-Bessel budget alone is {n_fb} columns against a cap of {cfg.n_cap}; '
-                f'{n_fs} sources requested. Raise cfg.n_cap, loosen target, or accept that this '
-                f'geometry is not servable at this target.')
+                f'{n_fs} sources requested and served in full ({n_fb + n_fs} columns, '
+                f'{100*(n_fb + n_fs)/cfg.n_cap - 100:.0f}% over). Raise cfg.n_cap, loosen target, '
+                f'or accept that this geometry is not servable at this target.')
     scale = room/n_fs
     thinned = tuple(replace(a, n_src=max(cfg.min_src_per_arc, int(a.n_src*scale)))
                     for a in arcs)
+    n_thinned = sum(a.n_src for a in thinned)
+    if n_thinned == n_fs:
+        return (arcs, False,
+                f'{n_fb + n_fs} columns against a cap of {cfg.n_cap}, but every arc is already at '
+                f'min_src_per_arc={cfg.min_src_per_arc}: nothing to thin, budget served in full.')
     return (thinned, True,
-            f'source budget thinned {n_fs} -> {sum(a.n_src for a in thinned)} to respect '
+            f'source budget thinned {n_fs} -> {n_thinned} to respect '
             f'cfg.n_cap={cfg.n_cap} (rank saturation ceiling)')
 
 

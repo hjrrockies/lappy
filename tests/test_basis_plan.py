@@ -194,9 +194,48 @@ def test_planned_arcs_respect_the_source_ceiling(L):
 
 def test_cap_is_reported_not_silently_exceeded():
     """A domain this module cannot serve at a target should say so. `spiral` has 24 corners and its
-    Fourier-Bessel budget alone exceeds any sane cap."""
+    Fourier-Bessel budget alone exceeds any sane cap.
+
+    THE REPORT IS `shortfall`, NOT `capped`. Nothing is thinned on this path -- the refusal branch
+    returns the arcs untouched and the domain is then served the full budget -- so `capped`, which
+    means "the source budget was actually reduced", is False here.
+    """
     p = BP.plan_basis(geo.spiral(), _lam_max(geo.spiral()), 1e-10)
+    assert p.shortfall, 'a plan served over the nominal ceiling must say so'
+    assert not p.capped, 'nothing was thinned, so the plan was not capped'
+    assert p.n_total > p.cfg.n_cap, 'the refusal branch serves the full budget'
+
+
+def test_capped_is_false_when_the_thinning_would_remove_nothing():
+    """The other way a plan used to be mislabelled: over the cap, but every arc already sitting at
+    `min_src_per_arc`, so the thinning branch returns a byte-identical plan.
+
+    Sweeping `n_cap` across such a plan produces the same basis and the same accuracy while the
+    flag flips, which is how `capped=True` came to be read as a cause of lost accuracy. Whatever
+    the flag says, the plan must be unchanged.
+    """
+    d = geo.spiral()
+    lam = _lam_max(d)
+    lo = BP.plan_basis(d, lam, 1e-10, cfg=BP.PlanConfig(n_cap=150))
+    hi = BP.plan_basis(d, lam, 1e-10, cfg=BP.PlanConfig(n_cap=600))
+    assert lo.n_total == hi.n_total, 'the cap is inoperative here; the plan must not move'
+    assert [a.n_src for a in lo.arcs] == [a.n_src for a in hi.arcs]
+    assert not lo.capped and not hi.capped
+
+
+def test_capped_is_true_only_when_sources_were_really_thinned():
+    """A cap tight enough to bite, but loose enough to leave room above the per-arc floor."""
+    d = geo.spiral()
+    lam = _lam_max(d)
+    full = BP.plan_basis(d, lam, 1e-10, cfg=BP.PlanConfig(n_cap=10**6))
+    n_fb = full.n_fb
+    room = full.n_fs//2
+    cfg = BP.PlanConfig(n_cap=n_fb + room)
+    if room < cfg.min_src_per_arc*len(full.arcs):
+        pytest.skip('no cap leaves room above the per-arc floor on this geometry')
+    p = BP.plan_basis(d, lam, 1e-10, cfg=cfg)
     assert p.capped and p.shortfall
+    assert p.n_fs < full.n_fs, 'capped must mean the source budget actually came down'
 
 
 # ── the inner-loop invariant ─────────────────────────────────────────────────
