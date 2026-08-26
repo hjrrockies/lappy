@@ -327,3 +327,79 @@ class TestDomainBdryKwargsPassthrough:
         b = np.full(4, 2.0)
         bdry_pts, bdry_normals, bc_param = sq.bdry_data(n_per_seg, kind='jacobi', a=a, b=b)
         assert len(bdry_pts) == len(bdry_normals) == len(bc_param) == 40
+
+
+# ── SVD driver fallback ───────────────────────────────────────────────────────
+
+def test_the_svd_fallback_fires_and_returns_the_same_factorization(monkeypatch):
+    """`gesdd` failing must not be fatal, and `gesvd` must give the same answer.
+
+    LAPACK's `gesdd` is iterative and raises `LinAlgError: SVD did not converge` on badly
+    conditioned input. Measured in the wild: one shape out of ~1500 solves in a `douse`
+    multi-start sweep raised inside `tensions`, and because nothing caught it the whole sweep
+    died and lost six of ten starts.
+
+    The failure is not reproducible on demand -- it depends on the exact pencil -- so the driver
+    is made to fail here instead, which tests the branch deterministically. Numerical equivalence
+    is checked separately below, on a real matrix, since the two drivers compute the same object.
+    """
+    from lappy import mps
+
+    rng = np.random.default_rng(0)
+    R = rng.normal(size=(12, 12))
+    expected = mps.la.svd(R, lapack_driver='gesvd')
+
+    calls = []
+    real_svd = mps.la.svd
+
+    def flaky_svd(a, *args, **kwargs):
+        calls.append(kwargs.get('lapack_driver'))
+        if kwargs.get('lapack_driver') is None:          # the default, gesdd
+            raise np.linalg.LinAlgError('SVD did not converge for slice = 0.')
+        return real_svd(a, *args, **kwargs)
+
+    monkeypatch.setattr(mps.la, 'svd', flaky_svd)
+    with pytest.warns(UserWarning, match='gesdd'):
+        Z, s, Yt = mps._svd_gesdd_then_gesvd(R)
+
+    assert calls == [None, 'gesvd'], 'must try the fast driver first, then fall back exactly once'
+    assert s == pytest.approx(expected[1])
+    assert Z @ np.diag(s) @ Yt == pytest.approx(R, abs=1e-12)
+
+
+def test_the_two_svd_drivers_agree_so_the_fallback_changes_no_result():
+    """The fallback is a robustness change, not a numerical one: both drivers factor the same
+    matrix, so an eigenvalue computed through either path is the same eigenvalue."""
+    from lappy import mps
+
+    rng = np.random.default_rng(1)
+    for shape in ((20, 20), (40, 15)):
+        R = rng.normal(size=shape)
+        R[:, 0] *= 1e-10                                  # ill-conditioned on purpose
+        s_fast = mps.la.svd(R)[1]
+        s_slow = mps.la.svd(R, lapack_driver='gesvd')[1]
+        assert s_fast == pytest.approx(s_slow, rel=1e-10, abs=1e-14)
+
+
+def test_regularize_pencil_survives_a_failing_default_driver(monkeypatch):
+    """The fallback has to be reachable from `regularize_pencil` itself, not just in isolation --
+    that is the call site that took down the sweep."""
+    from lappy import mps
+
+    rng = np.random.default_rng(2)
+    A1, A2 = rng.normal(size=(8, 6)), rng.normal(size=(9, 6))
+    good = mps.regularize_pencil(A1, A2)
+
+    real_svd = mps.la.svd
+
+    def flaky_svd(a, *args, **kwargs):
+        if kwargs.get('lapack_driver') is None:
+            raise np.linalg.LinAlgError('SVD did not converge for slice = 0.')
+        return real_svd(a, *args, **kwargs)
+
+    monkeypatch.setattr(mps.la, 'svd', flaky_svd)
+    with pytest.warns(UserWarning, match='gesdd'):
+        fell_back = mps.regularize_pencil(A1, A2)
+
+    for a, b in zip(good, fell_back):
+        assert np.abs(a) == pytest.approx(np.abs(b), abs=1e-10)   # sign/phase is not fixed by SVD

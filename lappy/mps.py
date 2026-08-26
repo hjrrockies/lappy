@@ -75,6 +75,36 @@ ltol_default = 1e-8
 n_workers_default = min(8, os.cpu_count() or 1)
 
 # MPS functions
+def _svd_gesdd_then_gesvd(R):
+    """`la.svd(R)`, falling back to the QR-based driver when divide-and-conquer fails to converge.
+
+    LAPACK's `gesdd` -- scipy's default, and the faster of the two -- is iterative and can fail
+    outright on a badly conditioned matrix, raising `LinAlgError: SVD did not converge`. `gesvd`
+    is the older QR-based driver: slower, and it converges on inputs `gesdd` gives up on. Trying
+    the fast one first and falling back costs nothing on the overwhelming majority of calls, which
+    never raise.
+
+    THIS IS NOT A HYPOTHETICAL. Measured on a `douse` multi-start sweep of `max lam_3/lam_1` over
+    pentagons: one shape out of roughly 1500 solves raised here, inside `tensions`, inside
+    `track_set` -- and because nothing caught it, it took down the whole sweep and lost six of ten
+    starts, about an hour of compute, after three starts had already agreed on the answer. An
+    eigensolver meant for the inner loop of a shape optimization (see CLAUDE.md, principle 4) is
+    called on shapes chosen by the optimizer rather than by a person, so it will meet ill-conditioned
+    pencils as a matter of course and must not treat one as fatal.
+
+    The warning is deliberate. Falling back silently would hide the fact that a domain is
+    numerically difficult, and the tension computed here feeds `sigma`, which is exactly the
+    quantity a caller uses to decide whether to trust a result.
+    """
+    try:
+        return la.svd(R)
+    except np.linalg.LinAlgError:
+        warnings.warn("SVD driver 'gesdd' did not converge while regularizing the pencil; "
+                      "retrying with 'gesvd'. This usually means a badly conditioned pencil -- "
+                      "check the achieved tension before trusting eigenvalues from this shape.")
+        return la.svd(R, lapack_driver='gesvd')
+
+
 def regularize_pencil(A1, A2, reg_type='svd', rtol=rtol_default):
     """Regularizes the pencil for the MPS problem."""
     if not (np.isreal(rtol) and np.isscalar(rtol) and rtol >= 0):
@@ -87,7 +117,7 @@ def regularize_pencil(A1, A2, reg_type='svd', rtol=rtol_default):
         # compute non-pivoted qr
         Q,R = la.qr(A, mode='economic')
         # compute truncated svd
-        Z,s,Yt = la.svd(R)
+        Z,s,Yt = _svd_gesdd_then_gesvd(R)
         cutoff = (s >= rtol).sum()
         Z1 = Z[:,:cutoff]
         Y1 = Yt[:cutoff].T
