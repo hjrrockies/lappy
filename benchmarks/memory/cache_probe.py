@@ -41,6 +41,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from suite import guards                                             # noqa: E402
 
+from lappy import cache as _lappy_cache                               # noqa: E402
 from lappy import basis_plan as BP                                   # noqa: E402
 from lappy import geometry as geo                                    # noqa: E402
 from lappy.asymp import weyl_est                                     # noqa: E402
@@ -110,19 +111,23 @@ def cache_report(obj, recurse=('basis', 'bases', 'solver'), _seen=None):
         if not key.startswith('_icache_') or key.endswith('_lock'):
             continue
         name = key[len('_icache_'):]
-        if isinstance(val, dict):                       # instance_cache: a plain dict
-            entries, arrs = len(val), []
+        if hasattr(val, 'data') and hasattr(val, 'nbytes'):   # lappy.cache._Cache
+            entries, nbytes = len(val.data), val.nbytes
+        elif isinstance(val, dict):                           # a plain dict (pre-rewrite layout)
+            entries = len(val)
+            arrs = []
             for v in val.values():
                 arrs.extend(_arrays_under(v, max_depth=2))
-        else:                                           # instance_lru_cache: an lru_cache object
+            nbytes = _nbytes(arrs)
+        else:                                                 # an lru_cache object (pre-rewrite)
             try:
                 entries = val.cache_info().currsize
             except AttributeError:
                 continue
-            arrs = _arrays_under(val, max_depth=4)
+            nbytes = _nbytes(_arrays_under(val, max_depth=4))
         cur = rep.setdefault(name, {'entries': 0, 'bytes': 0})
         cur['entries'] += entries
-        cur['bytes'] += _nbytes(arrs)
+        cur['bytes'] += nbytes
     for attr in recurse:
         child = getattr(obj, attr, None)
         if child is None:
@@ -167,7 +172,9 @@ def one_iterate(plan, t, n_eigs, lam_window, prec, seed):
         coef = solver.eigenfunction_coef(float(lam), mult=1)
         eigfun_cauchy_data(solver.basis, float(lam), coef, bq)
 
-    return lams, cache_report(solver)
+    # Sampled while the solver is still referenced by this frame. `main` samples the same
+    # process-wide figure AFTER it goes out of scope; the pair is the reclamation measurement.
+    return lams, cache_report(solver), _lappy_cache.cache_bytes()
 
 
 def main():
@@ -201,8 +208,8 @@ def main():
     try:
         for i in range(args.iters):
             t0 = time.perf_counter()
-            lams, rep = one_iterate(plan, 0.004*i, args.n_eigs,
-                                    max(8, 2*args.n_eigs + 4), args.prec, seed)
+            lams, rep, live_inside = one_iterate(plan, 0.004*i, args.n_eigs,
+                                                 max(8, 2*args.n_eigs + 4), args.prec, seed)
             seed = lams
             row = dict(i=i, seconds=round(time.perf_counter() - t0, 2),
                        swap_mb=round(guards.swap_used_mb() - swap0, 1),
@@ -211,6 +218,10 @@ def main():
                        gen2=gc.get_stats()[2]['collections'],
                        cache_bytes=sum(v['bytes'] for v in rep.values()),
                        cache_entries=sum(v['entries'] for v in rep.values()),
+                       # process-wide, so it counts dead-but-unreclaimed solvers too; the gap
+                       # between this and `cache_bytes` IS mechanism B
+                       live_inside=live_inside,
+                       live_after=_lappy_cache.cache_bytes(),
                        caches={k: v for k, v in sorted(rep.items())},
                        lam1=float(lams[0]))
             rows.append(row)
@@ -218,9 +229,11 @@ def main():
                 fh.write(json.dumps(row) + '\n')
             if i % 5 == 0 or i == args.iters - 1:
                 print(f"  {i:3d}: {row['seconds']:5.1f}s  swap +{row['swap_mb']:7.1f}MB  "
-                      f"maxrss {row['maxrss_mb']:6.1f}MB  cache "
-                      f"{row['cache_bytes']/1048576:7.1f}MB / {row['cache_entries']:4d} entries  "
-                      f"gen2={row['gen2']}", flush=True)
+                      f"maxrss {row['maxrss_mb']:6.1f}MB  solver "
+                      f"{row['cache_bytes']/1048576:6.1f}MB/{row['cache_entries']:4d}e  "
+                      f"live in {row['live_inside']/1048576:6.1f}MB -> after "
+                      f"{row['live_after']/1048576:5.1f}MB  gen2={row['gen2']}",
+                      flush=True)
     finally:
         if args.gc_disable:
             gc.enable()
