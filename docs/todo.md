@@ -128,14 +128,42 @@ priority order" list; it is not duplicated here.
 
 ## Speed
 Profile first: basis evaluation is ~67% of a solve on planner-built bases and the GSVD stack
-~33%. S0a's 52/48 split was measured on `pure_fb` and does not carry over.
+~33%. S0a's 52/48 split was measured on `pure_fb` and does not carry over. On a douse-shaped
+solve (N=6, n_basis=186, 2026-08-26) the split is more lopsided still: `_bessel` alone is 85.5%.
 - [x] Order-0 Bessel: `yv(0,.)`/`yvp(0,.)` -> `y0`/`-y1`, 42x/94x on that call.
 - [x] Thread the lambda grid (`mps.n_workers_default`), ~2-3x end to end.
-- [ ] **The `jv` ladder in `FourierBesselBasis._bessel` is the largest single item left**: 14.5 s
-      of a 36.9 s H_shape solve. The orders are `j*alpha` for fixed alpha, an arithmetic
-      sequence, so Miller backward recurrence could get the whole ladder for roughly the cost of
-      one call. Numerically delicate -- forward recurrence in order is unstable for order >
-      argument -- so it needs its own accuracy study before it is worth trying.
+- [ ] **The `jv` ladder in `FourierBesselBasis._bessel` is the largest cost by far, and LOW
+      PRIORITY anyway.** 85.5% of a douse-shaped N=6 solve at n_basis=186 (7.31 s of 8.55 s, 400
+      calls); 14.5 s of a 36.9 s H_shape solve on the older measurement.
+      **Deliberately not being worked on: accurate basis evaluation outranks fast basis
+      evaluation, and a hand-written Bessel routine is new code in the one place where a silent
+      error is indistinguishable from a converged answer.** Everything below is why it is also
+      harder than it looked, recorded so nobody re-derives it.
+      - Miller backward recurrence amortises one downward sweep across a chain of orders at a
+        FIXED fractional offset, stepping by 1. Our ladder (`bases.py:588-590`) is `{k*alpha}`
+        with `alpha = pi/phi`, so it lies on a step-1 lattice only when `alpha` is rational with
+        a small denominator -- then `{k*alpha mod 1}` takes `q` values and you need `q` sweeps.
+      - Measured 2026-08-26. Regular hexagon: `alpha = 1.5` exactly, K=27, **2** distinct
+        `frac(k*alpha)` -- two sweeps cover the whole ladder. A certified douse N=6 iterate:
+        `alpha = 1.50003581`, K=27, **27** distinct offsets -- one sweep per order, which is what
+        `jv` already does. A 3.6e-5 relative perturbation in `alpha` destroys the lattice.
+      - So it applies to `benchmarks/reference` and `benchmarks/suite` (square `alpha=2`, regular
+        N-gons `alpha=N/(N-2)`, equilateral/right triangles, rational-angle chevrons) and NOT to
+        generic optimiser iterates, which is the entire `douse` workload. See
+        `LAPPY_WISHLIST.md` section 8.
+      - Symmetry reduction (section 7 there) would pin the angles by construction and hence make
+        `alpha` rational again -- so it would restore this lattice as a side effect. That is a
+        second argument for it beyond halving `n_p`.
+- [ ] **If the generic case is ever worth attacking, these are the two candidates** -- both
+      unmeasured, both the same accuracy-risk objection as above, so neither is scheduled.
+      - Uniform asymptotics (Olver/Debye): valid for arbitrary real order, no lattice needed, and
+        the regime here is `order >~ argument` (orders reach `alpha*K ~ 40` at moderate
+        `sqrt(lam)*r`), which is where the expansion is accurate and where `jv` is slowest.
+        Current cost is ~293 ns per element.
+      - Amortise across `lam`, not across order: the orders are fixed by geometry for a solver's
+        life while `lam` moves on every one of ~100 probes per eigenvalue, so any order-dependent
+        coefficient could be built once per shape and reused. Needs no rationality, and fits the
+        per-instance cache.
 - [ ] `solve_interval` uses only `tensions(lam)[:2]` but `gsvdvals` computes every generalized
       singular value. Not obviously recoverable (the GSVD does not truncate the way a symmetric
       eigenproblem does, and `regularize_pencil`'s SVD is needed to form the projection), but it
