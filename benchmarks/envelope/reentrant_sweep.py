@@ -61,12 +61,38 @@ from dataclasses import replace
 import numpy as np
 
 from lappy import Eigenproblem, Polygon, basis_plan as BP
-from lappy.asymp import weyl_est
+from lappy.asymp import weyl_count_poly, weyl_est
 from lappy.mps import MPSEigensolver
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'run')
 LEDGER = os.path.join(OUT, 'reentrant_sweep.jsonl')
 PERIM = 4.0
+
+
+def weyl_deficit(dom, lams, rtol=1e-6):
+    """Is the solved set CONSECUTIVE? Worst shortfall of the count over mid-gap cut points.
+
+    The recipe is `douse.spectral_guard`'s, reimplemented here rather than imported because
+    `lappy` does not depend on `douse` -- and it belongs in this probe, because the failure that
+    motivated the sweep is not a resolution failure at all. In the enforced reproduction of the
+    N=6 run, iterates 199 and 200 (notch angles 281.4 and 280.5 degrees) were refused with a
+    deficit of 3.14 having come from a FULL SOLVE, not from tracking: at those angles
+    `Eigenproblem.solve` itself returned a set with a mode missing, at a tension in the 1e-11
+    band. Digits and sigma cannot see that, so a probe reporting only those two would have
+    called these shapes healthy.
+    """
+    lams = np.sort(np.asarray(lams, dtype=float))
+    if lams.size < 2 or not np.all(np.isfinite(lams)) or lams[0] <= 0:
+        return float('nan')
+    levels = []
+    for x in lams:
+        if not levels or x > levels[-1]*(1.0 + rtol):
+            levels.append(float(x))
+    if len(levels) < 2:
+        return float('nan')
+    return max(float(weyl_count_poly(0.5*(lo + hi), domain=dom))
+               - int(np.count_nonzero(lams <= 0.5*(lo + hi)))
+               for lo, hi in zip(levels[:-1], levels[1:]))
 
 
 def _scaled(v, perim=PERIM):
@@ -145,17 +171,27 @@ def exact_right_isoceles(n, perim=PERIM):
     return lam[:n]
 
 
-def measure(name, vertices, k, n_cap, target=1e-14, prec=1e-13, exact=None):
-    """One row: the plan's corner table, the achieved digits, and the tension `douse` gates on."""
+def measure(name, vertices, k, n_cap, target=1e-14, prec=1e-13, exact=None,
+            plan_vertices=None):
+    """One row: the plan's corner table, the achieved digits, and the tension `douse` gates on.
+
+    `plan_vertices` PLANS ON ONE SHAPE AND SOLVES ON ANOTHER, which is what `douse` does on every
+    iterate: `SpectrumEvaluator` freezes a `BasisPlan` and calls `BP.realize(plan, dom)` at each
+    new shape. Solving a shape on its own fresh plan is the easy question and this probe answers
+    it comfortably at every angle up to 292 degrees; the failure in the wild came from a plan
+    frozen a few steps earlier, so `--stale` is the version of the question that matches it.
+    """
     rec = dict(shape=name, k=k, n_cap=n_cap, prec=float(prec), target=float(target))
     t0 = time.perf_counter()
     try:
         dom = Polygon(vertices)
+        dom_plan = Polygon(plan_vertices) if plan_vertices is not None else dom
         lam_max = weyl_est(max(6, k + 2), dom)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             cfg = replace(BP.PlanConfig(), n_cap=n_cap)
-            plan = BP.plan_basis(dom, lam_max, target=target, cfg=cfg)
+            plan = BP.plan_basis(dom_plan, weyl_est(max(6, k + 2), dom_plan),
+                                 target=target, cfg=cfg)
             solver = MPSEigensolver.from_domain(dom, lam_max=lam_max,
                                                 basis=BP.realize(plan, dom), prec=prec)
             evp = Eigenproblem(dom, eval_solver=solver, precision=prec)
@@ -172,7 +208,8 @@ def measure(name, vertices, k, n_cap, target=1e-14, prec=1e-13, exact=None):
             corners.append(dict(omega=float(np.degrees(np.pi/c.alpha)), alpha=float(c.alpha),
                                 M=int(c.M), ceiling=int(BP._fb_ceiling(c.alpha, cfg)),
                                 demand=float((c.nu_osc + c.nu_cont)/c.alpha)))
-        rec.update(ok=True, n_total=int(plan.n_total), capped=bool(plan.capped),
+        rec.update(ok=True, deficit=float(weyl_deficit(dom, eigs)),
+                   n_total=int(plan.n_total), capped=bool(plan.capped),
                    n_fb=int(sum(c.M for c in plan.corners)),
                    n_src=int(sum(a.n_src for a in plan.arcs)),
                    digits=float(chk['digits']), worst_sigma=sig,
@@ -215,6 +252,9 @@ def main():
     ap.add_argument('--family', choices=['notch', 'dart'], default='notch')
     ap.add_argument('--control', action='store_true',
                     help='also run the matched CONVEX displacement at each angle')
+    ap.add_argument('--stale', type=float, default=None,
+                    help='plan at omega and SOLVE at omega+STALE degrees, the way a frozen plan '
+                         'meets a shape the optimizer has since walked to.')
     ap.add_argument('--no-validate', action='store_true')
     args = ap.parse_args()
 
@@ -222,11 +262,12 @@ def main():
     done = _done()
     rows = []
 
-    def run(name, verts, exact=None):
+    def run(name, verts, exact=None, plan_verts=None):
         for cap in args.caps:
             if (name, args.k, cap, float(args.prec)) in done:
                 continue
-            rec = measure(name, verts, args.k, cap, prec=args.prec, exact=exact)
+            rec = measure(name, verts, args.k, cap, prec=args.prec, exact=exact,
+                          plan_vertices=plan_verts)
             with open(LEDGER, 'a') as fh:
                 fh.write(json.dumps(rec) + '\n')
             rows.append(rec)
@@ -234,7 +275,7 @@ def main():
                 extra = (f"  true {rec['true_digits']:5.2f}" if 'true_digits' in rec else '')
                 print(f"  {name:16s} cap={cap:4d}  n={rec['n_total']:4d}  "
                       f"digits {rec['digits']:5.2f}{extra}  sigma {rec['worst_sigma']:8.1e}  "
-                      f"{rec['seconds']:6.1f}s", flush=True)
+                      f"deficit {rec['deficit']:+5.2f}  {rec['seconds']:6.1f}s", flush=True)
             else:
                 print(f"  {name:16s} cap={cap:4d}  {rec['error'][:88]}", flush=True)
 
@@ -252,6 +293,9 @@ def main():
             run(f'dart_{w:g}', dart(w, args.gap))
             if args.control:
                 run(f'kite_{w:g}', kite(w, args.gap))
+        elif args.stale is not None:
+            run(f'stale_{w:g}+{args.stale:g}', notched_ngon(w + args.stale, args.N),
+                plan_verts=notched_ngon(w, args.N))
         else:
             run(f'notch_{w:g}', notched_ngon(w, args.N))
             if args.control:
@@ -259,20 +303,28 @@ def main():
 
     all_rows = [json.loads(l) for l in open(LEDGER) if l.strip()]
     sweep = [r for r in all_rows if r.get('ok')
-             and r['shape'].startswith(('notch_', 'bump_', 'dart_', 'kite_'))
+             and r['shape'].startswith(('notch_', 'bump_', 'stale_', 'dart_', 'kite_'))
              and r['k'] == args.k and float(r.get('prec', -1.0)) == float(args.prec)]
     if not sweep:
         return
-    print('\n  shape             n_total  digits   worst_sigma  min_ang   notch '
+    print('\n  shape             n_total  digits   worst_sigma  deficit  min_ang   notch '
           'M / ceiling / demand')
-    print('  ' + '-'*88)
-    for r in sorted(sweep, key=lambda r: (r['shape'].split('_')[0], float(r['shape'].split('_')[1]))):
+    print('  ' + '-'*97)
+    def _key(r):
+        head, _, tail = r['shape'].partition('_')
+        return head, float(tail.split('+')[0])
+
+    for r in sorted(sweep, key=_key):
         notch = max(r['corners'], key=lambda c: c['omega'])
         pin = ' PINNED' if notch['M'] >= notch['ceiling'] else ''
+        d = r.get('deficit', float('nan'))
+        flag = ' MODE MISSING' if d > 0.5 else ''
         print(f"  {r['shape']:16s} {r['n_total']:6d}  {r['digits']:6.2f}  "
-              f"{r['worst_sigma']:11.1e}  {r['min_angle']:7.1f}   {notch['M']:3d} / "
-              f"{notch['ceiling']:3d} / {notch['demand']:6.1f}{pin}")
-    print('\n  M PINNED at the ceiling means `_fb_ceiling` is what limits the block, not the '
+              f"{r['worst_sigma']:11.1e}  {d:+7.2f}  {r['min_angle']:7.1f}   {notch['M']:3d} / "
+              f"{notch['ceiling']:3d} / {notch['demand']:6.1f}{pin}{flag}")
+    print('\n  deficit > 0.5 means the SOLVED set is not consecutive -- a mode is missing at a\n'
+          '  tension the sigma column calls healthy. That is the failure the sweep was built for.')
+    print('  M PINNED at the ceiling means `_fb_ceiling` is what limits the block, not the '
           'sizing\n  rule -- a different diagnosis with a different fix. `demand` is the '
           'uncapped\n  `(nu_osc + nu_cont)/alpha` the rule asked for.')
 
