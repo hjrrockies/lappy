@@ -843,7 +843,7 @@ class MPSEigensolver(BaseEigensolver):
 
     def solve_interval(self, a, b, n_pts, reg_type=None, rtol=None, ttol=None,
                        ltol=None, minsolver='parabolic', bracket_kwargs={},
-                       n_workers=None, verbose=0):
+                       n_workers=None, verbose=0, return_rejected=False):
         """solves for all eigenvalues in [a,b] using MPS
 
         ``bracket_kwargs`` is forwarded to ``opt.bracket_mins`` (the
@@ -863,7 +863,8 @@ class MPSEigensolver(BaseEigensolver):
             n_workers = n_workers_default
         return solve_interval(lambda lam: self.tensions(lam, reg_type, rtol), a, b, n_pts,
                               ltol, ttol, minsolver, bracket_kwargs=bracket_kwargs,
-                              n_workers=n_workers, verbose=verbose)
+                              n_workers=n_workers, verbose=verbose,
+                              return_rejected=return_rejected)
     
     def plot_tensions(self, low, high, nlam, n_angle=1, rtol=None, reg_type=None,
                       ax=None, **plot_kwargs):
@@ -984,8 +985,28 @@ def estimate_multiplicity(tensions, eig, a, b, ttol=ttol_default, verbose=0):
     return mult
    
 def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
-                   minsolver='parabolic', bracket_kwargs={}, n_workers=1, verbose=0):
-    """Finds eigenvalues from MPS tensions."""
+                   minsolver='parabolic', bracket_kwargs={}, n_workers=1, verbose=0,
+                   return_rejected=False):
+    """Finds eigenvalues from MPS tensions.
+
+    ``return_rejected`` adds a fourth return value: the ``(lam, sigma)`` pairs for brackets whose
+    tension minimum sat ABOVE ``ttol``. THESE ARE THE MODES THIS SOLVER DECIDED IT COULD NOT SEE,
+    and until now they were dropped in silence, visible only under ``verbose > 1``.
+
+    The distinction they carry is one a caller cannot reconstruct afterwards. A returned set that
+    is short by one mode has two completely different causes:
+
+      * the bracketing never found a minimum there -- a grid or a refinement problem;
+      * a minimum WAS found and its tension missed ``ttol`` -- a BASIS problem, at that mode, and
+        the surviving eigenvalues can still have excellent sigma because the badly resolved one
+        was the one removed.
+
+    The second is the more dangerous of the two, because everything downstream then looks healthy:
+    `douse` measured a set with a mode absent at a worst tension of 4.7e-12 and an optimizer
+    accepted a step on it. A caller holding the rejects can say "there is a mode near lam=X that
+    this basis resolves only to sigma=Y" and replan, instead of inferring a missing mode from a
+    Weyl count and guessing at why.
+    """
     if minsolver not in ['parabolic','golden','brent']:
         raise ValueError("'minsolver' must be one of 'parabolic', 'golden', or 'brent'")
 
@@ -1023,6 +1044,7 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
     # minimize on each bracket, filtering for small tension values at minimizer
     if verbose > 0: print("3. minimizing tension on brackets...")
     eig_brackets = []
+    rejected = []
     for bracket in brackets:
         minimizer, fe = minimize_on_bracket(lambda lam: tensions(lam)[0], bracket, ltol, minsolver, verbose-1)
         fevals += fe
@@ -1032,7 +1054,11 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
             if verbose > 1: print(f"eigenvalue accepted lam={minimizer:.5e}")
             lam = bracket[0]
             eig_brackets.append([lam[0], minimizer, lam[2]])
-        elif verbose > 1: print(f"tension above threshold: {minima:.1e} > {ttol:.1e}")
+        else:
+            # RECORDED, NOT MERELY SKIPPED. See the docstring: this is a mode the basis failed to
+            # resolve, and it leaves no trace in the eigenvalues that survive.
+            rejected.append((float(minimizer), float(minima)))
+            if verbose > 1: print(f"tension above threshold: {minima:.1e} > {ttol:.1e}")
 
     # sort brackets and merge sufficiently close eigenvalues
     if verbose > 0: print("4. sorting & merging eigenvalues...")
@@ -1051,7 +1077,11 @@ def solve_interval(tensions, a, b, n_pts, ltol=ltol_default, ttol=ttol_default,
         mult = estimate_multiplicity(tensions, eig, a, b, ttol, verbose-1)
         mults.append(mult)
     if verbose > 0:
-        print(f"***found {len(eigs)} eigenvalues, total_mult={np.sum(mults)}, fevals={fevals}***")
+        print(f"***found {len(eigs)} eigenvalues, total_mult={np.sum(mults)}, fevals={fevals}"
+              + (f", {len(rejected)} rejected above ttol" if rejected else "") + "***")
+    rejected = [(lam, sig) for lam, sig in rejected if a <= lam <= b]
+    if return_rejected:
+        return np.array(eigs), np.array(mults), fevals, rejected
     return np.array(eigs), np.array(mults), fevals
 
 ### default MPS collocation points
