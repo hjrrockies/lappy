@@ -8,7 +8,8 @@ from .bounds import faber_krahn as _faber_krahn
 # endpoint. Far below any accuracy of interest; costs one extra grid point.
 _WINDOW_PAD = 1e-6
 from .asymp import (weyl_est as _weyl_est, weyl_count as _weyl_count,
-                    weyl_count_check as _weyl_count_check)
+                    weyl_count_check as _weyl_count_check,
+                    weyl_count_poly as _weyl_count_poly)
 from .bases import ParticularBasis
 from .geometry import PointSet, Domain
 from .opt import minimize_on_bracket
@@ -51,6 +52,55 @@ def _merge_eigs(existing, new, ltol):
         keep[np.where(mask)[0][:count]] = True
 
     return vals[keep]
+
+
+WEYL_DEFICIT_TOL = 0.5
+
+
+def _audit_count(lam, domain):
+    """Weyl's count at `lam`, corner-corrected WHERE THERE ARE CORNERS.
+
+    `weyl_count_poly` refuses a domain it cannot read angles off, and `solve` is not a polygon
+    method -- the disk reaches here too, and did, as a TypeError out of the audit. The two-term
+    count is the honest fallback for a smooth boundary: the correction it drops is the curvature
+    term, not the corner sum, so it is a weaker detector rather than a wrong one.
+    """
+    try:
+        return float(_weyl_count_poly(lam, domain))
+    except (TypeError, ValueError, AttributeError):
+        return float(_weyl_count(lam, domain))
+
+
+def _deficient_windows(eigs, a, domain, tol=WEYL_DEFICIT_TOL):
+    """Intervals to re-scan when the three-term count says the set is SHORT, not merely offset.
+
+    Returns `[(a, cut)]` for the first cut whose shortfall exceeds `tol`: everything below that
+    cut, not the gap adjacent to it. THE NARROW WINDOW WAS TRIED FIRST AND IS WRONG. Weyl's count
+    oscillates by O(sqrt(lam)), so the cut where the shortfall first crosses `tol` can sit well
+    above the gap the mode is actually missing from -- measured on `H_shape` at k=7, where
+    lam_5 = 14.30523 was absent and the crossing was at 20.5, selecting a window of
+    [18.7, 22.3] that contained nothing and repaired nothing. Re-scanning everything below the
+    crossing costs about one extra initial scan, and only when the audit fires.
+
+    Returns `[]` for a healthy set, which is the common case and costs no solves at all.
+    """
+    eigs = np.sort(np.asarray(eigs, dtype=float))
+    if eigs.size < 2 or not np.all(np.isfinite(eigs)) or eigs[0] <= 0:
+        return []
+    levels = []
+    for x in eigs:
+        if not levels or x > levels[-1]*(1.0 + 1e-6):
+            levels.append(float(x))
+    if len(levels) < 2:
+        return []
+    prev_cut = a
+    for lo, hi in zip(levels[:-1], levels[1:]):
+        cut = 0.5*(lo + hi)
+        found = int(np.count_nonzero(eigs <= cut))
+        if _audit_count(cut, domain) - found > tol:
+            return [(a, cut)]
+        prev_cut = cut
+    return []
 
 
 def _find_deficient_gaps(eigs_for_check, a, b, domain, thresh=1):
@@ -223,7 +273,8 @@ class Eigenproblem(BaseEigenproblem):
             self.eval_solver = factory(basis_plan.realize(refined, self.domain))
         return refined
 
-    def solve(self, k, ppl=20, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
+    def solve(self, k, ppl=20, solver=None, max_rescue=10, verbose=0, weyl_audit=True,
+              **solver_kwargs):
         """Solve for the first k eigenvalues (counting multiplicity).
 
         Returns the FIRST k, which is a stronger promise than k of them, and one that was being
@@ -275,9 +326,11 @@ class Eigenproblem(BaseEigenproblem):
                 f"solve() not implemented for bc_type={bc_type!r}; "
                 "only 'dir' and 'neu' are supported"
             )
-        return self._solve_dir_neu(k, ppl, solver, max_rescue, verbose, **solver_kwargs)
+        return self._solve_dir_neu(k, ppl, solver, max_rescue, verbose, weyl_audit,
+                                   **solver_kwargs)
 
-    def _solve_dir_neu(self, k, ppl, solver=None, max_rescue=10, verbose=0, **solver_kwargs):
+    def _solve_dir_neu(self, k, ppl, solver=None, max_rescue=10, verbose=0, weyl_audit=True,
+                       **solver_kwargs):
         solver = self._get_eval_solver(solver)
         bc_type = self.domain.bc_type
 
@@ -346,6 +399,47 @@ class Eigenproblem(BaseEigenproblem):
             i += 1
             thresh *= 0.9
         
+        # THE AUDIT THE RESCUE LOOP ABOVE CANNOT DO. That loop asks "did I find ENOUGH?" and
+        # stops when the count is satisfied -- so a scan that steps over one bracket and picks up
+        # a higher mode instead returns k accurate eigenvalues that are not the FIRST k, with the
+        # count right, the values right and nothing raised. That is the failure `solve`'s own
+        # docstring records at ppl=5 (`right_trapezoid` dropping lam_3) and the one `douse` hit in
+        # production at a reentrant corner, where the surviving values had a tension of 4.7e-12
+        # because the badly resolved mode was the one that went missing.
+        #
+        # `weyl_deficit` is the validated detector that docstring says is missing. Measured here:
+        #
+        #     right_trapezoid k=10   ppl=5  (wrong)  +1.431      ppl=20 (right)  +0.431
+        #     H_shape         k=7    ppl=10 (wrong)  +0.755      ppl=20 (right)  +0.368
+        #     the square's exact first 10                        clean           +0.319
+        #     the same with one mode deleted                     +1.158 to +1.319
+        #
+        # so `WEYL_DEFICIT_TOL = 0.5` separates the classes on every case measured -- by 0.07 at
+        # the tightest, which is thinner than the 0.18 margin the same threshold has on `douse`'s
+        # cells and is the reason this AUDITS AND RE-SCANS rather than raising. A false positive
+        # costs one narrow re-scan that finds nothing; a false negative is the silent wrong answer
+        # this exists to stop.
+        if weyl_audit and len(eigs_flat) >= k_search:
+            for _ in range(max_rescue):
+                windows = _deficient_windows(np.sort(eigs_flat)[:k_search], a, self.domain)
+                if not windows:
+                    break
+                before = len(eigs_flat)
+                for sub_a, sub_b in windows:
+                    if verbose > 0:
+                        print(f"weyl audit: re-scanning [{sub_a:.4e},{sub_b:.4e}] for a mode the "
+                              f"count says is missing")
+                    n_sub = max(ppl, round(3*ppl*m*(sub_b - sub_a)/(b - a)))
+                    new_eigs, new_mults, fe = solver.solve_interval(
+                        sub_a, sub_b, n_sub, verbose=verbose, **solver_kwargs
+                    )
+                    fevals += fe
+                    eigs_flat = _merge_eigs(eigs_flat, _expand_mults(new_eigs, new_mults), ltol)
+                if len(eigs_flat) == before:
+                    if verbose > 0:
+                        print("weyl audit: re-scan found nothing; reporting the set as found")
+                    break
+
         if bc_type == 'neu':
             eigs_flat = np.concatenate([[0.0], eigs_flat])
 

@@ -127,10 +127,15 @@ def test_a_coarser_grid_is_what_broke_it():
     rather than only that something broke.
     """
     truth = reference_eigs('right_trapezoid', 12)[0]
-    coarse = _solve('right_trapezoid', 10, ppl=5)
+    # `weyl_audit=False` is what pins the CAUSE. The audit added later repairs this case, so with
+    # it on the coarse grid no longer misbehaves -- which is the point of it, and would otherwise
+    # make this test read as "the cause has changed".
+    coarse = _solve('right_trapezoid', 10, ppl=5, weyl_audit=False)
     assert _first_mismatch(coarse, truth, 10) == 3, \
         'ppl=5 no longer reproduces the lam_3 drop; the cause has changed and this file is stale'
-    assert _first_mismatch(_solve('right_trapezoid', 10), truth, 10) is None
+    assert _first_mismatch(_solve('right_trapezoid', 10, weyl_audit=False), truth, 10) is None
+    # ...and the audit repairs the coarse grid rather than merely detecting it
+    assert _first_mismatch(_solve('right_trapezoid', 10, ppl=5), truth, 10) is None
 
 
 @pytest.mark.slow

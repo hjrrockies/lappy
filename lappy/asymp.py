@@ -180,6 +180,49 @@ def weyl_est_poly(k, domain=None, *, area=None, perim=None, angles=None, bc_type
     return float(result[0]) if scalar else result.reshape(k.shape)
 
 
+def weyl_deficit(eigs, domain=None, *, area=None, perim=None, angles=None, bc_type='dir',
+                 rtol=1e-6):
+    """How many eigenvalues the three-term count says are MISSING from `eigs`, worst over gaps.
+
+    `weyl_count_check` compares the count at each returned value, which conflates two things a
+    caller needs separated: a set that is short, and a set that is merely offset by the
+    oscillation of the asymptotic. This places a cut in the middle of every gap between DISTINCT
+    levels and compares the corner-corrected `weyl_count_poly` there against how many returned
+    values lie below it. A cut in a gap is where the true counting function is flat and the
+    smooth approximation is at its most trustworthy, and collapsing degenerate copies first is
+    what keeps a truncated cluster at the top of a window from reading like a missing mode.
+
+    Returns the worst shortfall, or `nan` when there are fewer than two distinct levels and so
+    nowhere to cut. At or below ~0.3 on a clean consecutive set; near or above +1 when a mode is
+    missing below the top level.
+
+    WHY THIS AND NOT THE TWO-TERM CHECK. `Eigenproblem.solve`'s rescue loop uses
+    `_find_deficient_gaps`, whose per-gap expected counts were measured to overlap COMPLETELY
+    between correct and incorrect results -- 2.87 expected modes in a correct cell against
+    2.27-2.67 in incorrect ones -- because multiplicity confounds a two-term count at these
+    wavenumbers. The corner correction and the mid-gap cut are what separate the classes: over
+    the square's exact spectrum and nine certified optimizer cells, clean sets reach at worst
+    +0.319 while a real missed mode reads +1.010.
+    """
+    eigs = np.sort(np.asarray(eigs, dtype=float))
+    if eigs.size < 2 or not np.all(np.isfinite(eigs)) or eigs[0] <= 0:
+        return float('nan')
+    levels = []
+    for x in eigs:
+        if not levels or x > levels[-1]*(1.0 + rtol):
+            levels.append(float(x))
+    if len(levels) < 2:
+        return float('nan')
+    worst = -np.inf
+    for lo, hi in zip(levels[:-1], levels[1:]):
+        cut = 0.5*(lo + hi)
+        found = int(np.count_nonzero(eigs <= cut))
+        expected = float(weyl_count_poly(cut, domain, area=area, perim=perim, angles=angles,
+                                         bc_type=bc_type))
+        worst = max(worst, expected - found)
+    return float(worst)
+
+
 def weyl_count_check(eigs, domain=None, *, area=None, perim=None, bc_type='dir'):
     """
     Pointwise deviation of eigenvalue count from the two-term Weyl asymptotic.
